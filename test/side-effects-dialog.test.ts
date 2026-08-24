@@ -618,3 +618,147 @@ describe('the JSON editor', () => {
     expect(shadow.querySelector('.cm-editor')).toBeNull();
   });
 });
+
+describe('per-attachment metadata', () => {
+  function toggles(dialog: SideEffectsDialogElement): readonly HTMLInputElement[] {
+    const found: HTMLInputElement[] = [];
+    for (const element of shadowOf(dialog).querySelectorAll('.row__enabled')) {
+      if (element instanceof HTMLInputElement) {
+        found.push(element);
+      }
+    }
+    return found;
+  }
+
+  function descriptions(dialog: SideEffectsDialogElement): readonly HTMLInputElement[] {
+    const found: HTMLInputElement[] = [];
+    for (const element of shadowOf(dialog).querySelectorAll('.row__description')) {
+      if (element instanceof HTMLInputElement) {
+        found.push(element);
+      }
+    }
+    return found;
+  }
+
+  it('shows every attachment as enabled by default', async () => {
+    const dialog = mountDialog();
+    void dialog.open({ title: 'Side effects', description: 'test', effects: draftEffects() });
+    await flush();
+
+    expect(toggles(dialog).map((toggle) => toggle.checked)).toEqual([true, true]);
+    expect(toggles(dialog)[0]?.getAttribute('aria-label')).toBe('Run sendEmail');
+    expect(descriptions(dialog).map((input) => input.value)).toEqual(['', '']);
+    expect(queryAll(shadowOf(dialog), '.row-item.is-disabled')).toHaveLength(0);
+  });
+
+  it('round-trips the toggle and the description through save', async () => {
+    const dialog = mountDialog();
+    const result = dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: draftEffects(),
+    });
+    await flush();
+
+    const toggle = toggles(dialog)[0];
+    const description = descriptions(dialog)[1];
+    if (toggle === undefined || description === undefined) {
+      throw new Error('missing row controls');
+    }
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    description.value = 'only for EU orders';
+    description.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // The row is muted straight away, without a re-render that would eat the caret.
+    expect(queryAll(shadowOf(dialog), '.row-item.is-disabled')).toHaveLength(1);
+
+    queryButton(shadowOf(dialog), '.button--primary').click();
+    const saved = await result;
+    expect(saved?.[0]?.enabled).toBe(false);
+    expect(saved?.[0]?.description).toBe('');
+    expect(saved?.[1]?.enabled).toBe(true);
+    expect(saved?.[1]?.description).toBe('only for EU orders');
+  });
+
+  it('renders a disabled attachment as off when it is reopened', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        { ...createSideEffect({ id: 'a', name: 'sendEmail' }, 'e1'), enabled: false },
+        createSideEffect({ id: 'b', name: 'chargeCard' }, 'e2'),
+      ],
+    });
+    await flush();
+
+    expect(toggles(dialog).map((toggle) => toggle.checked)).toEqual([false, true]);
+    expect(queryAll(shadowOf(dialog), '.row-item')[0]?.classList.contains('is-disabled')).toBe(
+      true,
+    );
+  });
+
+  it('keeps both fields across a reorder', async () => {
+    const dialog = mountDialog();
+    const result = dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        {
+          ...createSideEffect({ id: 'a', name: 'sendEmail' }, 'e1'),
+          enabled: false,
+          description: 'paused',
+        },
+        createSideEffect({ id: 'b', name: 'chargeCard' }, 'e2'),
+      ],
+    });
+    await flush();
+
+    const handle = queryAll(shadowOf(dialog), '.row__handle')[0];
+    handle?.focus();
+    fireKey(handle ?? dialog, 'ArrowDown', { altKey: true });
+
+    queryButton(shadowOf(dialog), '.button--primary').click();
+    const saved = await result;
+    expect(saved?.map((effect) => effect.id)).toEqual(['e2', 'e1']);
+    expect(saved?.[1]?.enabled).toBe(false);
+    expect(saved?.[1]?.description).toBe('paused');
+  });
+
+  it('locks both controls in read-only mode', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: draftEffects(),
+      readOnly: true,
+    });
+    await flush();
+
+    expect(toggles(dialog).every((toggle) => toggle.disabled)).toBe(true);
+    expect(descriptions(dialog).every((input) => input.readOnly)).toBe(true);
+  });
+
+  it('attaches new side effects enabled, whatever the catalog says', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [],
+      provider: () => CATALOG,
+    });
+    await flush();
+
+    const select = shadowOf(dialog).querySelector('select');
+    if (!(select instanceof HTMLSelectElement)) {
+      throw new Error('missing select');
+    }
+    select.value = 'charge';
+    queryOne(shadowOf(dialog), '.add .button').click();
+
+    expect(dialog.effects[0]?.enabled).toBe(true);
+    expect(dialog.effects[0]?.description).toBe('');
+    expect(toggles(dialog)[0]?.checked).toBe(true);
+  });
+});

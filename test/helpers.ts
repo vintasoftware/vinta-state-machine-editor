@@ -1,13 +1,47 @@
 import { EditorView } from '@codemirror/view';
 import { defineStateMachineEditor, type StateMachineEditorElement } from '../src/index.js';
 import { createState, createTransition } from '../src/model/machine.js';
-import type { SideEffectDefinition, StateMachine } from '../src/types.js';
+import type {
+  ActionDefinition,
+  JsonObject,
+  SideEffect,
+  SideEffectDefinition,
+  StateMachine,
+} from '../src/types.js';
 
 export const CATALOG: readonly SideEffectDefinition[] = [
   { id: 'send-email', name: 'sendEmail', description: 'Notifies the customer' },
   { id: 'charge', name: 'chargeCard' },
   { id: 'log', name: 'writeAuditLog' },
 ];
+
+export const ACTIONS: readonly ActionDefinition[] = [
+  { id: 'pay-action', name: 'pay', description: 'Payment captured' },
+  { id: 'cancel-action', name: 'cancel' },
+];
+
+/** A fully populated attachment, so tests never repeat the defaulted fields. */
+export function sideEffect(
+  id: string,
+  name: string,
+  patch: {
+    readonly definitionId?: string;
+    readonly params?: JsonObject;
+    readonly enabled?: boolean;
+    readonly description?: string;
+    readonly data?: JsonObject;
+  } = {},
+): SideEffect {
+  return {
+    id,
+    definitionId: patch.definitionId ?? 'definition',
+    name,
+    params: patch.params ?? {},
+    enabled: patch.enabled ?? true,
+    description: patch.description ?? '',
+    data: patch.data ?? {},
+  };
+}
 
 export function sampleMachine(): StateMachine {
   const draft = createState({ id: 'draft', name: 'Draft', position: { x: 0, y: 0 } });
@@ -17,6 +51,7 @@ export function sampleMachine(): StateMachine {
     transitions: [createTransition({ id: 'pay', name: 'pay', from: 'draft', to: 'paid' })],
     initialStateIds: ['draft'],
     finalStateIds: ['paid'],
+    data: {},
   };
 }
 

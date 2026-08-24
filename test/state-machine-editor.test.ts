@@ -8,8 +8,9 @@ import {
   StateMachineError,
 } from '../src/index.js';
 import { createTransition, getSideEffects } from '../src/model/machine.js';
-import type { MachineChange, Point, Selection } from '../src/types.js';
+import type { GuardValidation, MachineChange, Point, Selection } from '../src/types.js';
 import {
+  ACTIONS,
   CATALOG,
   fireKey,
   firePointer,
@@ -24,6 +25,7 @@ import {
   querySvg,
   sampleMachine,
   shadowOf,
+  sideEffect,
 } from './helpers.js';
 
 function changes(editor: StateMachineEditorElement): readonly MachineChange[] {
@@ -115,9 +117,9 @@ describe('rendering', () => {
         ...transition,
         effects: {
           before: [
-            { id: 'e1', definitionId: 'a', name: 'sendEmail', params: {} },
-            { id: 'e2', definitionId: 'b', name: 'chargeCard', params: {} },
-            { id: 'e3', definitionId: 'c', name: 'writeAuditLog', params: {} },
+            sideEffect('e1', 'sendEmail'),
+            sideEffect('e2', 'chargeCard'),
+            sideEffect('e3', 'writeAuditLog'),
           ],
           after: [],
         },
@@ -133,7 +135,13 @@ describe('rendering', () => {
   it('removes views when the machine shrinks', () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
-    editor.value = { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
+    editor.value = {
+      states: [],
+      transitions: [],
+      initialStateIds: [],
+      finalStateIds: [],
+      data: {},
+    };
     expect(queryAll(shadowOf(editor), '.node')).toHaveLength(0);
     expect(queryAll(shadowOf(editor), '.edge-card')).toHaveLength(0);
     expect(queryOne(shadowOf(editor), '.empty-state').hidden).toBe(false);
@@ -146,16 +154,8 @@ describe('rendering', () => {
         initialStateIds: [],
         finalStateIds: [],
         states: [],
-        transitions: [
-          {
-            id: 't',
-            name: 'x',
-            from: 'ghost',
-            to: 'ghost',
-            labelOffset: { x: 0, y: 0 },
-            effects: { before: [], after: [] },
-          },
-        ],
+        transitions: [createTransition({ id: 't', name: 'x', from: 'ghost', to: 'ghost' })],
+        data: {},
       };
     }).toThrow(StateMachineError);
   });
@@ -496,7 +496,13 @@ describe('editing', () => {
     const listener = vi.fn();
     editor.addEventListener('state-machine-selection-change', listener);
 
-    editor.value = { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
+    editor.value = {
+      states: [],
+      transitions: [],
+      initialStateIds: [],
+      finalStateIds: [],
+      data: {},
+    };
 
     expect(editor.selection).toBeNull();
     expect(listener).not.toHaveBeenCalled();
@@ -693,10 +699,10 @@ describe('parameter hints on the canvas', () => {
         ...transition,
         effects: {
           before: [
-            { id: 'e1', definitionId: 'a', name: 'chargeCard', params: { amount: 10 } },
-            { id: 'e2', definitionId: 'b', name: 'writeAuditLog', params: {} },
+            sideEffect('e1', 'chargeCard', { params: { amount: 10 } }),
+            sideEffect('e2', 'writeAuditLog'),
           ],
-          after: [{ id: 'e3', definitionId: 'c', name: 'pingWebhook', params: {} }],
+          after: [sideEffect('e3', 'pingWebhook')],
         },
       })),
     };
@@ -1284,10 +1290,14 @@ describe('read-only mode', () => {
 
     expect(editor.hasAttribute('readonly')).toBe(true);
     expect(queryButton(shadowOf(editor), '.toolbar__add').disabled).toBe(true);
-    expect(queryAll(shadowOf(editor), '.node .icon-button').every((button) => button.hidden)).toBe(
-      true,
-    );
+    expect(
+      queryAll(shadowOf(editor), '.node__rename, .node__remove').every((button) => button.hidden),
+    ).toBe(true);
     expect(queryAll(shadowOf(editor), '.node__link').every((button) => button.hidden)).toBe(true);
+    // Properties are readable read-only, exactly like the side effect chips.
+    expect(queryAll(shadowOf(editor), '.node__properties').every((button) => button.hidden)).toBe(
+      false,
+    );
     expect(queryAll(shadowOf(editor), '.node .chip')[0]?.textContent).toBe('No side effects');
   });
 
@@ -1310,5 +1320,710 @@ describe('read-only mode', () => {
 
     fireKey(editor, 'F2');
     expect(shadowOf(editor).querySelector('.name-input')).toBeNull();
+  });
+});
+
+// -- creation transitions ---------------------------------------------------
+
+function machineWithCreation(): ReturnType<typeof sampleMachine> {
+  const base = sampleMachine();
+  return {
+    ...base,
+    transitions: [
+      createTransition({ id: 'create', name: 'create', from: null, to: 'draft' }),
+      ...base.transitions,
+    ],
+  };
+}
+
+describe('creation transitions', () => {
+  it('shows no start pseudo-node until a creation edge exists', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    expect(queryAll(shadowOf(editor), '.start-node')).toHaveLength(0);
+
+    editor.value = machineWithCreation();
+    expect(queryAll(shadowOf(editor), '.start-node')).toHaveLength(1);
+  });
+
+  it('drops the pseudo-node again with the last creation edge', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const shadow = shadowOf(editor);
+    expect(queryAll(shadow, '.start-node')).toHaveLength(1);
+
+    queryButton(shadow, '.edge-card[data-transition-id="create"] .edge-card__remove').click();
+    expect(editor.value.transitions.map((transition) => transition.id)).toEqual(['pay']);
+    expect(queryAll(shadow, '.start-node')).toHaveLength(0);
+  });
+
+  it('places it left of the leftmost state it feeds', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const node = queryOne(shadowOf(editor), '.start-node');
+    // Draft sits at x = 0, so the dot lands in negative space, ahead of it.
+    expect(Number.parseFloat(node.style.left)).toBeLessThan(0);
+  });
+
+  it('draws every creation edge from the pseudo-node, fanned apart', () => {
+    const editor = mountEditor();
+    const base = machineWithCreation();
+    editor.value = {
+      ...base,
+      transitions: [
+        ...base.transitions,
+        createTransition({ id: 'create2', name: 'create 2', from: null, to: 'draft' }),
+      ],
+    };
+
+    const shadow = shadowOf(editor);
+    const cards = queryAll(shadow, '.edge-card').filter((card) =>
+      (card.getAttribute('data-transition-id') ?? '').startsWith('create'),
+    );
+    expect(cards).toHaveLength(2);
+    const [first, second] = cards.map((card) => ({
+      x: Number.parseFloat(card.style.left),
+      y: Number.parseFloat(card.style.top),
+    }));
+    if (first === undefined || second === undefined) {
+      throw new Error('missing card');
+    }
+    expect(Math.hypot(first.x - second.x, first.y - second.y)).toBeGreaterThan(70);
+
+    const paths = queryAll(shadow, '.edge-card').map(
+      (_, index) => shadow.querySelectorAll('path.edge')[index]?.getAttribute('d') ?? '',
+    );
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it('bends a creation edge exactly like any other', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const shadow = shadowOf(editor);
+    const card = queryOne(shadow, '.edge-card[data-transition-id="create"]');
+    const startLeft = Number.parseFloat(card.style.left);
+    const startTop = Number.parseFloat(card.style.top);
+
+    const header = queryOne(card, '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: startLeft, clientY: startTop });
+    firePointer(document, 'pointermove', { clientX: startLeft, clientY: startTop + 140 });
+    firePointer(document, 'pointerup', { clientX: startLeft, clientY: startTop + 140 });
+
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 140 });
+    const moved = queryOne(shadow, '.edge-card[data-transition-id="create"]');
+    expect(Number.parseFloat(moved.style.top)).toBeCloseTo(startTop + 140, 5);
+    expect(querySvg(shadow, 'path.edge[data-transition-id="create"]').getAttribute('d')).toContain(
+      'Q ',
+    );
+  });
+
+  it('offers the card button only while the state is initial', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine(); // draft initial, paid final
+    const shadow = shadowOf(editor);
+    const buttons = queryAll(shadow, '.node__create');
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]?.hidden).toBe(false);
+    expect(buttons[1]?.hidden).toBe(true);
+    expect(buttons[0]?.getAttribute('aria-label')).toBe('Add a creation transition into “Draft”');
+
+    editor.toggleInitialState('paid');
+    expect(queryAll(shadow, '.node__create')[1]?.hidden).toBe(false);
+  });
+
+  it('creates the edge from the card, selects it and starts renaming', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__create')[0]?.click();
+
+    const created = editor.value.transitions[1];
+    expect(created?.from).toBeNull();
+    expect(created?.to).toBe('draft');
+    expect(created?.name).toBe('create');
+    expect(recorded).toEqual([{ kind: 'transition-add', transitionId: created?.id }]);
+    expect(editor.selection).toEqual({ kind: 'transition', id: created?.id });
+    expect(shadow.querySelector('.name-input')).not.toBeNull();
+    expect(queryAll(shadow, '.start-node')).toHaveLength(1);
+  });
+
+  it('names creation edges uniquely across different cards', () => {
+    const editor = mountEditor();
+    editor.value = { ...sampleMachine(), initialStateIds: ['draft', 'paid'] };
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__create')[0]?.click();
+    queryAll(shadow, '.node__create')[1]?.click();
+
+    const names = editor.value.transitions
+      .filter((transition) => transition.from === null)
+      .map((transition) => transition.name);
+    // Namespaced machine-wide, not per target state, so these must not collide.
+    expect(names).toEqual(['create', 'create 2']);
+  });
+
+  it('keeps the initial flag and the creation edges independent', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    // Marking a state initial never creates an edge.
+    editor.toggleInitialState('paid');
+    expect(editor.value.transitions.filter((transition) => transition.from === null)).toHaveLength(
+      0,
+    );
+
+    editor.addCreationTransition('paid');
+    expect(editor.value.transitions.filter((transition) => transition.from === null)).toHaveLength(
+      1,
+    );
+
+    // Unmarking never deletes one: a temporarily invalid graph beats silent loss.
+    editor.toggleInitialState('paid');
+    expect(editor.value.initialStateIds).toEqual(['draft']);
+    expect(editor.value.transitions.filter((transition) => transition.from === null)).toHaveLength(
+      1,
+    );
+    expect(queryAll(shadowOf(editor), '.start-node')).toHaveLength(1);
+  });
+
+  it('suppresses the entry arrow once a state has a creation edge', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+    const marker = shadow.querySelectorAll('.start-marker')[0];
+    expect(marker instanceof SVGElement && marker.style.display).toBe('');
+
+    editor.addCreationTransition('draft');
+    // The arrow means "can start here", the edge says exactly how. Not both.
+    expect(marker instanceof SVGElement && marker.style.display).toBe('none');
+
+    editor.value = sampleMachine();
+    const again = shadowOf(editor).querySelectorAll('.start-marker')[0];
+    expect(again instanceof SVGElement && again.style.display).toBe('');
+  });
+
+  it('deletes creation edges with the state they feed', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    queryAll(shadowOf(editor), '.node__remove')[0]?.click();
+
+    expect(editor.value.states.map((state) => state.id)).toEqual(['paid']);
+    expect(editor.value.transitions).toHaveLength(0);
+    expect(queryAll(shadowOf(editor), '.start-node')).toHaveLength(0);
+  });
+
+  it('drags a further one out of the pseudo-node handle', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const handle = queryButton(shadowOf(editor), '.start-node__link');
+
+    firePointer(handle, 'pointerdown', { clientX: 0, clientY: 0 });
+    firePointer(document, 'pointermove', { clientX: 450, clientY: 50 });
+    firePointer(document, 'pointerup', { clientX: 450, clientY: 50 });
+
+    const added = editor.value.transitions[2];
+    expect(added?.from).toBeNull();
+    expect(added?.to).toBe('paid');
+    expect(added?.name).toBe('create 2');
+  });
+
+  it('treats a creation edge as an ordinary, selectable transition', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const shadow = shadowOf(editor);
+    const card = queryOne(shadow, '.edge-card[data-transition-id="create"]');
+
+    firePointer(card, 'pointerdown');
+    expect(editor.selection).toEqual({ kind: 'transition', id: 'create' });
+
+    fireKey(editor, 'Delete');
+    expect(editor.value.transitions.map((transition) => transition.id)).toEqual(['pay']);
+  });
+
+  it('hides the pseudo-node handle in read-only mode', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    editor.readOnly = true;
+    expect(queryButton(shadowOf(editor), '.start-node__link').hidden).toBe(true);
+    expect(
+      queryAll(shadowOf(editor), '.node__create').every(
+        (button) => button instanceof HTMLButtonElement && button.disabled,
+      ),
+    ).toBe(true);
+  });
+});
+
+// -- properties -------------------------------------------------------------
+
+function openedProperties(editor: StateMachineEditorElement): ShadowRoot {
+  const dialog = shadowOf(editor).querySelector('state-machine-properties-dialog');
+  if (dialog === null) {
+    throw new Error('properties dialog is not open');
+  }
+  return shadowOf(dialog);
+}
+
+function field(root: ParentNode, name: string): HTMLInputElement | HTMLTextAreaElement {
+  const found = root.querySelector(`[data-field="${name}"]`);
+  if (!(found instanceof HTMLInputElement || found instanceof HTMLTextAreaElement)) {
+    throw new Error(`No text field named "${name}".`);
+  }
+  return found;
+}
+
+function triggerSelect(root: ParentNode): HTMLSelectElement {
+  const found = root.querySelector('[data-field="trigger"]');
+  if (!(found instanceof HTMLSelectElement)) {
+    throw new Error('The trigger is not a picker.');
+  }
+  return found;
+}
+
+function type(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+async function save(editor: StateMachineEditorElement): Promise<void> {
+  queryButton(openedProperties(editor), '.button--primary').click();
+  await flush();
+}
+
+describe('the properties dialog', () => {
+  it('edits a state description and reports it', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+
+    queryAll(shadowOf(editor), '.node__properties')[0]?.click();
+    await flush();
+
+    expect(queryOne(openedProperties(editor), '.title').textContent).toBe('Properties · Draft');
+    type(field(openedProperties(editor), 'description'), 'Not submitted yet.');
+    await save(editor);
+
+    expect(editor.value.states[0]?.description).toBe('Not submitted yet.');
+    expect(recorded).toEqual([{ kind: 'description', ref: { kind: 'state', id: 'draft' } }]);
+  });
+
+  it('offers no transition-only fields for a state', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__properties')[0]?.click();
+    await flush();
+
+    const dialog = openedProperties(editor);
+    expect(dialog.querySelector('[data-field="trigger"]')).toBeNull();
+    expect(dialog.querySelector('[data-field="guard"]')).toBeNull();
+    expect(dialog.querySelector('[data-field="permission"]')).toBeNull();
+  });
+
+  it('emits one change per edited transition field', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+
+    const dialog = openedProperties(editor);
+    type(field(dialog, 'trigger'), 'pay');
+    type(field(dialog, 'guard'), 'order.total > 0');
+    type(field(dialog, 'permission'), 'orders.pay');
+    type(field(dialog, 'description'), 'Captures the payment.');
+    await save(editor);
+
+    const transition = editor.value.transitions[0];
+    expect(transition?.trigger).toEqual({ id: 'pay', name: 'pay' });
+    expect(transition?.guard).toBe('order.total > 0');
+    expect(transition?.requiredPermission).toBe('orders.pay');
+    expect(transition?.description).toBe('Captures the payment.');
+    expect(recorded.map((change) => change.kind)).toEqual([
+      'transition-trigger',
+      'transition-guard',
+      'transition-permission',
+      'description',
+    ]);
+  });
+
+  it('reports nothing for the fields left alone', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+    type(field(openedProperties(editor), 'guard'), 'always');
+    await save(editor);
+
+    expect(recorded).toEqual([{ kind: 'transition-guard', transitionId: 'pay' }]);
+  });
+
+  it('discards everything on cancel', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+
+    const opened = editor.openProperties({ kind: 'transition', id: 'pay' });
+    await flush();
+    type(field(openedProperties(editor), 'guard'), 'never');
+    queryAll(openedProperties(editor), '.button')[0]?.click();
+
+    expect(await opened).toBe(false);
+    expect(editor.value.transitions[0]?.guard).toBe('');
+    expect(recorded).toEqual([]);
+  });
+
+  it('resolves true through the programmatic API when saved', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    const opened = editor.openProperties({ kind: 'state', id: 'draft' });
+    await flush();
+    type(field(openedProperties(editor), 'description'), 'x');
+    queryButton(openedProperties(editor), '.button--primary').click();
+
+    expect(await opened).toBe(true);
+    expect(await editor.openProperties({ kind: 'state', id: 'ghost' })).toBe(false);
+  });
+
+  it('picks the trigger from the injected action catalog', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const provider = vi.fn(() => Promise.resolve(ACTIONS));
+    editor.actionProvider = provider;
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    const select = triggerSelect(openedProperties(editor));
+    expect(
+      queryAll(openedProperties(editor), 'option').map((option) => option.textContent),
+    ).toEqual(['No trigger', 'pay', 'cancel']);
+
+    select.value = 'pay-action';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await save(editor);
+
+    expect(editor.value.transitions[0]?.trigger).toEqual({ id: 'pay-action', name: 'pay' });
+  });
+
+  it('keeps a trigger the catalog no longer knows about', async () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        trigger: { id: 'retired', name: 'retired' },
+      })),
+    };
+    editor.actionProvider = () => ACTIONS;
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+
+    const select = triggerSelect(openedProperties(editor));
+    expect(select.value).toBe('retired');
+    await save(editor);
+    expect(editor.value.transitions[0]?.trigger).toEqual({ id: 'retired', name: 'retired' });
+  });
+
+  it('falls back to free text when no action provider is set', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+
+    const dialog = openedProperties(editor);
+    expect(dialog.querySelector('select[data-field="trigger"]')).toBeNull();
+    expect(queryOne(dialog, '[data-field-row="trigger"] .field__hint').textContent).toContain(
+      'free text',
+    );
+
+    type(field(dialog, 'trigger'), '  pay  ');
+    await save(editor);
+    expect(editor.value.transitions[0]?.trigger).toEqual({ id: 'pay', name: 'pay' });
+  });
+
+  it('clears the trigger when the free text field is emptied', async () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        trigger: { id: 'pay', name: 'pay' },
+      })),
+    };
+    const recorded = changes(editor);
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+    type(field(openedProperties(editor), 'trigger'), '');
+    await save(editor);
+
+    expect(editor.value.transitions[0]?.trigger).toBeNull();
+    expect(recorded).toEqual([{ kind: 'transition-trigger', transitionId: 'pay' }]);
+  });
+
+  it('runs the guard through the injected validator and shows its errors', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const validator = vi.fn(
+      (expression: string): GuardValidation =>
+        expression.includes('(')
+          ? { ok: false, errors: ['Unbalanced parentheses.', 'Try again.'] }
+          : { ok: true },
+    );
+    editor.guardValidator = validator;
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+
+    type(field(openedProperties(editor), 'guard'), 'total > (0');
+    await flush();
+    expect(validator).toHaveBeenCalledWith('total > (0');
+    expect(
+      queryAll(openedProperties(editor), '.field__error').map((item) => item.textContent),
+    ).toEqual(['Unbalanced parentheses.', 'Try again.']);
+
+    type(field(openedProperties(editor), 'guard'), 'total > 0');
+    await flush();
+    expect(queryAll(openedProperties(editor), '.field__error')).toHaveLength(0);
+
+    // The component never interprets the expression, so an invalid one still saves.
+    type(field(openedProperties(editor), 'guard'), 'total > (0');
+    await flush();
+    await save(editor);
+    expect(editor.value.transitions[0]?.guard).toBe('total > (0');
+  });
+
+  it('never validates when no validator is injected', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+    type(field(openedProperties(editor), 'guard'), 'anything at all ((( ');
+    await flush();
+
+    expect(queryAll(openedProperties(editor), '.field__error')).toHaveLength(0);
+    expect(queryOne(openedProperties(editor), '.field__errors').hidden).toBe(true);
+  });
+
+  it('reorders an edge among the ones leaving the same state', async () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: [
+        ...base.transitions,
+        createTransition({ id: 'void', name: 'void', from: 'draft', to: 'paid' }),
+        createTransition({ id: 'back', name: 'back', from: 'paid', to: 'draft' }),
+      ],
+    };
+    const recorded = changes(editor);
+
+    void editor.openProperties({ kind: 'transition', id: 'void' });
+    await flush();
+
+    const dialog = openedProperties(editor);
+    expect(queryOne(dialog, '.order__readout').textContent).toBe('2 of 2');
+    expect(queryOne(dialog, '[data-field-row="order"] .field__hint').textContent).toContain(
+      'leaving Draft',
+    );
+    expect(queryButton(dialog, '.order__move--down').disabled).toBe(true);
+
+    queryButton(dialog, '.order__move--up').click();
+    expect(queryOne(dialog, '.order__readout').textContent).toBe('1 of 2');
+    await save(editor);
+
+    expect(editor.value.transitions.map((transition) => transition.id)).toEqual([
+      'void',
+      'pay',
+      'back',
+    ]);
+    expect(recorded).toEqual([{ kind: 'transition-reorder', transitionId: 'void' }]);
+  });
+
+  it('groups creation edges under the start pseudo-node for ordering', async () => {
+    const editor = mountEditor();
+    const base = machineWithCreation();
+    editor.value = {
+      ...base,
+      transitions: [
+        ...base.transitions,
+        createTransition({ id: 'create2', name: 'create 2', from: null, to: 'paid' }),
+      ],
+    };
+
+    void editor.openProperties({ kind: 'transition', id: 'create2' });
+    await flush();
+    expect(
+      queryOne(openedProperties(editor), '[data-field-row="order"] .field__hint').textContent,
+    ).toContain('leaving the start');
+    expect(queryOne(openedProperties(editor), '.order__readout').textContent).toBe('2 of 2');
+  });
+
+  it('opens read-only without a save button', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.readOnly = true;
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+
+    const dialog = openedProperties(editor);
+    expect(queryButton(dialog, '.button--primary').hidden).toBe(true);
+    expect(field(dialog, 'guard').readOnly).toBe(true);
+    expect(queryButton(dialog, '.order__move--up').disabled).toBe(true);
+  });
+});
+
+describe('the transition card summary', () => {
+  it('keeps the name as the headline and hangs the trigger below it', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        trigger: { id: 'pay-action', name: 'pay' },
+        guard: 'order.total > 0',
+      })),
+    };
+
+    const shadow = shadowOf(editor);
+    // The name is the edge's identity and the target of the inline rename gesture,
+    // so it stays first; the trigger and guard ride underneath it.
+    expect(queryOne(shadow, '.edge-card__name').textContent).toBe('pay');
+    expect(queryOne(shadow, '.edge-card__meta').hidden).toBe(false);
+    expect(queryOne(shadow, '.edge-card__trigger').textContent).toBe('⚡ pay');
+    expect(queryOne(shadow, '.edge-card__guard').textContent).toBe('[order.total > 0]');
+    expect(queryOne(shadow, '.edge-card__guard').title).toBe('Guard: order.total > 0');
+  });
+
+  it('hides the second line while there is nothing on it', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+    expect(queryOne(shadow, '.edge-card__meta').hidden).toBe(true);
+    expect(queryOne(shadow, '.edge-card__trigger').hidden).toBe(true);
+    expect(queryOne(shadow, '.edge-card__guard').hidden).toBe(true);
+  });
+
+  it('shows a guard on its own, for an edge with no trigger yet', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: base.transitions.map((transition) => ({ ...transition, guard: 'is_staff' })),
+    };
+    const shadow = shadowOf(editor);
+    expect(queryOne(shadow, '.edge-card__meta').hidden).toBe(false);
+    expect(queryOne(shadow, '.edge-card__trigger').hidden).toBe(true);
+  });
+
+  it('still renames through the name, not the trigger', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        trigger: { id: 'pay-action', name: 'pay' },
+      })),
+    };
+
+    queryButton(shadowOf(editor), '.edge-card__rename').click();
+    const input = queryOne(shadowOf(editor), '.name-input');
+    expect(input instanceof HTMLInputElement && input.value).toBe('pay');
+  });
+
+  it('marks a creation edge on the canvas', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const card = queryOne(shadowOf(editor), '.edge-card[data-transition-id="create"]');
+    expect(card.classList.contains('is-creation')).toBe(true);
+  });
+});
+
+describe('disabled side effects on the canvas', () => {
+  it('counts them but marks them', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        effects: {
+          before: [
+            sideEffect('e1', 'sendEmail', { enabled: false }),
+            sideEffect('e2', 'chargeCard'),
+          ],
+          after: [],
+        },
+      })),
+    };
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.textContent).toBe('sendEmail (off) and 1 more');
+    expect(chip?.getAttribute('data-count')).toBe('2');
+    expect(chip?.title).toBe('1. sendEmail — disabled\n2. chargeCard');
+  });
+});
+
+describe('host-owned data on the canvas', () => {
+  it('survives a drag on all four levels', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      data: { schemaVersion: 3 },
+      states: base.states.map((state) => ({
+        ...state,
+        data: { table: `orders_${state.id}` },
+        onEnter: {
+          before: [sideEffect('e1', 'sendEmail', { data: { onCommit: true } })],
+          after: [],
+        },
+      })),
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        data: { audited: true, tags: ['legacy', null] },
+      })),
+    };
+
+    // A drag is the harshest round trip: every frame reparses and rebuilds.
+    const header = queryOne(shadowOf(editor), '.node .node__header');
+    firePointer(header, 'pointerdown', { clientX: 10, clientY: 10 });
+    firePointer(document, 'pointermove', { clientX: 90, clientY: 130 });
+    firePointer(document, 'pointerup', { clientX: 90, clientY: 130 });
+
+    const after = editor.value;
+    expect(after.states[0]?.position).toEqual({ x: 80, y: 120 });
+    expect(after.data).toEqual({ schemaVersion: 3 });
+    expect(after.states[0]?.data).toEqual({ table: 'orders_draft' });
+    expect(after.states[0]?.onEnter.before[0]?.data).toEqual({ onCommit: true });
+    expect(after.transitions[0]?.data).toEqual({ audited: true, tags: ['legacy', null] });
+
+    // And it survives being handed straight back in, which is what a host does.
+    editor.value = after;
+    expect(editor.value.states[0]?.data).toEqual({ table: 'orders_draft' });
+    expect(editor.value.transitions[0]?.data).toEqual({ audited: true, tags: ['legacy', null] });
+  });
+
+  it('emits no change of its own when a host rewrites it', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+    editor.value = { ...editor.value, data: { anything: 'goes' } };
+    expect(recorded).toEqual([]);
+    expect(editor.value.data).toEqual({ anything: 'goes' });
   });
 });

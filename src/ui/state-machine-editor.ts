@@ -32,24 +32,36 @@ import {
   createEmptyMachine,
   createState,
   createTransition,
+  creationTransitions,
   findState,
   findTransition,
   getSideEffects,
   isFinalState,
   isInitialState,
+  moveTransition,
+  outgoingTransitions,
   removeState,
   removeTransition,
   setFinalStates,
   setInitialStates,
   setSideEffects,
+  setStateDescription,
+  setTransitionDescription,
+  setTransitionGuard,
+  setTransitionPermission,
+  setTransitionTrigger,
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
+  uniqueTransitionName,
   updateState,
   updateTransition,
 } from '../model/machine.js';
 import { assertStateMachine } from '../model/parse.js';
 import type {
+  ActionProvider,
+  ElementRef,
+  GuardValidator,
   MachineChange,
   Point,
   Rect,
@@ -63,10 +75,18 @@ import type {
   StateRole,
   StateTrigger,
   Transition,
+  TransitionTrigger,
 } from '../types.js';
 import { STATE_COLORS } from '../types.js';
 import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
-import { describeSideEffectList, shortHookLabel } from './labels.js';
+import {
+  describeElement,
+  describeSideEffectList,
+  describeSource,
+  shortHookLabel,
+} from './labels.js';
+import type { OrderContext, PropertiesDraft } from './properties-dialog.js';
+import { PropertiesDialogElement } from './properties-dialog.js';
 import {
   countWithParams,
   formatSideEffectSummary,
@@ -88,6 +108,20 @@ const FALLBACK_LABEL_SPACING = 160;
 /** How far the start arrow reaches left of an initial state, and how far down it sits. */
 const START_MARKER_REACH = 42;
 const START_MARKER_Y = 20;
+/** Diameter of the start pseudo-node, used before the DOM has been measured. */
+const START_NODE_SIZE = 18;
+/** How far left of the leftmost state it feeds the start pseudo-node is placed. */
+const START_NODE_GAP = 140;
+/** Base name for a creation transition; made unique across the whole machine. */
+const CREATION_NAME = 'create';
+
+const EMPTY_GEOMETRY: EdgeGeometry = {
+  path: '',
+  source: { x: 0, y: 0 },
+  target: { x: 0, y: 0 },
+  label: { x: 0, y: 0 },
+  arrowAngle: 0,
+};
 
 type HookKey = `${StateTrigger}:${SideEffectPhase}`;
 
@@ -111,8 +145,11 @@ interface StateView {
   readonly header: HTMLElement;
   readonly name: HTMLElement;
   readonly renameButton: HTMLButtonElement;
+  readonly propertiesButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
   readonly linkHandle: HTMLButtonElement;
+  /** Creates a creation transition into this state; only shown while it is initial. */
+  readonly creationButton: HTMLButtonElement;
   readonly chips: ReadonlyMap<HookKey, HTMLButtonElement>;
 }
 
@@ -121,8 +158,19 @@ interface TransitionView {
   readonly card: HTMLElement;
   readonly name: HTMLElement;
   readonly renameButton: HTMLButtonElement;
+  readonly propertiesButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
+  /** Secondary line: the trigger that fires this edge and the guard that gates it. */
+  readonly meta: HTMLElement;
+  readonly trigger: HTMLElement;
+  readonly guard: HTMLElement;
   readonly chips: ReadonlyMap<SideEffectPhase, HTMLButtonElement>;
+}
+
+/** The UML initial pseudostate every creation transition originates from. */
+interface StartNodeView {
+  readonly root: HTMLElement;
+  readonly linkHandle: HTMLButtonElement;
 }
 
 /** A two finger pinch in progress. Anchored on the values captured when it started. */
@@ -141,7 +189,7 @@ type DragState =
       readonly offset: Point;
       readonly moved: boolean;
     }
-  | { readonly kind: 'link'; readonly fromId: string; readonly pointer: Point }
+  | { readonly kind: 'link'; readonly fromId: string | null; readonly pointer: Point }
   | {
       readonly kind: 'label';
       readonly transitionId: string;
@@ -157,6 +205,13 @@ function hookRef(stateId: string, key: HookKey): SideEffectListRef {
     trigger: trigger === 'leave' ? 'leave' : 'enter',
     phase: phase === 'after' ? 'after' : 'before',
   };
+}
+
+function sameTrigger(a: TransitionTrigger | null, b: TransitionTrigger | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.id === b.id && a.name === b.name;
 }
 
 function sameSelection(a: Selection, b: Selection): boolean {
@@ -209,6 +264,10 @@ export class StateMachineEditorElement extends HTMLElement {
   #viewport: Viewport = createViewport();
   #selection: Selection = null;
   #provider: SideEffectProvider | undefined;
+  #actionProvider: ActionProvider | undefined;
+  #guardValidator: GuardValidator | undefined;
+  /** The start pseudo-node, present only while the machine has a creation edge. */
+  #startNode: StartNodeView | undefined;
   #readOnly = false;
   #drag: DragState | undefined;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -219,6 +278,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #pinch: PinchState | undefined;
   #trackingPointers = false;
   #dialog: SideEffectsDialogElement | undefined;
+  #propertiesDialog: PropertiesDialogElement | undefined;
   #renameCleanup: (() => void) | undefined;
   /** Id of the state or transition whose name is currently being edited. */
   #renamingId: string | undefined;
@@ -375,6 +435,30 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#provider = provider;
   }
 
+  /**
+   * Supplies the catalog a transition's trigger is picked from. Without one the
+   * properties dialog offers a free text field instead of a picker.
+   */
+  get actionProvider(): ActionProvider | undefined {
+    return this.#actionProvider;
+  }
+
+  set actionProvider(provider: ActionProvider | undefined) {
+    this.#actionProvider = provider;
+  }
+
+  /**
+   * Checks guard expressions on the host's behalf. Errors are shown inline in
+   * the properties dialog; without one, guards are never validated.
+   */
+  get guardValidator(): GuardValidator | undefined {
+    return this.#guardValidator;
+  }
+
+  set guardValidator(validator: GuardValidator | undefined) {
+    this.#guardValidator = validator;
+  }
+
   get readOnly(): boolean {
     return this.#readOnly;
   }
@@ -413,13 +497,33 @@ export class StateMachineEditorElement extends HTMLElement {
     return state;
   }
 
-  /** Connects two states with a transition. */
-  addTransition(from: string, to: string, name = 'transition'): Transition {
-    const transition = createTransition({ from, to, name });
+  /**
+   * Connects two states with a transition. `null` as the source makes it a
+   * creation transition, drawn from the start pseudo-node.
+   *
+   * Creation edges are namespaced machine-wide by the backend rather than per
+   * source state, so their default name is made unique across every transition.
+   */
+  addTransition(from: string | null, to: string, name?: string): Transition {
+    const label =
+      name ?? (from === null ? uniqueTransitionName(this.#machine, CREATION_NAME) : 'transition');
+    const transition = createTransition({ from, to, name: label });
     this.#commit(addTransition(this.#machine, transition), {
       kind: 'transition-add',
       transitionId: transition.id,
     });
+    return transition;
+  }
+
+  /**
+   * Adds a creation transition into `stateId`, selects it and starts renaming
+   * it — selecting is the point, since the trigger and guard are filled in from
+   * the properties dialog of the selected edge.
+   */
+  addCreationTransition(stateId: string): Transition {
+    const transition = this.addTransition(null, stateId);
+    this.#setSelection({ kind: 'transition', id: transition.id });
+    this.#renameTransition(transition.id);
     return transition;
   }
 
@@ -478,7 +582,10 @@ export class StateMachineEditorElement extends HTMLElement {
 
   /** Fits every state in view. Does nothing when the machine is empty. */
   zoomToFit(padding = 56): void {
-    const bounds = boundsOf(this.#machine.states.map((state) => this.#rectFor(state)));
+    const rects = this.#machine.states.map((state) => this.#rectFor(state));
+    const bounds = boundsOf(
+      creationTransitions(this.#machine).length > 0 ? [...rects, this.#startNodeRect()] : rects,
+    );
     if (bounds === undefined) {
       return;
     }
@@ -518,6 +625,35 @@ export class StateMachineEditorElement extends HTMLElement {
       kind: 'side-effects-change',
       ref,
     });
+    return true;
+  }
+
+  /**
+   * Opens the properties dialog for a state or a transition.
+   * Resolves with `true` when the user saved, `false` when they cancelled.
+   */
+  async openProperties(ref: ElementRef): Promise<boolean> {
+    const before = this.#propertiesFor(ref);
+    if (before === undefined) {
+      return false;
+    }
+    const dialog = this.#ensurePropertiesDialog();
+    const labels = describeElement(this.#machine, ref);
+    const result = await dialog.open({
+      title: labels.title,
+      description: labels.description,
+      kind: ref.kind,
+      values: before,
+      actionProvider: this.#actionProvider,
+      guardValidator: this.#guardValidator,
+      order: ref.kind === 'transition' ? this.#orderContextFor(ref.id) : undefined,
+      readOnly: this.#readOnly,
+    });
+    dialog.remove();
+    if (result === null) {
+      return false;
+    }
+    this.#applyProperties(ref, before, result);
     return true;
   }
 
@@ -569,6 +705,107 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#dialog = dialog;
     this.#shadow.append(dialog);
     return dialog;
+  }
+
+  #ensurePropertiesDialog(): PropertiesDialogElement {
+    const existing = this.#propertiesDialog;
+    if (existing !== undefined) {
+      this.#shadow.append(existing);
+      return existing;
+    }
+    const dialog = new PropertiesDialogElement();
+    this.#propertiesDialog = dialog;
+    this.#shadow.append(dialog);
+    return dialog;
+  }
+
+  /** Current values of the element addressed by `ref`, or `undefined` if it is gone. */
+  #propertiesFor(ref: ElementRef): PropertiesDraft | undefined {
+    if (ref.kind === 'state') {
+      const state = findState(this.#machine, ref.id);
+      return state === undefined
+        ? undefined
+        : {
+            trigger: null,
+            guard: '',
+            requiredPermission: '',
+            description: state.description,
+            orderIndex: -1,
+          };
+    }
+    const transition = findTransition(this.#machine, ref.id);
+    if (transition === undefined) {
+      return undefined;
+    }
+    return {
+      trigger: transition.trigger,
+      guard: transition.guard,
+      requiredPermission: transition.requiredPermission,
+      description: transition.description,
+      orderIndex: outgoingTransitions(this.#machine, transition.from).findIndex(
+        (candidate) => candidate.id === transition.id,
+      ),
+    };
+  }
+
+  #orderContextFor(transitionId: string): OrderContext | undefined {
+    const transition = findTransition(this.#machine, transitionId);
+    if (transition === undefined) {
+      return undefined;
+    }
+    const siblings = outgoingTransitions(this.#machine, transition.from);
+    return {
+      index: siblings.findIndex((candidate) => candidate.id === transitionId),
+      total: siblings.length,
+      sourceLabel: describeSource(this.#machine, transition.from),
+    };
+  }
+
+  /**
+   * Writes the dialog's result back, one field at a time: hosts asked for
+   * granular changes, so a save that touched three fields emits three events.
+   */
+  #applyProperties(ref: ElementRef, before: PropertiesDraft, after: PropertiesDraft): void {
+    if (ref.kind === 'state') {
+      if (after.description !== before.description) {
+        this.#commit(setStateDescription(this.#machine, ref.id, after.description), {
+          kind: 'description',
+          ref,
+        });
+      }
+      return;
+    }
+    const transitionId = ref.id;
+    if (!sameTrigger(after.trigger, before.trigger)) {
+      this.#commit(setTransitionTrigger(this.#machine, transitionId, after.trigger), {
+        kind: 'transition-trigger',
+        transitionId,
+      });
+    }
+    if (after.guard !== before.guard) {
+      this.#commit(setTransitionGuard(this.#machine, transitionId, after.guard), {
+        kind: 'transition-guard',
+        transitionId,
+      });
+    }
+    if (after.requiredPermission !== before.requiredPermission) {
+      this.#commit(setTransitionPermission(this.#machine, transitionId, after.requiredPermission), {
+        kind: 'transition-permission',
+        transitionId,
+      });
+    }
+    if (after.description !== before.description) {
+      this.#commit(setTransitionDescription(this.#machine, transitionId, after.description), {
+        kind: 'description',
+        ref,
+      });
+    }
+    if (after.orderIndex !== before.orderIndex && after.orderIndex >= 0) {
+      this.#commit(moveTransition(this.#machine, transitionId, after.orderIndex), {
+        kind: 'transition-reorder',
+        transitionId,
+      });
+    }
   }
 
   #commit(next: StateMachine, change: MachineChange, transient = false): void {
@@ -656,6 +893,44 @@ export class StateMachineEditorElement extends HTMLElement {
     };
   }
 
+  /** Rect of a transition's source: a state card, or the start pseudo-node. */
+  #sourceRect(from: string | null): Rect | undefined {
+    if (from === null) {
+      return this.#startNodeRect();
+    }
+    const state = findState(this.#machine, from);
+    return state === undefined ? undefined : this.#rectFor(state);
+  }
+
+  /**
+   * Where the start pseudo-node sits. It is placed rather than persisted: left
+   * of the leftmost state it feeds, centred on them vertically. Deterministic,
+   * so nothing new has to be stored on the machine.
+   */
+  #startNodeRect(): Rect {
+    const size = this.#startNode?.root.offsetWidth || START_NODE_SIZE;
+    const targets: Rect[] = [];
+    for (const transition of creationTransitions(this.#machine)) {
+      const state = findState(this.#machine, transition.to);
+      if (state !== undefined) {
+        targets.push(this.#rectFor(state));
+      }
+    }
+    const [first] = targets;
+    if (first === undefined) {
+      return { x: 0, y: 0, width: size, height: size };
+    }
+    const left = Math.min(...targets.map((rect) => rect.x));
+    const middle =
+      targets.reduce((total, rect) => total + rect.y + rect.height / 2, 0) / targets.length;
+    return {
+      x: Math.round(left - START_NODE_GAP),
+      y: Math.round(middle - size / 2),
+      width: size,
+      height: size,
+    };
+  }
+
   #stateAt(point: Point): StateNode | undefined {
     for (let index = this.#machine.states.length - 1; index >= 0; index -= 1) {
       const state = this.#machine.states[index];
@@ -670,6 +945,7 @@ export class StateMachineEditorElement extends HTMLElement {
 
   #render(): void {
     this.#renderStates();
+    this.#renderStartNode();
     this.#renderTransitions();
     this.#applyViewport();
     this.#emptyState.hidden = this.#machine.states.length > 0;
@@ -702,6 +978,41 @@ export class StateMachineEditorElement extends HTMLElement {
     }
   }
 
+  /**
+   * The start pseudo-node exists only while a creation edge does. It is not a
+   * state: it never enters `states`, has no name, colour or roles, and cannot
+   * be selected or deleted.
+   */
+  #renderStartNode(): void {
+    if (creationTransitions(this.#machine).length === 0) {
+      this.#startNode?.root.remove();
+      this.#startNode = undefined;
+      return;
+    }
+    const view = this.#startNode ?? this.#createStartNode();
+    this.#startNode = view;
+    const rect = this.#startNodeRect();
+    view.root.style.left = `${rect.x}px`;
+    view.root.style.top = `${rect.y}px`;
+    view.linkHandle.hidden = this.#readOnly;
+  }
+
+  #createStartNode(): StartNodeView {
+    const root = createElement('div', {
+      className: 'start-node',
+      parent: this.#world,
+      attrs: { part: 'start-node', title: 'Start' },
+    });
+    const linkHandle = createButton({
+      className: 'node__link start-node__link',
+      parent: root,
+      text: '\u2192',
+      attrs: { 'aria-label': 'Drag to a state to create a creation transition' },
+    });
+    linkHandle.addEventListener('pointerdown', (event) => this.#onLinkPointerDown(event, null));
+    return { root, linkHandle };
+  }
+
   #createStateView(stateId: string): StateView {
     const root = createElement('div', {
       className: 'node',
@@ -729,6 +1040,16 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: header,
       text: '✎',
       attrs: { 'aria-label': 'Rename state', title: 'Rename (F2)' },
+    });
+    const propertiesButton = createButton({
+      className: 'icon-button node__properties',
+      parent: header,
+      text: '⚙',
+      attrs: { 'aria-label': 'State properties', title: 'Properties' },
+    });
+    propertiesButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void this.openProperties({ kind: 'state', id: stateId });
     });
     const removeButton = createButton({
       className: 'icon-button node__remove',
@@ -785,6 +1106,21 @@ export class StateMachineEditorElement extends HTMLElement {
       roleButtons.set(role, button);
     }
 
+    // Only reachable while the state is initial: the start pseudo-node does not
+    // exist until a creation edge does, so there is nothing to drag from yet.
+    const creationButton = createButton({
+      className: 'node__create',
+      parent: roles,
+      text: '+ Creation',
+      attrs: { title: 'Add a transition that creates a record in this state' },
+    });
+    creationButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!this.#readOnly) {
+        this.addCreationTransition(stateId);
+      }
+    });
+
     const startMarker = createSvgElement('g', {
       className: 'start-marker',
       parent: this.#edgeLayer,
@@ -833,8 +1169,10 @@ export class StateMachineEditorElement extends HTMLElement {
       header,
       name,
       renameButton,
+      propertiesButton,
       removeButton,
       linkHandle,
+      creationButton,
       chips,
       startMarker,
       roleButtons,
@@ -852,6 +1190,8 @@ export class StateMachineEditorElement extends HTMLElement {
     const editing = this.#renamingId === state.id;
     view.name.hidden = editing;
     view.renameButton.hidden = this.#readOnly || editing;
+    // Properties stay reachable read-only, exactly like the side effect chips.
+    view.propertiesButton.hidden = editing;
     view.removeButton.hidden = this.#readOnly || editing;
     view.linkHandle.hidden = this.#readOnly;
     view.header.style.cursor = this.#readOnly ? 'default' : 'grab';
@@ -908,6 +1248,9 @@ export class StateMachineEditorElement extends HTMLElement {
   #updateStateRoles(view: StateView, state: StateNode): void {
     const initial = isInitialState(this.#machine, state.id);
     const final = isFinalState(this.#machine, state.id);
+    const created = this.#machine.transitions.some(
+      (transition) => transition.from === null && transition.to === state.id,
+    );
 
     view.root.classList.toggle('is-initial', initial);
     view.root.classList.toggle('is-final', final);
@@ -924,9 +1267,20 @@ export class StateMachineEditorElement extends HTMLElement {
       );
     }
 
-    // A short arrow into the left border: the usual way of drawing a start state.
-    view.startMarker.style.display = initial ? '' : 'none';
-    if (!initial) {
+    // The flag and the creation edges are independent: marking a state initial
+    // never creates an edge, and unmarking it never deletes one.
+    view.creationButton.hidden = !initial;
+    view.creationButton.disabled = this.#readOnly;
+    view.creationButton.setAttribute(
+      'aria-label',
+      `Add a creation transition into “${state.name}”`,
+    );
+
+    // A short arrow into the left border: the usual way of drawing a start
+    // state. Redundant once the creation edges spell out how, so it is dropped
+    // as soon as this state has one.
+    view.startMarker.style.display = initial && !created ? '' : 'none';
+    if (!initial || created) {
       return;
     }
     const rect = this.#rectFor(state);
@@ -1013,12 +1367,31 @@ export class StateMachineEditorElement extends HTMLElement {
       text: '✎',
       attrs: { 'aria-label': 'Rename transition', title: 'Rename (F2)' },
     });
+    const propertiesButton = createButton({
+      className: 'icon-button edge-card__properties',
+      parent: header,
+      text: '⚙',
+      attrs: { 'aria-label': 'Transition properties', title: 'Properties' },
+    });
+    propertiesButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void this.openProperties({ kind: 'transition', id: transitionId });
+    });
     const removeButton = createButton({
       className: 'icon-button edge-card__remove',
       parent: header,
       text: '✕',
       attrs: { 'aria-label': 'Remove transition' },
     });
+    /*
+     * The name keeps the headline: it is the edge's identity, it is always
+     * present, and it is what the inline rename gesture edits. The trigger —
+     * nullable, and shared by every edge it fires — rides underneath with the
+     * guard that tells those edges apart.
+     */
+    const meta = createElement('div', { className: 'edge-card__meta', parent: card });
+    const trigger = createElement('span', { className: 'edge-card__trigger', parent: meta });
+    const guard = createElement('span', { className: 'edge-card__guard', parent: meta });
     const hooks = createElement('div', { className: 'hooks', parent: card });
     const chips = new Map<SideEffectPhase, HTMLButtonElement>();
     for (const phase of ['before', 'after'] as const) {
@@ -1052,7 +1425,18 @@ export class StateMachineEditorElement extends HTMLElement {
       });
     });
 
-    return { path, card, name, renameButton, removeButton, chips };
+    return {
+      path,
+      card,
+      name,
+      renameButton,
+      propertiesButton,
+      removeButton,
+      meta,
+      trigger,
+      guard,
+      chips,
+    };
   }
 
   #updateTransitionView(view: TransitionView, transition: Transition): void {
@@ -1065,10 +1449,13 @@ export class StateMachineEditorElement extends HTMLElement {
     view.card.style.left = `${geometry.label.x}px`;
     view.card.style.top = `${geometry.label.y}px`;
     view.name.textContent = transition.name;
+    view.card.classList.toggle('is-creation', transition.from === null);
     const editing = this.#renamingId === transition.id;
     view.name.hidden = editing;
     view.renameButton.hidden = this.#readOnly || editing;
+    view.propertiesButton.hidden = editing;
     view.removeButton.hidden = this.#readOnly || editing;
+    this.#updateTransitionMeta(view, transition);
     for (const phase of ['before', 'after'] as const) {
       const chip = view.chips.get(phase);
       if (chip !== undefined) {
@@ -1077,50 +1464,71 @@ export class StateMachineEditorElement extends HTMLElement {
     }
   }
 
-  #geometryFor(transition: Transition): EdgeGeometry {
-    const from = findState(this.#machine, transition.from);
-    const to = findState(this.#machine, transition.to);
-    if (from === undefined || to === undefined) {
-      return {
-        path: '',
-        source: { x: 0, y: 0 },
-        target: { x: 0, y: 0 },
-        label: { x: 0, y: 0 },
-        arrowAngle: 0,
-      };
-    }
+  #updateTransitionMeta(view: TransitionView, transition: Transition): void {
+    const trigger = transition.trigger;
+    view.trigger.hidden = trigger === null;
+    view.trigger.textContent = trigger === null ? '' : `⚡ ${trigger.name}`;
+    view.trigger.title = trigger === null ? '' : `Trigger: ${trigger.name}`;
+    const guarded = transition.guard.length > 0;
+    view.guard.hidden = !guarded;
+    view.guard.textContent = guarded ? `[${transition.guard}]` : '';
+    view.guard.title = guarded ? `Guard: ${transition.guard}` : '';
+    view.meta.hidden = trigger === null && !guarded;
+  }
+
+  /** How many siblings a transition fans against, and which one it is. */
+  #fanIndexOf(transition: Transition): number {
     const siblings = siblingTransitions(this.#machine, transition);
-    const index = Math.max(
+    return Math.max(
       siblings.findIndex((candidate) => candidate.id === transition.id),
       0,
     );
-    const moved = transition.labelOffset.x !== 0 || transition.labelOffset.y !== 0;
-
-    if (transition.from === transition.to) {
-      const rect = this.#rectFor(from);
-      const auto = computeSelfEdgeGeometry(rect, index);
-      return moved ? bendSelfEdgeThrough(rect, index, this.#labelTarget(transition, auto)) : auto;
-    }
-
-    const sourceRect = this.#rectFor(from);
-    const targetRect = this.#rectFor(to);
-    // The perpendicular flips with the edge direction, so a transition drawn the
-    // other way round has to invert its curvature to land on its own side of the
-    // pair instead of on top of a sibling.
-    const reversed = transition.from > transition.to;
-    const curvature = curvatureFor(index, this.#labelSpacing()) * (reversed ? -1 : 1);
-    const auto = computeEdgeGeometry(sourceRect, targetRect, curvature);
-    return moved
-      ? bendEdgeThrough(sourceRect, targetRect, this.#labelTarget(transition, auto))
-      : auto;
   }
 
-  /** Where the user dragged the card to: the automatic point plus their offset. */
-  #labelTarget(transition: Transition, auto: EdgeGeometry): Point {
-    return {
+  /**
+   * Where the editor would draw the edge on its own. A creation edge is not a
+   * special case here: its source is the start pseudo-node's rect, so fanning,
+   * bending and label placement all apply unchanged.
+   */
+  #autoGeometry(transition: Transition): EdgeGeometry | undefined {
+    const sourceRect = this.#sourceRect(transition.from);
+    const target = findState(this.#machine, transition.to);
+    if (sourceRect === undefined || target === undefined) {
+      return undefined;
+    }
+    const index = this.#fanIndexOf(transition);
+    if (transition.from === transition.to) {
+      return computeSelfEdgeGeometry(sourceRect, index);
+    }
+    // The perpendicular flips with the edge direction, so a transition drawn the
+    // other way round has to invert its curvature to land on its own side of the
+    // pair instead of on top of a sibling. The start pseudo-node sorts first.
+    const reversed = (transition.from ?? '') > transition.to;
+    const curvature = curvatureFor(index, this.#labelSpacing()) * (reversed ? -1 : 1);
+    return computeEdgeGeometry(sourceRect, this.#rectFor(target), curvature);
+  }
+
+  #geometryFor(transition: Transition): EdgeGeometry {
+    const auto = this.#autoGeometry(transition);
+    if (auto === undefined) {
+      return EMPTY_GEOMETRY;
+    }
+    if (transition.labelOffset.x === 0 && transition.labelOffset.y === 0) {
+      return auto;
+    }
+    const sourceRect = this.#sourceRect(transition.from);
+    const target = findState(this.#machine, transition.to);
+    if (sourceRect === undefined || target === undefined) {
+      return auto;
+    }
+    // Where the user dragged the card to: the automatic point plus their offset.
+    const through = {
       x: auto.label.x + transition.labelOffset.x,
       y: auto.label.y + transition.labelOffset.y,
     };
+    return transition.from === transition.to
+      ? bendSelfEdgeThrough(sourceRect, this.#fanIndexOf(transition), through)
+      : bendEdgeThrough(sourceRect, this.#rectFor(target), through);
   }
 
   /**
@@ -1136,25 +1544,7 @@ export class StateMachineEditorElement extends HTMLElement {
 
   /** The point a transition card would sit at if the user had not moved it. */
   #autoLabelPoint(transition: Transition): Point {
-    const from = findState(this.#machine, transition.from);
-    if (from === undefined) {
-      return { x: 0, y: 0 };
-    }
-    const siblings = siblingTransitions(this.#machine, transition);
-    const index = Math.max(
-      siblings.findIndex((candidate) => candidate.id === transition.id),
-      0,
-    );
-    if (transition.from === transition.to) {
-      return computeSelfEdgeGeometry(this.#rectFor(from), index).label;
-    }
-    const to = findState(this.#machine, transition.to);
-    if (to === undefined) {
-      return { x: 0, y: 0 };
-    }
-    const reversed = transition.from > transition.to;
-    const curvature = curvatureFor(index, this.#labelSpacing()) * (reversed ? -1 : 1);
-    return computeEdgeGeometry(this.#rectFor(from), this.#rectFor(to), curvature).label;
+    return this.#autoGeometry(transition)?.label ?? { x: 0, y: 0 };
   }
 
   // -- multi touch ----------------------------------------------------------
@@ -1321,7 +1711,7 @@ export class StateMachineEditorElement extends HTMLElement {
     });
   }
 
-  #onLinkPointerDown(event: PointerEvent, stateId: string): void {
+  #onLinkPointerDown(event: PointerEvent, stateId: string | null): void {
     if (event.button !== 0 || this.#readOnly || this.#pinch !== undefined) {
       return;
     }
@@ -1463,12 +1853,11 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#previewPath.style.display = 'none';
       return;
     }
-    const from = findState(this.#machine, drag.fromId);
-    if (from === undefined) {
+    const rect = this.#sourceRect(drag.fromId);
+    if (rect === undefined) {
       return;
     }
-    const rect = this.#rectFor(from);
-    const start = { x: rect.x + rect.width, y: rect.y + 16 };
+    const start = { x: rect.x + rect.width, y: rect.y + Math.min(16, rect.height / 2) };
     this.#previewPath.setAttribute(
       'd',
       `M ${start.x} ${start.y} L ${drag.pointer.x} ${drag.pointer.y}`,

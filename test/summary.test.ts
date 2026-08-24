@@ -1,13 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { createSideEffect } from '../src/model/machine.js';
-import { describeSideEffectList, shortHookLabel } from '../src/ui/labels.js';
+import {
+  describeElement,
+  describeSideEffectList,
+  describeSource,
+  shortHookLabel,
+} from '../src/ui/labels.js';
 import { computeDropIndex } from '../src/ui/reorder.js';
 import {
+  countDisabled,
   EMPTY_SIDE_EFFECTS_LABEL,
   formatSideEffectSummary,
   formatSideEffectTitle,
 } from '../src/ui/side-effect-summary.js';
-import { sampleMachine } from './helpers.js';
+import { sampleMachine, sideEffect } from './helpers.js';
+
+const withOneOff = [
+  sideEffect('e0', 'sendEmail'),
+  sideEffect('e1', 'chargeCard', { enabled: false }),
+  sideEffect('e2', 'writeAuditLog'),
+];
 
 const effects = ['sendEmail', 'chargeCard', 'writeAuditLog'].map((name, index) =>
   createSideEffect({ id: `d${index}`, name }, `e${index}`),
@@ -32,6 +44,28 @@ describe('side effect summary', () => {
     expect(formatSideEffectTitle(effects)).toBe('1. sendEmail\n2. chargeCard\n3. writeAuditLog');
     expect(formatSideEffectTitle([])).toBe(EMPTY_SIDE_EFFECTS_LABEL);
   });
+
+  it('counts a disabled side effect but marks it', () => {
+    // Excluding it would make the chip disagree with the dialog, which still
+    // lists it. So the count is how many are attached, and the off ones say so.
+    expect(countDisabled(withOneOff)).toBe(1);
+    expect(formatSideEffectSummary(withOneOff)).toBe('sendEmail and 2 more');
+    expect(formatSideEffectTitle(withOneOff)).toBe(
+      '1. sendEmail\n2. chargeCard — disabled\n3. writeAuditLog',
+    );
+  });
+
+  it('marks the collapsed label when the one it shows is off', () => {
+    expect(formatSideEffectSummary([sideEffect('e', 'sendEmail', { enabled: false })])).toBe(
+      'sendEmail (off)',
+    );
+    expect(
+      formatSideEffectSummary([
+        sideEffect('e', 'sendEmail', { enabled: false }),
+        sideEffect('e2', 'chargeCard'),
+      ]),
+    ).toBe('sendEmail (off) and 1 more');
+  });
 });
 
 describe('labels', () => {
@@ -53,6 +87,22 @@ describe('labels', () => {
       phase: 'before',
     });
     expect(labels.description).toBe('Runs before the transition “pay”.');
+  });
+
+  it('describes a state and a transition for the properties dialog', () => {
+    const machine = sampleMachine();
+    expect(describeElement(machine, { kind: 'state', id: 'draft' }).title).toBe(
+      'Properties · Draft',
+    );
+    expect(describeElement(machine, { kind: 'transition', id: 'pay' }).description).toBe(
+      'Attributes of the transition from “Draft” to “Paid”.',
+    );
+  });
+
+  it('calls a null source the start pseudo-node', () => {
+    const machine = sampleMachine();
+    expect(describeSource(machine, null)).toBe('the start');
+    expect(describeSource(machine, 'draft')).toBe('Draft');
   });
 
   it('builds short chip labels', () => {

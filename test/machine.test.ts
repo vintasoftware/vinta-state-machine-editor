@@ -9,20 +9,33 @@ import {
   createSideEffect,
   createState,
   createTransition,
+  creationTransitions,
+  describeChange,
   getSideEffects,
   isFinalState,
   isInitialState,
   moveSideEffect,
+  moveTransition,
+  outgoingTransitions,
   removeSideEffect,
   removeState,
   removeTransition,
   setFinalStates,
   setInitialStates,
+  setSideEffectDescription,
+  setSideEffectEnabled,
+  setSideEffectParams,
   setSideEffects,
   setStateColor,
+  setStateDescription,
+  setTransitionDescription,
+  setTransitionGuard,
+  setTransitionPermission,
+  setTransitionTrigger,
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
+  uniqueTransitionName,
   updateState,
   updateTransition,
 } from '../src/model/machine.js';
@@ -48,6 +61,7 @@ function machineWithTwoStates(): StateMachine {
     transitions: [createTransition({ id: 't1', name: 'go', from: 's1', to: 's2' })],
     initialStateIds: [],
     finalStateIds: [],
+    data: {},
   };
 }
 
@@ -347,5 +361,301 @@ describe('state colours', () => {
     }
     expect(isStateColor('purple')).toBe(false);
     expect(isStateColor(undefined)).toBe(false);
+  });
+});
+
+describe('creation transitions', () => {
+  function machineWithCreation(): StateMachine {
+    const base = machineWithTwoStates();
+    return {
+      ...base,
+      transitions: [
+        createTransition({ id: 'c1', name: 'create', from: null, to: 's1' }),
+        ...base.transitions,
+      ],
+      initialStateIds: ['s1'],
+    };
+  }
+
+  it('accepts a null source and needs no state to exist for it', () => {
+    const machine = addTransition(
+      machineWithTwoStates(),
+      createTransition({ id: 'c1', name: 'create', from: null, to: 's2' }),
+    );
+    expect(machine.transitions[1]?.from).toBeNull();
+    expect(creationTransitions(machine).map((transition) => transition.id)).toEqual(['c1']);
+  });
+
+  it('still validates the target', () => {
+    expect(() =>
+      addTransition(
+        machineWithTwoStates(),
+        createTransition({ id: 'c1', name: 'create', from: null, to: 'ghost' }),
+      ),
+    ).toThrow(StateMachineError);
+  });
+
+  it('deletes creation edges along with the state they feed', () => {
+    const machine = removeState(machineWithCreation(), 's1');
+    expect(machine.transitions).toHaveLength(0);
+    expect(creationTransitions(machine)).toHaveLength(0);
+  });
+
+  it('leaves creation edges alone when another state goes', () => {
+    const machine = removeState(machineWithCreation(), 's2');
+    expect(creationTransitions(machine).map((transition) => transition.id)).toEqual(['c1']);
+  });
+
+  it('turns an ordinary edge into a creation edge and back', () => {
+    const machine = updateTransition(machineWithTwoStates(), 't1', { from: null });
+    expect(machine.transitions[0]?.from).toBeNull();
+    // `null` is a real value, so it must not be read as "leave it alone".
+    expect(updateTransition(machine, 't1', { name: 'renamed' }).transitions[0]?.from).toBeNull();
+    expect(updateTransition(machine, 't1', { from: 's1' }).transitions[0]?.from).toBe('s1');
+  });
+
+  it('names them uniquely across the whole machine', () => {
+    const machine = machineWithCreation();
+    expect(uniqueTransitionName(machine, 'create')).toBe('create 2');
+    const next = addTransition(
+      machine,
+      createTransition({ id: 'c2', name: 'create 2', from: null, to: 's2' }),
+    );
+    expect(uniqueTransitionName(next, 'create')).toBe('create 3');
+    expect(uniqueTransitionName(next, 'go')).toBe('go 2');
+  });
+
+  it('fans creation edges into the same state apart from each other', () => {
+    const machine = addTransition(
+      machineWithCreation(),
+      createTransition({ id: 'c2', name: 'create 2', from: null, to: 's1' }),
+    );
+    const first = machine.transitions[0];
+    if (first === undefined) {
+      throw new Error('missing transition');
+    }
+    expect(siblingTransitions(machine, first).map((transition) => transition.id)).toEqual([
+      'c1',
+      'c2',
+    ]);
+  });
+});
+
+describe('transition order', () => {
+  function branching(): StateMachine {
+    return {
+      states: [
+        createState({ id: 's1', name: 'One', position: { x: 0, y: 0 } }),
+        createState({ id: 's2', name: 'Two', position: { x: 100, y: 0 } }),
+      ],
+      transitions: [
+        createTransition({ id: 'a', name: 'a', from: 's1', to: 's2' }),
+        createTransition({ id: 'other', name: 'other', from: 's2', to: 's1' }),
+        createTransition({ id: 'b', name: 'b', from: 's1', to: 's2' }),
+        createTransition({ id: 'c', name: 'c', from: 's1', to: 's1' }),
+      ],
+      initialStateIds: [],
+      finalStateIds: [],
+      data: {},
+    };
+  }
+
+  it('lists the edges leaving a state in array order', () => {
+    expect(outgoingTransitions(branching(), 's1').map((item) => item.id)).toEqual(['a', 'b', 'c']);
+    expect(outgoingTransitions(branching(), 's2').map((item) => item.id)).toEqual(['other']);
+    expect(outgoingTransitions(branching(), null)).toEqual([]);
+  });
+
+  it('moves an edge among its siblings without disturbing the others', () => {
+    const machine = moveTransition(branching(), 'c', 0);
+    expect(outgoingTransitions(machine, 's1').map((item) => item.id)).toEqual(['c', 'a', 'b']);
+    // The siblings keep the slots they held, so nothing else in the array shifts.
+    expect(machine.transitions.map((item) => item.id)).toEqual(['c', 'other', 'a', 'b']);
+    expect(outgoingTransitions(machine, 's2').map((item) => item.id)).toEqual(['other']);
+  });
+
+  it('moves backwards too', () => {
+    const machine = moveTransition(branching(), 'a', 2);
+    expect(outgoingTransitions(machine, 's1').map((item) => item.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('reorders creation edges as one group', () => {
+    const machine: StateMachine = {
+      ...branching(),
+      transitions: [
+        createTransition({ id: 'c1', name: 'create', from: null, to: 's1' }),
+        createTransition({ id: 'keep', name: 'keep', from: 's1', to: 's2' }),
+        createTransition({ id: 'c2', name: 'create 2', from: null, to: 's2' }),
+      ],
+    };
+    const moved = moveTransition(machine, 'c2', 0);
+    expect(creationTransitions(moved).map((item) => item.id)).toEqual(['c2', 'c1']);
+    expect(moved.transitions.map((item) => item.id)).toEqual(['c2', 'keep', 'c1']);
+  });
+
+  it('refuses a position outside the sibling group', () => {
+    expect(() => moveTransition(branching(), 'a', 3)).toThrow(StateMachineError);
+    expect(() => moveTransition(branching(), 'other', 1)).toThrow(StateMachineError);
+    expect(() => moveTransition(branching(), 'ghost', 0)).toThrow(StateMachineError);
+  });
+});
+
+describe('transition attributes', () => {
+  it('sets and clears the trigger', () => {
+    const machine = setTransitionTrigger(machineWithTwoStates(), 't1', {
+      id: 'pay',
+      name: 'pay',
+    });
+    expect(machine.transitions[0]?.trigger).toEqual({ id: 'pay', name: 'pay' });
+    expect(setTransitionTrigger(machine, 't1', null).transitions[0]?.trigger).toBeNull();
+  });
+
+  it('stores guards and permissions verbatim', () => {
+    const machine = setTransitionPermission(
+      setTransitionGuard(machineWithTwoStates(), 't1', 'total > 0 && !locked'),
+      't1',
+      'orders.pay',
+    );
+    expect(machine.transitions[0]?.guard).toBe('total > 0 && !locked');
+    expect(machine.transitions[0]?.requiredPermission).toBe('orders.pay');
+  });
+
+  it('sets descriptions on both kinds of element', () => {
+    const machine = setStateDescription(
+      setTransitionDescription(machineWithTwoStates(), 't1', 'Moves on.'),
+      's1',
+      'Where it starts.',
+    );
+    expect(machine.transitions[0]?.description).toBe('Moves on.');
+    expect(machine.states[0]?.description).toBe('Where it starts.');
+  });
+
+  it('rejects unknown ids', () => {
+    expect(() => setTransitionGuard(machineWithTwoStates(), 'ghost', 'x')).toThrow(
+      StateMachineError,
+    );
+  });
+});
+
+describe('side effect metadata', () => {
+  const ref: SideEffectListRef = {
+    kind: 'state',
+    stateId: 's1',
+    trigger: 'enter',
+    phase: 'before',
+  };
+
+  function withEffects(): StateMachine {
+    return addSideEffect(
+      addSideEffect(
+        machineWithTwoStates(),
+        ref,
+        createSideEffect({ id: 'a', name: 'alpha' }, 'e1'),
+      ),
+      ref,
+      createSideEffect({ id: 'b', name: 'beta' }, 'e2'),
+    );
+  }
+
+  it('attaches new side effects enabled, whatever the catalog says', () => {
+    expect(getSideEffects(withEffects(), ref).map((effect) => effect.enabled)).toEqual([
+      true,
+      true,
+    ]);
+    expect(getSideEffects(withEffects(), ref)[0]?.description).toBe('');
+  });
+
+  it('turns one off without detaching it', () => {
+    const machine = setSideEffectEnabled(withEffects(), ref, 'e1', false);
+    const effects = getSideEffects(machine, ref);
+    expect(effects).toHaveLength(2);
+    expect(effects[0]?.enabled).toBe(false);
+    expect(effects[1]?.enabled).toBe(true);
+  });
+
+  it('keeps enabled, description and data through every list helper', () => {
+    const machine = setSideEffectDescription(
+      setSideEffectEnabled(withEffects(), ref, 'e1', false),
+      ref,
+      'e1',
+      'paused during the migration',
+    );
+    const moved = setSideEffectParams(moveSideEffect(machine, ref, 0, 1), ref, 'e1', { a: 1 });
+    const [, first] = getSideEffects(moved, ref);
+    expect(first?.id).toBe('e1');
+    expect(first?.enabled).toBe(false);
+    expect(first?.description).toBe('paused during the migration');
+    expect(first?.params).toEqual({ a: 1 });
+
+    const replaced = setSideEffects(moved, ref, getSideEffects(moved, ref));
+    expect(getSideEffects(replaced, ref)[1]?.enabled).toBe(false);
+  });
+});
+
+describe('host-owned data', () => {
+  it('defaults to an empty object in every create helper', () => {
+    expect(createEmptyMachine().data).toEqual({});
+    expect(createState({ name: 'A', position: { x: 0, y: 0 } }).data).toEqual({});
+    expect(createTransition({ name: 't', from: 'a', to: 'b' }).data).toEqual({});
+    expect(createSideEffect({ id: 'd', name: 'n' }).data).toEqual({});
+  });
+
+  it('accepts one and hands it back untouched', () => {
+    expect(createState({ name: 'A', position: { x: 0, y: 0 }, data: { t: 1 } }).data).toEqual({
+      t: 1,
+    });
+    expect(createTransition({ name: 't', from: null, to: 'b', data: { x: [1] } }).data).toEqual({
+      x: [1],
+    });
+    expect(createSideEffect({ id: 'd', name: 'n' }, 'e', { onCommit: true }).data).toEqual({
+      onCommit: true,
+    });
+  });
+
+  it('survives every helper that rebuilds a state or a transition', () => {
+    const machine: StateMachine = {
+      states: [createState({ id: 's1', name: 'One', position: { x: 0, y: 0 }, data: { a: 1 } })],
+      transitions: [
+        createTransition({ id: 't1', name: 'go', from: 's1', to: 's1', data: { b: 2 } }),
+      ],
+      initialStateIds: [],
+      finalStateIds: [],
+      data: { top: true },
+    };
+    const next = setTransitionGuard(
+      updateTransition(
+        updateState(setStateColor(machine, 's1', 'danger'), 's1', { position: { x: 9, y: 9 } }),
+        't1',
+        { name: 'renamed' },
+      ),
+      't1',
+      'x > 1',
+    );
+    expect(next.data).toEqual({ top: true });
+    expect(next.states[0]?.data).toEqual({ a: 1 });
+    expect(next.transitions[0]?.data).toEqual({ b: 2 });
+    expect(setInitialStates(next, ['s1']).data).toEqual({ top: true });
+    expect(removeTransition(next, 't1').data).toEqual({ top: true });
+    expect(removeState(next, 's1').data).toEqual({ top: true });
+  });
+});
+
+describe('describeChange', () => {
+  it('names every kind of change', () => {
+    expect(describeChange({ kind: 'transition-trigger', transitionId: 't' })).toBe(
+      'Change transition trigger',
+    );
+    expect(describeChange({ kind: 'transition-guard', transitionId: 't' })).toBe(
+      'Change transition guard',
+    );
+    expect(describeChange({ kind: 'transition-permission', transitionId: 't' })).toBe(
+      'Change required permission',
+    );
+    expect(describeChange({ kind: 'transition-reorder', transitionId: 't' })).toBe(
+      'Reorder transitions',
+    );
+    expect(describeChange({ kind: 'description', ref: { kind: 'state', id: 's' } })).toBe(
+      'Change description',
+    );
   });
 });

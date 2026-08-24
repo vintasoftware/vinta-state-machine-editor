@@ -50,6 +50,12 @@ export interface SideEffect {
   readonly name: string;
   /** Arbitrary JSON handed to the side effect when it runs. */
   readonly params: JsonObject;
+  /** `false` keeps the attachment configured but stops it from running. */
+  readonly enabled: boolean;
+  /** Free text about this particular attachment. */
+  readonly description: string;
+  /** Host-owned passthrough. The component never reads or interprets it. */
+  readonly data: JsonObject;
 }
 
 /** Whether the side effects run before or after the thing they are attached to. */
@@ -90,15 +96,47 @@ export interface StateNode {
   readonly onLeave: SideEffectHooks;
   /** Colour of the bar across the top of the card. */
   readonly color: StateColor;
+  /** Free text about this state. */
+  readonly description: string;
+  /** Host-owned passthrough. The component never reads or interprets it. */
+  readonly data: JsonObject;
+}
+
+/** An action a transition can be triggered by, as returned by the action provider. */
+export interface ActionDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string | undefined;
+}
+
+/**
+ * The event that fires a transition. The name is denormalized, so the graph
+ * renders without the catalog — exactly like {@link SideEffect.name}.
+ */
+export interface TransitionTrigger {
+  readonly id: string;
+  readonly name: string;
 }
 
 export interface Transition {
   readonly id: string;
+  /**
+   * Identity of this edge. Several edges can share a trigger and be told apart
+   * by their guards, so this is not the same thing as {@link Transition.trigger}.
+   */
   readonly name: string;
-  /** Id of the source {@link StateNode}. */
-  readonly from: string;
+  /** Id of the source {@link StateNode}, or `null` for a creation transition. */
+  readonly from: string | null;
   /** Id of the target {@link StateNode}. */
   readonly to: string;
+  /** The event that fires this edge, or `null` when none has been chosen. */
+  readonly trigger: TransitionTrigger | null;
+  /** Opaque condition expression. The component never parses or evaluates it. */
+  readonly guard: string;
+  /** Opaque permission the actor needs. The component never interprets it. */
+  readonly requiredPermission: string;
+  /** Free text about this transition. */
+  readonly description: string;
   /**
    * Where the transition card sits, relative to the point the editor picks on
    * the edge. `{ x: 0, y: 0 }` keeps it on the edge, following the states.
@@ -106,6 +144,8 @@ export interface Transition {
   readonly labelOffset: Point;
   /** Side effects that run around the transition itself. */
   readonly effects: SideEffectHooks;
+  /** Host-owned passthrough. The component never reads or interprets it. */
+  readonly data: JsonObject;
 }
 
 export interface StateMachine {
@@ -115,6 +155,8 @@ export interface StateMachine {
   readonly initialStateIds: readonly string[];
   /** Ids of the states that end the machine. A state may be both initial and final. */
   readonly finalStateIds: readonly string[];
+  /** Host-owned passthrough. The component never reads or interprets it. */
+  readonly data: JsonObject;
 }
 
 /** How a state participates in the machine's lifecycle. */
@@ -141,16 +183,36 @@ export type SideEffectListRef =
       readonly phase: SideEffectPhase;
     };
 
-export type Selection =
+/** Addresses one state or one transition. */
+export type ElementRef =
   | { readonly kind: 'state'; readonly id: string }
-  | { readonly kind: 'transition'; readonly id: string }
-  | null;
+  | { readonly kind: 'transition'; readonly id: string };
+
+export type Selection = ElementRef | null;
 
 /**
  * Supplies the catalog of side effects the user can attach.
  * Injected by the host so the component never owns fetching/auth concerns.
  */
 export type SideEffectProvider = () => MaybePromise<readonly SideEffectDefinition[]>;
+
+/**
+ * Supplies the catalog a transition's trigger is picked from. Injected the same
+ * way as {@link SideEffectProvider}; without one the trigger is free text.
+ */
+export type ActionProvider = () => MaybePromise<readonly ActionDefinition[]>;
+
+/** Verdict of a {@link GuardValidator}. */
+export type GuardValidation =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly errors: readonly string[] };
+
+/**
+ * Checks a guard expression on the host's behalf. The expression language
+ * belongs to the host: the component only ever hands the text over and renders
+ * whatever comes back.
+ */
+export type GuardValidator = (expression: string) => MaybePromise<GuardValidation>;
 
 /** Describes what changed in a machine, carried by the `state-machine-change` event. */
 export type MachineChange =
@@ -163,6 +225,11 @@ export type MachineChange =
   | { readonly kind: 'transition-remove'; readonly transitionId: string }
   | { readonly kind: 'transition-rename'; readonly transitionId: string }
   | { readonly kind: 'transition-move'; readonly transitionId: string }
+  | { readonly kind: 'transition-trigger'; readonly transitionId: string }
+  | { readonly kind: 'transition-guard'; readonly transitionId: string }
+  | { readonly kind: 'transition-permission'; readonly transitionId: string }
+  | { readonly kind: 'transition-reorder'; readonly transitionId: string }
+  | { readonly kind: 'description'; readonly ref: ElementRef }
   | { readonly kind: 'side-effects-change'; readonly ref: SideEffectListRef }
   | { readonly kind: 'initial-states-change' }
   | { readonly kind: 'final-states-change' }

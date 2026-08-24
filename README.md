@@ -8,6 +8,8 @@ pan/zoom canvas — including the ordered side effects that run around states an
   edges, no canvas bitmap; [CodeMirror 6](https://codemirror.net) backs the JSON parameters editor.
 - Strict TypeScript: no `any`, no type assertions, no non-null assertions — enforced by lint **and** a test that scans `src/`.
 - Side effects are ordered lists; the UI collapses them to `"sendEmail and 2 more"` and opens a dialog for the full list.
+- Transitions carry a trigger, a guard and a required permission — all opaque, all the host's to define.
+- Everything the component does not model rides along in a host-owned `data` blob it never reads.
 
 ```bash
 npm install vinta-state-machine-editor
@@ -28,6 +30,9 @@ npm install vinta-state-machine-editor
     const response = await fetch('/api/side-effects');
     return response.json(); // [{ id, name, description? }]
   };
+
+  // Optional, same shape: the catalog a transition's trigger is picked from.
+  editor.actionProvider = async () => (await fetch('/api/actions')).json();
 
   editor.value = {
     states: [
@@ -79,9 +84,14 @@ verbatim out of a static directory, use the single-file build instead — see
 | Move a state | Drag its header |
 | Move a transition | Drag the transition card's header — the edge bends to keep passing through it. Drop it back on the edge to return to automatic placement |
 | Create a transition | Drag the round **→** handle onto another state (drop it on the same state for a self transition) |
+| Create a *creation* transition | Press **+ Creation** on an initial state's card — it appears next to **▶ Initial** only while the state is marked initial |
+| Add another creation transition | Drag the start pseudo-node's **→** handle onto a state |
 | Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
+| Edit properties | Press **⚙** on a state or transition card, or call `openProperties(ref)` |
+| Reorder the edges leaving a state | Open a transition's **⚙** and use **↑** / **↓** under *Order* |
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
+| Turn a side effect off | Uncheck the box on its row in the dialog — it stays attached and configured |
 | Edit side effect parameters | Press **{ }** on a row in the dialog, then use the nested form or the JSON tab |
 | Colour a state | Press the round swatch in the card header and pick one of the six |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
@@ -99,6 +109,7 @@ interface StateMachine {
   transitions: Transition[];
   initialStateIds: string[]; // states the machine can start in
   finalStateIds: string[]; // states that end the machine
+  data: JsonObject; // host-owned passthrough, never read by the component
 }
 
 interface StateNode {
@@ -108,15 +119,22 @@ interface StateNode {
   onEnter: SideEffectHooks; // around entering the state
   onLeave: SideEffectHooks; // around leaving the state
   color: StateColor; // 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
+  description: string;
+  data: JsonObject;
 }
 
 interface Transition {
   id: string;
-  name: string;
-  from: string; // state id
+  name: string; // the edge's identity — several edges can share a trigger
+  from: string | null; // state id, or null for a creation transition
   to: string; // state id
+  trigger: { id: string; name: string } | null; // the event that fires it
+  guard: string; // opaque condition expression, never parsed here
+  requiredPermission: string; // opaque, same treatment
+  description: string;
   labelOffset: { x: number; y: number }; // {0,0} = let the editor place it
   effects: SideEffectHooks; // around the transition itself
+  data: JsonObject;
 }
 
 interface SideEffectHooks {
@@ -129,8 +147,17 @@ interface SideEffect {
   definitionId: string; // id in the catalog
   name: string; // denormalized, so the graph renders without the catalog
   params: JsonObject; // arbitrary JSON handed to the side effect when it runs
+  enabled: boolean; // false: attached and configured, but it does not run
+  description: string;
+  data: JsonObject;
 }
 ```
+
+Every field added after the first release defaults when absent, so documents written
+against an older version keep parsing: `description`, `guard` and `requiredPermission`
+default to `''`, `trigger` to `null`, `enabled` to `true`, and `data` to `{}`. A field
+that *is* present but has the wrong type is a validation error rather than a silent
+fallback.
 
 Each state therefore owns four ordered lists (`enter · before`, `enter · after`, `leave · before`,
 `leave · after`) and each transition owns two (`before`, `after`). Every list is addressed by a
@@ -182,6 +209,123 @@ The helpers behind all of this are exported and pure, so hosts can reuse them: `
 `removeAtPath`, `renameKeyAtPath`, `appendEntry`, `coerceTo`, `jsonTypeOf`, `parseParamsText`,
 `toJsonObject`, plus `setSideEffectParams` on the model.
 
+### Turning a side effect off
+
+Each attachment carries an `enabled` flag and a `description`, editable from the checkbox and
+the note field on its row in the dialog. A disabled side effect stays attached, keeps its order
+and keeps its parameters — it simply does not run. That is the point: switching one off is not
+the same edit as detaching it, and flipping it back must not lose what it was configured with.
+
+A disabled row renders muted and struck through in the dialog. On the canvas the chip **counts it
+and marks it** rather than hiding it: the count stays the number of attachments, the collapsed
+label reads `sendEmail (off)` when the one it shows is disabled, and the tooltip marks every
+disabled entry with `— disabled`. Excluding them would make the chip disagree with the dialog
+that still lists them, and a list that quietly shrinks is the harder bug to notice.
+
+A `SideEffectDefinition` from the catalog has no say over `enabled`: new attachments are always
+enabled, and `defaultParams` remains the only thing the catalog seeds.
+
+```js
+setSideEffectEnabled(machine, ref, 'effect-1', false);
+setSideEffectDescription(machine, ref, 'effect-1', 'paused during the migration');
+```
+
+### Transition attributes
+
+A transition carries four first-class fields beyond its endpoints, all edited from the properties
+dialog behind the **⚙** button on its card:
+
+```ts
+trigger: { id: string; name: string } | null; // the event that fires the edge
+guard: string;                                // opaque condition expression
+requiredPermission: string;                   // opaque
+description: string;
+```
+
+`trigger` is not `name`. The name is the edge's *identity*; the trigger is what a user fires.
+Several edges can share one trigger and be told apart by their guards, which is exactly the case
+that makes a numeric priority field unnecessary — see [Ordering](#ordering) below.
+
+`guard` and `requiredPermission` are opaque strings. The component never parses, evaluates or
+interprets either: the expression language belongs to the host, and so does deciding what a
+permission means.
+
+On the canvas the card keeps the **name as its headline** and hangs the trigger and guard on a
+second line (`⚡ pay` and `[order.total > 0]`). Putting the trigger on top was tempting — it is
+what the user actually fires — but the headline is also the target of the existing inline rename
+gesture, the trigger is nullable, and it does not identify the card. So the line you double-click
+stays the line you rename.
+
+#### The trigger catalog
+
+Injected exactly like `sideEffectProvider`, so the component never owns fetching or auth:
+
+```js
+editor.actionProvider = async () => {
+  const response = await fetch('/api/actions');
+  return response.json(); // [{ id, name, description? }]
+};
+```
+
+The payload is validated by `parseActionDefinitions`, mirroring `parseSideEffectDefinitions`.
+**Without a provider the trigger is a free text field** rather than a picker, and the text becomes
+both the `id` and the `name`. A trigger the catalog no longer returns is still offered in the
+picker and preserved on save, so retiring an action server-side never silently drops it.
+
+#### Validating guards
+
+```js
+editor.guardValidator = (expression) => {
+  const errors = check(expression); // yours
+  return errors.length === 0 ? { ok: true } : { ok: false, errors };
+};
+```
+
+Called on every edit — it may return a promise, and a slow answer that lands after a newer edit
+is discarded. Errors are listed inline under the field. Absent means no validation at all.
+Saving is never blocked: the component still refuses to interpret the expression, and the host
+validates on save.
+
+### Ordering
+
+Where several edges leave the same state, **their order is their position in the `transitions`
+array among their siblings**. There is deliberately no numeric priority field to keep in sync.
+
+`outgoingTransitions(machine, from)` reads that group (`null` collects the creation edges), and
+`moveTransition(machine, transitionId, index)` moves one within it. The siblings keep the slots
+they held in the array, so nothing else shifts and every other relative order survives — as it
+does through every other model helper, all of which rebuild with `map`/`filter`.
+
+The UI exposes it as **↑** / **↓** under *Order* in a transition's properties dialog, with a
+`2 of 3` readout naming the state the group leaves.
+
+### Host-owned data
+
+`StateMachine`, `StateNode`, `Transition` and `SideEffect` each carry a `data: JsonObject` that
+the component parses, preserves and hands back — and never reads, interprets, validates the shape
+of, or renders.
+
+It exists because `parseStateMachine` whitelists keys and rebuilds every object, so anything a
+host attached would otherwise be discarded on the first `state-machine-change`. The motivating
+case: a Django backend needs a flag meaning *defer this side effect until the surrounding database
+transaction commits* — real to that host, meaningless to any other.
+
+```js
+machine.transitions[0].data; // { deferUntilCommit: true }
+```
+
+Absent parses as `{}`; a non-object is a validation error with a path
+(`machine.states[0].data must be a JSON object.`), exactly like `params`. The `create*` helpers
+accept one and default to `{}`; every other helper carries it through untouched.
+
+There is **no UI for it and no `MachineChange` kind**. A host mutating it assigns `value`, which
+already emits nothing.
+
+> Anything the component models itself belongs in a real field instead. `data` is the escape
+> hatch for attributes this component has no concept of — not a place to shadow `guard`,
+> `enabled` or `description`, which have their own fields, their own validation and their own
+> change events.
+
 ### State colours
 
 Each state carries a semantic colour, drawn as a bar across the top of its card and editable from
@@ -223,6 +367,65 @@ editor.value.initialStateIds; // ['draft']
 
 Changes arrive as `initial-states-change` / `final-states-change`.
 
+### Creation transitions
+
+`Transition.from` may be `null`. That means **creation**: the edge that takes a brand new record
+into an initial state.
+
+It exists because a record with no status yet resolves its available transitions as exactly the
+null-source edges, so each one carries its own name, trigger, guard, required permission and side
+effects — the authorization and routing for *who may create this record, under what condition, and
+into which of several initial states*. Two guarded creation edges into different initial states
+under different triggers is the case that forces it, and none of that is expressible as the target
+state's `onEnter` side effects, which only run once the decision has already been made.
+
+**It is not a dangling edge.** A single **start pseudo-node** — a small filled dot, the UML initial
+pseudostate — is drawn on the canvas, and every creation edge originates there. So every transition
+card still sits on an edge with a real source and a real target: fanning, bending and `labelOffset`
+all apply unchanged, with no null-source special case in the geometry layer.
+
+The pseudo-node appears with the first creation edge and disappears with the last. It is not a
+state: it never enters `states`, `initialStateIds` or `finalStateIds`, has no name, colour, side
+effects or Initial/Final toggles, and cannot be selected or deleted. It is **placed, not persisted** —
+deterministically, left of the leftmost state it feeds and centred on them vertically — so nothing
+new has to be stored on the machine and no `creationOrigin` field was added.
+
+Creating them:
+
+- **+ Creation** on a state card, beside **▶ Initial** and visible only while the state is marked
+  initial. There is nothing to drag from until the first edge exists, so the button is the way in.
+  It creates the edge, brings the pseudo-node into existence, selects the new edge and starts inline
+  rename — selecting it is the point, since the trigger and guard are filled in from there.
+- Dragging the pseudo-node's **→** handle onto a state, for every one after that.
+
+Default names are unique across the **whole machine**, not per target state, because the backend
+namespaces creation edges version-wide while ordinary edges are namespaced per source state:
+pressing the button on two different cards gives you `create` and `create 2`.
+
+The initial flag and the creation edges are independent, and stay that way:
+
+- Marking a state initial does **not** create an edge. A state marked initial with no creation edges
+  is the common, valid case — the flag alone is a field default for records created without going
+  through a transition.
+- Unmarking it does **not** delete the edges it has. Silent destruction on a toggle someone may flip
+  straight back is worse than a temporarily invalid graph.
+- Orphaned creation edges are left alone and are **not** styled as errors. An edge from the start
+  node into a state with no ▶ marker is already visibly odd, and the host validates on save.
+- The left-border entry arrow is suppressed on a state that has at least one creation edge, and kept
+  for an initial state with none. The arrow means *can start here*, the edges mean *here is exactly
+  how*; drawing both is redundant.
+- Deleting a state deletes its creation edges along with its other edges.
+
+Deliberately **out of scope**: the editor does not enforce that a creation edge targets a state in
+`initialStateIds`, any more than it enforces that a final state has no outgoing edges. Those are
+domain rules the host validates on save; the editor stays a rendering and data concern.
+
+```js
+editor.addCreationTransition('draft'); // what the + Creation button calls
+editor.addTransition(null, 'draft'); // same edge, without the select-and-rename
+creationTransitions(machine); // every null-source edge
+```
+
 ### Laying out transitions
 
 Transitions between the same pair of states are fanned apart automatically, in both directions, so
@@ -242,15 +445,19 @@ offset to `{ x: 0, y: 0 }`.
 | --- | --- | --- |
 | `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`. The current `selection` is kept if the selected id still names a state (or transition) in the new machine, so a host inspector panel survives writing edits back. |
 | `sideEffectProvider` | `() => MaybePromise<SideEffectDefinition[]>` | Catalog used by the dialog. Called every time a dialog opens. |
+| `actionProvider` | `() => MaybePromise<ActionDefinition[]>` | Catalog the transition trigger is picked from. Without it the trigger is a free text field. |
+| `guardValidator` | `(expression) => MaybePromise<{ ok: true } \| { ok: false, errors }>` | Called on every guard edit; errors render inline. Absent means no validation. |
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
 | `selection` | `{ kind: 'state' \| 'transition', id } \| null` | Survives a `value` assignment that keeps the selected element; becomes `null` if that element is gone, and only that drop emits `state-machine-selection-change`. |
 | `viewport` | `{ x, y, scale }` | Pan/zoom state; assignable to restore a saved view. |
 
 ### Methods
 
-`addState({ name?, position? })`, `addTransition(from, to, name?)`, `renameSelection()`,
-`zoomIn()`, `zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
-`openSideEffects(ref): Promise<boolean>`.
+`addState({ name?, position? })`, `addTransition(from, to, name?)` — `from` accepts `null` for a
+creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `zoomIn()`,
+`zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
+`openSideEffects(ref): Promise<boolean>`, `openProperties(ref): Promise<boolean>` where `ref` is
+`{ kind: 'state' | 'transition', id }`.
 
 ### Events
 
@@ -261,13 +468,29 @@ offset to `{ x: 0, y: 0 }`.
 
 Both bubble and are `composed`, so they cross shadow boundaries.
 
+`change.kind` is one of `state-add`, `state-remove`, `state-rename`, `state-move`, `state-color`,
+`transition-add`, `transition-remove`, `transition-rename`, `transition-move`,
+`transition-trigger`, `transition-guard`, `transition-permission`, `transition-reorder`,
+`description`, `side-effects-change`, `initial-states-change`, `final-states-change` and
+`replace`. `description` carries a `ref` (`{ kind, id }`) since both states and transitions have
+one; every other transition kind carries a `transitionId`. `describeChange(change)` turns any of
+them into a label for an undo stack.
+
+Saving the properties dialog emits **one event per field that actually changed** — three edits in
+one dialog arrive as three events, in field order — so a host can react granularly rather than
+diffing the whole machine. Fields left alone emit nothing.
+
 ### Pure helpers
 
 The model layer is exported and framework-free, so hosts can build undo stacks, validation or
 server-side rendering on top of it: `addState`, `updateState`, `removeState`, `addTransition`,
 `updateTransition`, `removeTransition`, `getSideEffects`, `setSideEffects`, `addSideEffect`,
-`removeSideEffect`, `moveSideEffect`, `parseStateMachine`, `assertStateMachine`, plus the geometry
-helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`, …).
+`removeSideEffect`, `moveSideEffect`, `setSideEffectEnabled`, `setSideEffectDescription`,
+`setTransitionTrigger`, `setTransitionGuard`, `setTransitionPermission`,
+`setTransitionDescription`, `setStateDescription`, `outgoingTransitions`, `creationTransitions`,
+`moveTransition`, `uniqueTransitionName`, `parseStateMachine`, `parseActionDefinitions`,
+`assertStateMachine`, plus the geometry helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`,
+…).
 
 ## Framework usage
 
@@ -338,18 +561,19 @@ path in place of the bare specifier. Everything else in this README applies unch
 | | `./register` (bundler) | `./bundled` (no bundler) |
 | --- | --- | --- |
 | Files to serve | your bundler's output | `bundled.js`, and nothing else |
-| Loaded up front | 67.1 kB → **19.0 kB gzipped** | 408.1 kB → **130.7 kB gzipped** |
+| Loaded up front | 92.4 kB → **25.5 kB gzipped** | 416.1 kB → **130.6 kB gzipped** |
 | Loaded on first **JSON** tab | 339.4 kB → 110.1 kB gzipped | — already there |
-| Total over the wire | 406.5 kB → 129.1 kB gzipped | 408.1 kB → 130.7 kB gzipped |
+| Total over the wire | 431.8 kB → 135.6 kB gzipped | 416.1 kB → 130.6 kB gzipped |
 
-Same bytes overall; the difference is *when*. The bundler route keeps CodeMirror out of the initial
+Roughly the same bytes overall — the split column also carries the demo page's own code — and the
+difference is *when*. The bundler route keeps CodeMirror out of the initial
 download and fetches it on first use. The bundled route pays for it up front, every load, even for
 the sessions that never open a JSON tab.
 
 That is the deliberate trade. Keeping the split would have meant emitting a second file with a
 stable name and asking every host to copy it too — a step that is easy to miss, and whose failure
 mode is a runtime error in one tab of one dialog rather than a broken build. One file cannot be
-half-deployed. If the eager 130 kB matters more to you than that, use a bundler and the `./register`
+half-deployed. If the eager 131 kB matters more to you than that, use a bundler and the `./register`
 export, which is unchanged and still code-split.
 
 ## Styling
@@ -368,14 +592,16 @@ state-machine-editor {
 }
 ```
 
-Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `edge`, `chip`.
+Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `start-node`, `edge`, `chip`.
 
 The canvas sets `touch-action: none`, so touch gestures reach the component instead of scrolling
 the page. Pinch is handled from raw pointer events (two fingers) and from `wheel` events with
 `ctrlKey`, which is how every browser reports a trackpad pinch.
 
 Under `@media (pointer: coarse)` every hit target grows — icon buttons and the link handle go from
-22 px to 32 px, chips and dialog rows gain padding — so the editor stays usable with a fingertip.
+22 px to 32 px, chips, form fields and dialog rows gain padding, and `--sme-node-width` goes to
+288 px so the five grown controls in a state card's header do not squeeze its name away — so the
+editor stays usable with a fingertip.
 Every gesture has a tappable equivalent: renaming has its **✎** / **✓** / **✕** buttons, reordering
 side effects has `Alt` + arrows alongside the drag handle, and zoom has toolbar buttons.
 
@@ -387,7 +613,7 @@ itself is browser-only and has no Node requirement.
 Consumers install CodeMirror transitively (`@codemirror/state`, `view`, `commands`, `language`,
 `lang-json`, `lint` and `@lezer/highlight`). The dialog reaches it through a dynamic `import()`, and
 nothing else in the package references it, so bundlers put it in its own chunk that is fetched the
-first time someone opens the JSON tab. In this repo's demo build that is 67 kB up front (19 kB
+first time someone opens the JSON tab. In this repo's demo build that is 92 kB up front (25 kB
 gzipped) with CodeMirror's 339 kB in a separate chunk. Hosts without a bundler take the
 [other route](#no-build-step) instead.
 

@@ -1,4 +1,5 @@
 import type {
+  ActionDefinition,
   JsonObject,
   Point,
   SideEffect,
@@ -8,6 +9,7 @@ import type {
   StateMachine,
   StateNode,
   Transition,
+  TransitionTrigger,
 } from '../types.js';
 import { isStateColor, STATE_COLORS } from '../types.js';
 import { StateMachineError } from './errors.js';
@@ -28,6 +30,37 @@ function readString(source: Record<string, unknown>, key: string, path: string, 
   if (typeof value !== 'string' || value.length === 0) {
     issues.push(`${path}.${key} must be a non-empty string.`);
     return '';
+  }
+  return value;
+}
+
+/** Free text: absent means empty, anything that is not a string is an error. */
+function readText(source: Record<string, unknown>, key: string, path: string, issues: Issues) {
+  const value = source[key];
+  if (value === undefined) {
+    return '';
+  }
+  if (typeof value !== 'string') {
+    issues.push(`${path}.${key} must be a string.`);
+    return '';
+  }
+  return value;
+}
+
+function readBoolean(
+  source: Record<string, unknown>,
+  key: string,
+  path: string,
+  fallback: boolean,
+  issues: Issues,
+) {
+  const value = source[key];
+  if (value === undefined) {
+    return fallback;
+  }
+  if (typeof value !== 'boolean') {
+    issues.push(`${path}.${key} must be a boolean.`);
+    return fallback;
   }
   return value;
 }
@@ -83,16 +116,45 @@ function parseParams(value: unknown, path: string, issues: Issues): JsonObject {
   return params;
 }
 
+/**
+ * The host-owned `data` blob. Whitelisting keys would drop whatever a host
+ * attached, so this one field is carried through verbatim — the component never
+ * looks inside it.
+ */
+function parseData(value: unknown, path: string, issues: Issues): JsonObject {
+  if (value === undefined) {
+    return {};
+  }
+  const data = toJsonObject(value);
+  if (data === undefined) {
+    issues.push(`${path} must be a JSON object.`);
+    return {};
+  }
+  return data;
+}
+
 function parseSideEffect(value: unknown, path: string, issues: Issues): SideEffect {
   if (!isRecord(value)) {
     issues.push(`${path} must be an object.`);
-    return { id: '', definitionId: '', name: '', params: {} };
+    return {
+      id: '',
+      definitionId: '',
+      name: '',
+      params: {},
+      enabled: true,
+      description: '',
+      data: {},
+    };
   }
   return {
     id: readString(value, 'id', path, issues),
     definitionId: readString(value, 'definitionId', path, issues),
     name: readString(value, 'name', path, issues),
     params: parseParams(value['params'], `${path}.params`, issues),
+    // Absent means enabled, so documents written before the flag existed still run.
+    enabled: readBoolean(value, 'enabled', path, true, issues),
+    description: readText(value, 'description', path, issues),
+    data: parseData(value['data'], `${path}.data`, issues),
   };
 }
 
@@ -142,6 +204,8 @@ function parseState(value: unknown, path: string, issues: Issues): StateNode {
       onEnter: { before: [], after: [] },
       onLeave: { before: [], after: [] },
       color: 'neutral',
+      description: '',
+      data: {},
     };
   }
   return {
@@ -151,7 +215,33 @@ function parseState(value: unknown, path: string, issues: Issues): StateNode {
     onEnter: parseHooks(value['onEnter'], `${path}.onEnter`, issues),
     onLeave: parseHooks(value['onLeave'], `${path}.onLeave`, issues),
     color: parseColor(value['color'], `${path}.color`, issues),
+    description: readText(value, 'description', path, issues),
+    data: parseData(value['data'], `${path}.data`, issues),
   };
+}
+
+/** Absent means "no trigger chosen yet", so `null` and a missing key both parse. */
+function parseTrigger(value: unknown, path: string, issues: Issues): TransitionTrigger | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    issues.push(`${path} must be an object with id and name, or null.`);
+    return null;
+  }
+  return {
+    id: readString(value, 'id', path, issues),
+    name: readString(value, 'name', path, issues),
+  };
+}
+
+/**
+ * A transition's source. `null` is the creation edge — the one that takes a
+ * brand new record into an initial state. Only `null` means that: an empty
+ * string or a missing key is still a malformed document.
+ */
+function parseFrom(source: Record<string, unknown>, path: string, issues: Issues): string | null {
+  return source['from'] === null ? null : readString(source, 'from', path, issues);
 }
 
 function parseTransition(value: unknown, path: string, issues: Issues): Transition {
@@ -162,21 +252,31 @@ function parseTransition(value: unknown, path: string, issues: Issues): Transiti
       name: '',
       from: '',
       to: '',
+      trigger: null,
+      guard: '',
+      requiredPermission: '',
+      description: '',
       labelOffset: { x: 0, y: 0 },
       effects: { before: [], after: [] },
+      data: {},
     };
   }
   return {
     id: readString(value, 'id', path, issues),
     name: readString(value, 'name', path, issues),
-    from: readString(value, 'from', path, issues),
+    from: parseFrom(value, path, issues),
     to: readString(value, 'to', path, issues),
+    trigger: parseTrigger(value['trigger'], `${path}.trigger`, issues),
+    guard: readText(value, 'guard', path, issues),
+    requiredPermission: readText(value, 'requiredPermission', path, issues),
+    description: readText(value, 'description', path, issues),
     // Absent means "sit on the edge", so older documents keep working.
     labelOffset:
       value['labelOffset'] === undefined
         ? { x: 0, y: 0 }
         : parsePoint(value['labelOffset'], `${path}.labelOffset`, issues),
     effects: parseHooks(value['effects'], `${path}.effects`, issues),
+    data: parseData(value['data'], `${path}.data`, issues),
   };
 }
 
@@ -245,8 +345,10 @@ export function parseStateMachine(input: unknown): ParseResult<StateMachine> {
   const stateIds = new Set(states.map((state) => state.id));
   const initialStateIds = parseStateIdList(input, 'initialStateIds', stateIds, issues);
   const finalStateIds = parseStateIdList(input, 'finalStateIds', stateIds, issues);
+  const data = parseData(input['data'], 'machine.data', issues);
   for (const transition of transitions) {
-    if (!stateIds.has(transition.from)) {
+    // A creation edge has no source to check; it hangs off the start pseudo-node.
+    if (transition.from !== null && !stateIds.has(transition.from)) {
       issues.push(`Transition "${transition.id}" points from unknown state "${transition.from}".`);
     }
     if (!stateIds.has(transition.to)) {
@@ -257,7 +359,7 @@ export function parseStateMachine(input: unknown): ParseResult<StateMachine> {
   if (issues.length > 0) {
     return { ok: false, errors: issues };
   }
-  return { ok: true, value: { states, transitions, initialStateIds, finalStateIds } };
+  return { ok: true, value: { states, transitions, initialStateIds, finalStateIds, data } };
 }
 
 /** Same as {@link parseStateMachine} but throws a {@link StateMachineError} on invalid input. */
@@ -294,6 +396,31 @@ export function parseSideEffectDefinitions(
       name: readString(item, 'name', path, issues),
       description,
       defaultParams,
+    };
+    return definition;
+  });
+  if (issues.length > 0) {
+    return { ok: false, errors: issues };
+  }
+  return { ok: true, value: definitions };
+}
+
+/** Validates the payload returned by an {@link ActionProvider}. */
+export function parseActionDefinitions(input: unknown): ParseResult<readonly ActionDefinition[]> {
+  if (!Array.isArray(input)) {
+    return { ok: false, errors: ['Action catalog must be an array.'] };
+  }
+  const issues: Issues = [];
+  const definitions = input.map((item, index) => {
+    const path = `actions[${index}]`;
+    if (!isRecord(item)) {
+      issues.push(`${path} must be an object.`);
+      return { id: '', name: '' };
+    }
+    const definition: ActionDefinition = {
+      id: readString(item, 'id', path, issues),
+      name: readString(item, 'name', path, issues),
+      description: readOptionalString(item, 'description'),
     };
     return definition;
   });

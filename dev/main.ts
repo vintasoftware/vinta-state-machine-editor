@@ -6,11 +6,13 @@
  * the side effect catalog (here a fake endpoint with latency).
  */
 import {
+  type ActionDefinition,
   createSideEffect,
   createState,
   createTransition,
   defineStateMachineEditor,
   describeChange,
+  type GuardValidation,
   type JsonObject,
   type SelectionChangeEvent,
   type SideEffectDefinition,
@@ -47,6 +49,15 @@ const CATALOG: readonly SideEffectDefinition[] = [
   },
 ];
 
+/** The events a transition can be fired by — the trigger picker's catalog. */
+const ACTIONS: readonly ActionDefinition[] = [
+  { id: 'submit', name: 'submit', description: 'Customer places the order' },
+  { id: 'pay', name: 'pay', description: 'Payment captured' },
+  { id: 'cancel', name: 'cancel' },
+  { id: 'refund', name: 'refund' },
+  { id: 'import', name: 'import', description: 'Bulk import from a spreadsheet' },
+];
+
 /**
  * Stands in for `fetch('/api/side-effects')`. Swap the body for a real request:
  * `const response = await fetch(url); return response.json();`
@@ -54,6 +65,32 @@ const CATALOG: readonly SideEffectDefinition[] = [
 async function fetchSideEffectCatalog(): Promise<readonly SideEffectDefinition[]> {
   await new Promise((resolve) => setTimeout(resolve, 350));
   return CATALOG;
+}
+
+async function fetchActionCatalog(): Promise<readonly ActionDefinition[]> {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return ACTIONS;
+}
+
+/**
+ * Stands in for a real expression checker. The guard language belongs to the
+ * host, so this one only insists on a shape the demo backend would accept.
+ */
+function validateGuard(expression: string): GuardValidation {
+  const trimmed = expression.trim();
+  if (trimmed.length === 0) {
+    return { ok: true };
+  }
+  const errors: string[] = [];
+  if (!/^[\w\s.()'"<>=!&|+-]+$/.test(trimmed)) {
+    errors.push('Only identifiers, comparisons and boolean operators are allowed.');
+  }
+  const opens = trimmed.split('(').length - 1;
+  const closes = trimmed.split(')').length - 1;
+  if (opens !== closes) {
+    errors.push('Unbalanced parentheses.');
+  }
+  return errors.length === 0 ? { ok: true } : { ok: false, errors };
 }
 
 function effect(
@@ -138,11 +175,32 @@ function exampleMachine(): StateMachine {
     effects: { before: [], after: [effect('refund', 'e-refund-2')] },
   };
 
+  // Two creation edges, so the start pseudo-node and its fanning are visible.
+  const create = createTransition({
+    id: 'create',
+    name: 'create',
+    from: null,
+    to: 'draft',
+    trigger: { id: 'submit', name: 'submit' },
+    requiredPermission: 'orders.add_order',
+    description: 'A customer starts a new order.',
+  });
+  const importOrder = createTransition({
+    id: 'create-import',
+    name: 'create 2',
+    from: null,
+    to: 'draft',
+    trigger: { id: 'import', name: 'import' },
+    guard: 'actor.is_staff',
+    requiredPermission: 'orders.import_order',
+  });
+
   return {
     states: [draft, pending, paid, cancelled],
-    transitions: [submit, pay, cancel, refund],
+    transitions: [create, importOrder, submit, pay, cancel, refund],
     initialStateIds: ['draft'],
     finalStateIds: ['paid', 'cancelled'],
+    data: {},
   };
 }
 
@@ -176,6 +234,8 @@ const eventCount = requireElement('#event-count', isHtml);
 const readOnlyToggle = requireElement('#readonly', isInput);
 
 editor.sideEffectProvider = fetchSideEffectCatalog;
+editor.actionProvider = fetchActionCatalog;
+editor.guardValidator = validateGuard;
 editor.value = exampleMachine();
 
 let events = 0;
@@ -222,7 +282,13 @@ requireElement('#reset', isHtml).addEventListener('click', () => {
 });
 
 requireElement('#clear', isHtml).addEventListener('click', () => {
-  editor.value = { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
+  editor.value = {
+    states: [],
+    transitions: [],
+    initialStateIds: [],
+    finalStateIds: [],
+    data: {},
+  };
   renderJson();
 });
 

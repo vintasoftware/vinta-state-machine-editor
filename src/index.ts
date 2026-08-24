@@ -1,3 +1,4 @@
+import { PropertiesDialogElement } from './ui/properties-dialog.js';
 import { SideEffectsDialogElement } from './ui/side-effects-dialog.js';
 import { StateMachineEditorElement } from './ui/state-machine-editor.js';
 
@@ -65,6 +66,7 @@ export {
   createSideEffect,
   createState,
   createTransition,
+  creationTransitions,
   describeChange,
   emptyHooks,
   findState,
@@ -73,17 +75,27 @@ export {
   isFinalState,
   isInitialState,
   moveSideEffect,
+  moveTransition,
+  outgoingTransitions,
   removeSideEffect,
   removeState,
   removeTransition,
   setFinalStates,
   setInitialStates,
+  setSideEffectDescription,
+  setSideEffectEnabled,
   setSideEffectParams,
   setSideEffects,
   setStateColor,
+  setStateDescription,
+  setTransitionDescription,
+  setTransitionGuard,
+  setTransitionPermission,
+  setTransitionTrigger,
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
+  uniqueTransitionName,
   updateSideEffects,
   updateState,
   updateTransition,
@@ -91,6 +103,7 @@ export {
 export type { ParseResult } from './model/parse.js';
 export {
   assertStateMachine,
+  parseActionDefinitions,
   parseSideEffectDefinitions,
   parseStateMachine,
 } from './model/parse.js';
@@ -106,10 +119,28 @@ export type { JsonFormOptions } from './ui/json-form.js';
 export { JsonFormEditor } from './ui/json-form.js';
 // JsonTextEditor is deliberately not re-exported: a static export here would pull
 // CodeMirror into every bundle, defeating the dialog's dynamic import of it.
-export { describeSideEffectList, shortHookLabel } from './ui/labels.js';
+export {
+  describeElement,
+  describeSideEffectList,
+  describeSource,
+  START_NODE_LABEL,
+  shortHookLabel,
+} from './ui/labels.js';
+export type {
+  OrderContext,
+  PropertiesDialogOptions,
+  PropertiesDraft,
+} from './ui/properties-dialog.js';
+export {
+  emptyPropertiesDraft,
+  PropertiesDialogElement,
+  triggerFromText,
+} from './ui/properties-dialog.js';
 export { computeDropIndex } from './ui/reorder.js';
 export {
+  countDisabled,
   countWithParams,
+  DISABLED_MARKER,
   EMPTY_SIDE_EFFECTS_LABEL,
   formatSideEffectSummary,
   formatSideEffectTitle,
@@ -120,13 +151,15 @@ export { formatParamsBadge, SideEffectsDialogElement } from './ui/side-effects-d
 export { StateMachineEditorElement } from './ui/state-machine-editor.js';
 
 let dialogRegistered = false;
+let propertiesRegistered = false;
 let editorRegistered = false;
 
 /**
  * Registers the custom elements. Safe to call multiple times.
  *
- * @param tagName - overrides the editor tag name; the dialog is registered as
- *   `<tagName>-side-effects-dialog` so it never clashes with the default names.
+ * @param tagName - overrides the editor tag name; the dialogs are registered as
+ *   `<tagName>-side-effects-dialog` and `<tagName>-properties-dialog` so they
+ *   never clash with the default names.
  */
 export function defineStateMachineEditor(
   tagName: string = StateMachineEditorElement.tagName,
@@ -135,13 +168,20 @@ export function defineStateMachineEditor(
   if (registry === undefined) {
     return;
   }
-  const dialogTagName =
-    tagName === StateMachineEditorElement.tagName
-      ? SideEffectsDialogElement.tagName
-      : `${tagName}-side-effects-dialog`;
+  const isDefaultTag = tagName === StateMachineEditorElement.tagName;
+  const dialogTagName = isDefaultTag
+    ? SideEffectsDialogElement.tagName
+    : `${tagName}-side-effects-dialog`;
+  const propertiesTagName = isDefaultTag
+    ? PropertiesDialogElement.tagName
+    : `${tagName}-properties-dialog`;
   if (!dialogRegistered && registry.get(dialogTagName) === undefined) {
     registry.define(dialogTagName, SideEffectsDialogElement);
     dialogRegistered = true;
+  }
+  if (!propertiesRegistered && registry.get(propertiesTagName) === undefined) {
+    registry.define(propertiesTagName, PropertiesDialogElement);
+    propertiesRegistered = true;
   }
   if (!editorRegistered && registry.get(tagName) === undefined) {
     registry.define(tagName, StateMachineEditorElement);
@@ -153,5 +193,6 @@ declare global {
   interface HTMLElementTagNameMap {
     'state-machine-editor': StateMachineEditorElement;
     'state-machine-side-effects-dialog': SideEffectsDialogElement;
+    'state-machine-properties-dialog': PropertiesDialogElement;
   }
 }

@@ -231,7 +231,7 @@ export class SideEffectsDialogElement extends HTMLElement {
 
     this.#draft.forEach((effect, index) => {
       const item = createElement('li', {
-        className: 'row-item',
+        className: effect.enabled ? 'row-item' : 'row-item is-disabled',
         parent: this.#list,
         attrs: { 'data-index': String(index), 'data-effect-id': effect.id },
       });
@@ -251,6 +251,21 @@ export class SideEffectsDialogElement extends HTMLElement {
       handle.addEventListener('keydown', this.#onHandleKeyDown);
 
       createElement('span', { className: 'row__order', parent: row, text: `${index + 1}` });
+
+      // A disabled side effect stays attached and configured; it just does not run.
+      const enabled = createElement('input', {
+        className: 'row__enabled',
+        parent: row,
+        attrs: { 'aria-label': `Run ${effect.name}`, title: 'Run this side effect' },
+      });
+      enabled.type = 'checkbox';
+      enabled.checked = effect.enabled;
+      enabled.disabled = this.#readOnly;
+      enabled.addEventListener('change', () => {
+        this.#patch(effect.id, { enabled: enabled.checked });
+        item.classList.toggle('is-disabled', !enabled.checked);
+      });
+
       createElement('span', {
         className: 'row__name',
         parent: row,
@@ -287,11 +302,27 @@ export class SideEffectsDialogElement extends HTMLElement {
       });
       remove.disabled = this.#readOnly;
       remove.addEventListener('click', () => {
-        this.#draft = this.#draft.filter((item) => item.id !== effect.id);
+        this.#draft = this.#draft.filter((entry) => entry.id !== effect.id);
         if (this.#expandedId === effect.id) {
           this.#expandedId = undefined;
         }
         this.#renderList();
+      });
+
+      // Second line, so a long note never squeezes the controls off the row.
+      const description = createElement('input', {
+        className: 'row__description',
+        parent: item,
+        attrs: {
+          'aria-label': `Description of ${effect.name}`,
+          placeholder: 'Description',
+        },
+      });
+      description.value = effect.description;
+      description.readOnly = this.#readOnly;
+      // Written straight into the draft: re-rendering here would drop the caret.
+      description.addEventListener('input', () => {
+        this.#patch(effect.id, { description: description.value });
       });
 
       if (expanded) {
@@ -407,6 +438,22 @@ export class SideEffectsDialogElement extends HTMLElement {
     }
 
     showMode(this.#paramsMode);
+  }
+
+  /** Writes per-attachment metadata into the draft, leaving the DOM alone. */
+  #patch(
+    effectId: string,
+    patch: { readonly enabled?: boolean; readonly description?: string },
+  ): void {
+    this.#draft = this.#draft.map((effect) =>
+      effect.id === effectId
+        ? {
+            ...effect,
+            enabled: patch.enabled ?? effect.enabled,
+            description: patch.description ?? effect.description,
+          }
+        : effect,
+    );
   }
 
   /** Writes new parameters into the draft without re-rendering the open editor. */

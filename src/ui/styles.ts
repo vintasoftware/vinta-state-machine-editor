@@ -186,6 +186,19 @@ export const editorStyles: string = `
 
   .start-marker__dot { fill: var(--sme-text); }
   .start-marker__line { stroke: var(--sme-text); stroke-width: 1.75; }
+
+  /* The UML initial pseudostate: a small filled dot, not a card. */
+  .start-node {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--sme-text);
+    box-shadow: 0 0 0 3px var(--sme-canvas);
+    user-select: none;
+  }
+
+  .start-node__link { top: -2px; right: -13px; }
   .node.is-link-target { border-color: var(--sme-accent); }
 
   .node__header {
@@ -392,6 +405,21 @@ export const editorStyles: string = `
   .node__role:disabled { cursor: default; opacity: 0.75; }
   .node__role:disabled:not(.is-on) { opacity: 0.4; }
 
+  .node__create {
+    flex: none;
+    padding: 3px 8px;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    border: 1px dashed var(--sme-border);
+    border-radius: 999px;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+    white-space: nowrap;
+  }
+
+  .node__create:hover:not(:disabled) { border-color: var(--sme-accent); color: var(--sme-text); }
+  .node__create:disabled { cursor: default; opacity: 0.4; }
+
   .node__link {
     position: absolute;
     top: 8px;
@@ -442,6 +470,33 @@ export const editorStyles: string = `
     white-space: nowrap;
   }
 
+  .edge-card.is-creation { border-style: dashed; }
+
+  .edge-card__meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 4px 8px 0;
+    min-width: 0;
+  }
+
+  .edge-card__trigger,
+  .edge-card__guard {
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .edge-card__trigger { flex: none; max-width: 60%; color: var(--sme-accent); font-weight: 600; }
+
+  .edge-card__guard {
+    flex: 1;
+    min-width: 0;
+    color: var(--sme-text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
   .edge-card .hooks { padding: 6px 8px 8px; }
   .edge-card .hook { grid-template-columns: 46px 1fr; }
 
@@ -479,13 +534,17 @@ export const editorStyles: string = `
    * mouse and far too small for a fingertip.
    */
   @media (pointer: coarse) {
+    /* Five grown-up hit targets share the header, so the card grows with them —
+       otherwise the name is squeezed down to a couple of characters. */
+    :host { --sme-node-width: 288px; }
     .icon-button { width: 32px; height: 32px; font-size: 15px; }
     .node__role { padding: 7px 8px; font-size: 12px; }
+    .node__create { padding: 7px 10px; font-size: 12px; }
     .node__color { width: 32px; height: 32px; }
     .node__color::before { width: 16px; height: 16px; }
     .node__palette { grid-template-columns: repeat(3, 32px); gap: 10px; top: 48px; }
     .palette__option { width: 32px; height: 32px; }
-    .node__header { padding: 10px; gap: 10px; }
+    .node__header { padding: 10px; gap: 6px; }
     .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }
     .chip { padding: 8px 10px; font-size: 13px; }
     .hook { grid-template-columns: 84px 1fr; gap: 10px; }
@@ -559,6 +618,24 @@ export const dialogStyles: string = `
 
   .row__handle { flex: none; cursor: grab; color: var(--sme-text-muted); touch-action: none; }
 
+  .row__enabled { flex: none; margin: 0; accent-color: var(--sme-accent); }
+
+  .row__description {
+    margin: 0 9px 8px 9px;
+    padding: 3px 6px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 6px;
+  }
+
+  /* Attached and configured, but it does not run: shown, and shown as off. */
+  .row-item.is-disabled .row__name,
+  .row-item.is-disabled .row__order { opacity: 0.5; text-decoration: line-through; }
+  .row-item.is-disabled .row__params { opacity: 0.5; }
+
   @media (pointer: coarse) {
     .row { padding: 11px 12px; gap: 12px; }
     .row__params { padding: 7px 10px; font-size: 12px; }
@@ -568,6 +645,8 @@ export const dialogStyles: string = `
     .params__editor .cm-scroller { font-size: 13px; }
     .row__handle,
     .row__remove { width: 32px; height: 32px; font-size: 16px; }
+    .row__enabled { width: 20px; height: 20px; }
+    .row__description { padding: 7px; font-size: 13px; }
     .button { padding: 11px 18px; }
     .add select { padding: 10px; }
   }
@@ -727,6 +806,64 @@ export const dialogStyles: string = `
 
   .status { margin: 0; font-size: 12px; color: var(--sme-text-muted); }
   .status.is-error { color: var(--sme-danger); }
+
+  .fields { display: grid; gap: 12px; }
+
+  .field { display: grid; gap: 4px; min-width: 0; }
+
+  .field__label {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sme-text-muted);
+  }
+
+  .field__control { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+  .field__hint { margin: 0; font-size: 11px; color: var(--sme-text-muted); }
+
+  .field__input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 13px;
+    color: inherit;
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 8px;
+  }
+
+  .field__input--area { resize: vertical; font-family: inherit; }
+
+  .field__errors {
+    flex: 1 0 100%;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .field__error { font-size: 11px; color: var(--sme-danger); }
+
+  .order__readout { font-size: 12px; color: var(--sme-text-muted); font-variant-numeric: tabular-nums; }
+
+  .order__move {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid var(--sme-border);
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+  }
+
+  .order__move:hover:not(:disabled) { color: var(--sme-text); border-color: var(--sme-accent); }
+  .order__move:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  @media (pointer: coarse) {
+    .field__input { padding: 10px; }
+    .order__move { width: 34px; height: 34px; }
+  }
 
   .footer { display: flex; justify-content: flex-end; gap: 8px; }
 

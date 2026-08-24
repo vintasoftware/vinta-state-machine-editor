@@ -3,9 +3,15 @@ import type { SideEffect } from '../types.js';
 
 export const EMPTY_SIDE_EFFECTS_LABEL = 'No side effects';
 
+/** Suffix marking a side effect that stays attached but does not run. */
+export const DISABLED_MARKER = '(off)';
+
 /**
  * Collapsed label for a side effect list: only the first one is shown, plus a
  * counter for the remaining ones, e.g. `"sendEmail and 2 more"`.
+ *
+ * A disabled side effect is *marked*, never dropped: the count is how many are
+ * attached, and hiding one would make the chip disagree with the dialog.
  */
 export function formatSideEffectSummary(
   effects: readonly SideEffect[],
@@ -15,10 +21,11 @@ export function formatSideEffectSummary(
   if (first === undefined) {
     return emptyLabel;
   }
+  const head = first.enabled ? first.name : `${first.name} ${DISABLED_MARKER}`;
   if (effects.length === 1) {
-    return first.name;
+    return head;
   }
-  return `${first.name} and ${effects.length - 1} more`;
+  return `${head} and ${effects.length - 1} more`;
 }
 
 /** Whether any side effect in the list carries parameters. */
@@ -29,6 +36,11 @@ export function listHasParams(effects: readonly SideEffect[]): boolean {
 /** How many side effects in the list carry parameters. */
 export function countWithParams(effects: readonly SideEffect[]): number {
   return effects.filter((effect) => hasParams(effect.params)).length;
+}
+
+/** How many side effects in the list are attached but switched off. */
+export function countDisabled(effects: readonly SideEffect[]): number {
+  return effects.filter((effect) => !effect.enabled).length;
 }
 
 /**
@@ -42,7 +54,8 @@ export function formatSideEffectTitle(effects: readonly SideEffect[]): string {
   return effects
     .map((effect, index) => {
       const params = hasParams(effect.params) ? ` ${formatJsonInline(effect.params)}` : '';
-      return `${index + 1}. ${effect.name}${params}`;
+      const disabled = effect.enabled ? '' : ' — disabled';
+      return `${index + 1}. ${effect.name}${params}${disabled}`;
     })
     .join('\n');
 }

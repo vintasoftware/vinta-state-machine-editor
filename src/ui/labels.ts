@@ -1,5 +1,8 @@
 import { findState, findTransition } from '../model/machine.js';
-import type { SideEffectListRef, StateMachine } from '../types.js';
+import type { ElementRef, SideEffectListRef, StateMachine } from '../types.js';
+
+/** Name of a transition's source, or of the start pseudo-node for a creation edge. */
+export const START_NODE_LABEL = 'the start';
 
 export interface SideEffectListLabels {
   readonly title: string;
@@ -32,4 +35,31 @@ export function shortHookLabel(ref: SideEffectListRef): string {
     return `${ref.phase} · ${ref.trigger}`;
   }
   return ref.phase;
+}
+
+/** Human readable title and subtitle for the properties dialog of one element. */
+export function describeElement(machine: StateMachine, ref: ElementRef): SideEffectListLabels {
+  if (ref.kind === 'state') {
+    const name = findState(machine, ref.id)?.name ?? ref.id;
+    return {
+      title: `Properties · ${name}`,
+      description: `Attributes of the state “${name}”.`,
+    };
+  }
+  const transition = findTransition(machine, ref.id);
+  const name = transition?.name ?? ref.id;
+  const source =
+    transition === undefined || transition.from === null
+      ? START_NODE_LABEL
+      : `“${findState(machine, transition.from)?.name ?? transition.from}”`;
+  const target = `“${findState(machine, transition?.to ?? '')?.name ?? transition?.to ?? ''}”`;
+  return {
+    title: `Properties · ${name}`,
+    description: `Attributes of the transition from ${source} to ${target}.`,
+  };
+}
+
+/** What to call a transition's source in prose. */
+export function describeSource(machine: StateMachine, from: string | null): string {
+  return from === null ? START_NODE_LABEL : (findState(machine, from)?.name ?? from);
 }
