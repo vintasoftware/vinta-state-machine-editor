@@ -84,9 +84,6 @@
       "biome check --write --no-errors-on-unmatched"
     ]
   },
-  "publishConfig": {
-    "provenance": true
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
     "@types/node": "^26.2.0",

@@ -354,6 +354,27 @@ Untrusted input (the `value` property, the provider payload) goes through runtim
 
 Pre-commit hooks run Biome over staged files via husky + lint-staged.
 
+## Publishing
+
+Two routes, and they differ in one respect worth knowing:
+
+**From CI (recommended).** Push a tag and cut a GitHub Release; the workflow checks the tag matches
+`package.json`, runs lint, typecheck and tests, then publishes. It passes `--provenance`, so the
+release carries a signed attestation linking it to the commit and workflow that built it. This needs
+an `NPM_TOKEN` secret on the repository's `npm` environment.
+
+**From a laptop.** `npm publish` works, without provenance.
+
+```bash
+npm publish --dry-run   # inspect the tarball first
+npm publish
+```
+
+Provenance is generated from the CI provider's OIDC token, so it simply cannot be produced locally —
+npm fails with `Automatic provenance generation not supported for provider: null`. That is why
+`--provenance` lives in the workflow rather than in `publishConfig`, which would apply it to every
+publish including local ones.
+
 ## License
 
 MIT © Vinta Software
