@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>state-machine-editor · demo</title>
+    <link rel="stylesheet" href="./demo.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>&lt;state-machine-editor&gt;</h1>
+        <p>Order fulfilment flow — everything below is the plain custom element.</p>
+      </div>
+      <div class="topbar__actions">
+        <label class="switch">
+          <input type="checkbox" id="readonly" />
+          Read-only
+        </label>
+        <button type="button" id="fit">Zoom to fit</button>
+        <button type="button" id="reset">Reset example</button>
+        <button type="button" id="clear">Empty canvas</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <state-machine-editor id="editor"></state-machine-editor>
+
+      <aside class="panel">
+        <section>
+          <h2>How to use it</h2>
+          <ul class="hints">
+            <li><b>Move</b> a state: drag its header.</li>
+            <li><b>Connect</b> two states: drag the round <b>→</b> handle onto another state (drop it on the same state for a self transition).</li>
+            <li><b>Rename</b>: double-click a state or transition name.</li>
+            <li><b>Side effects</b>: click any chip to open the dialog — add from the catalog, remove, and reorder by dragging <b>⠿</b> (or Alt + ↑/↓).</li>
+            <li><b>Pan</b>: drag the background or scroll. <b>Zoom</b>: toolbar buttons, or Ctrl/⌘ + scroll.</li>
+            <li><b>Delete</b>: select a state/transition and press Delete.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Events <small id="event-count">0</small></h2>
+          <ol class="log" id="log"></ol>
+        </section>
+
+        <section class="grow">
+          <h2>Current value</h2>
+          <pre class="json" id="json"></pre>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

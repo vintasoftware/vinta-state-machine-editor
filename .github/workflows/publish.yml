@@ -1,0 +1,59 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run every step but skip the actual npm publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Verify the release tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          package_version="v$(node -p "require('./package.json').version")"
+          release_tag="${{ github.event.release.tag_name }}"
+          if [ "$package_version" != "$release_tag" ]; then
+            echo "package.json is $package_version but the release tag is $release_tag" >&2
+            exit 1
+          fi
+
+      - name: Lint, typecheck and test
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        if: github.event_name == 'release' || inputs.dry-run == false
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry-run
+        run: npm publish --provenance --access public --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

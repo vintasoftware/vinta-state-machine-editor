@@ -1,0 +1,990 @@
+import type {
+  SelectionChangeEvent,
+  StateMachineChangeEvent,
+  StateMachineEditorEventMap,
+} from '../events.js';
+import { SELECTION_CHANGE_EVENT, STATE_MACHINE_CHANGE_EVENT } from '../events.js';
+import {
+  computeEdgeGeometry,
+  computeSelfEdgeGeometry,
+  curvatureFor,
+  type EdgeGeometry,
+} from '../geometry/edge.js';
+import {
+  boundsOf,
+  createViewport,
+  fitViewport,
+  panBy,
+  toWorld,
+  type Viewport,
+  zoomBy,
+  zoomTo,
+} from '../geometry/viewport.js';
+import {
+  addState,
+  addTransition,
+  createEmptyMachine,
+  createState,
+  createTransition,
+  findState,
+  getSideEffects,
+  removeState,
+  removeTransition,
+  setSideEffects,
+  siblingTransitions,
+  updateState,
+  updateTransition,
+} from '../model/machine.js';
+import { assertStateMachine } from '../model/parse.js';
+import type {
+  MachineChange,
+  Point,
+  Rect,
+  Selection,
+  SideEffectListRef,
+  SideEffectPhase,
+  SideEffectProvider,
+  StateMachine,
+  StateNode,
+  StateTrigger,
+  Transition,
+} from '../types.js';
+import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
+import { describeSideEffectList, shortHookLabel } from './labels.js';
+import { formatSideEffectSummary, formatSideEffectTitle } from './side-effect-summary.js';
+import { SideEffectsDialogElement } from './side-effects-dialog.js';
+import { editorStyles } from './styles.js';
+
+const FALLBACK_NODE_WIDTH = 248;
+const FALLBACK_NODE_HEIGHT = 152;
+const ZOOM_STEP = 1.25;
+const GRID_SIZE = 24;
+const ADD_SIDE_EFFECT_LABEL = '+ Add side effect';
+
+type HookKey = `${StateTrigger}:${SideEffectPhase}`;
+
+const HOOK_KEYS: readonly HookKey[] = [
+  'enter:before',
+  'enter:after',
+  'leave:before',
+  'leave:after',
+];
+
+interface StateView {
+  readonly root: HTMLElement;
+  readonly header: HTMLElement;
+  readonly name: HTMLElement;
+  readonly removeButton: HTMLButtonElement;
+  readonly linkHandle: HTMLButtonElement;
+  readonly chips: ReadonlyMap<HookKey, HTMLButtonElement>;
+}
+
+interface TransitionView {
+  readonly path: SVGPathElement;
+  readonly card: HTMLElement;
+  readonly name: HTMLElement;
+  readonly removeButton: HTMLButtonElement;
+  readonly chips: ReadonlyMap<SideEffectPhase, HTMLButtonElement>;
+}
+
+type DragState =
+  | { readonly kind: 'pan'; readonly origin: Point; readonly viewport: Viewport }
+  | {
+      readonly kind: 'node';
+      readonly stateId: string;
+      readonly offset: Point;
+      readonly moved: boolean;
+    }
+  | { readonly kind: 'link'; readonly fromId: string; readonly pointer: Point };
+
+function hookRef(stateId: string, key: HookKey): SideEffectListRef {
+  const [trigger, phase] = key.split(':');
+  return {
+    kind: 'state',
+    stateId,
+    trigger: trigger === 'leave' ? 'leave' : 'enter',
+    phase: phase === 'after' ? 'after' : 'before',
+  };
+}
+
+function sameSelection(a: Selection, b: Selection): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.kind === b.kind && a.id === b.id;
+}
+
+function containsPoint(rect: Rect, point: Point): boolean {
+  return (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  );
+}
+
+/**
+ * `<state-machine-editor>` — a framework agnostic canvas to create, edit and
+ * visualize state machines, their transitions and their side effects.
+ */
+export class StateMachineEditorElement extends HTMLElement {
+  static readonly tagName = 'state-machine-editor';
+  static readonly observedAttributes: readonly string[] = ['readonly'];
+
+  readonly #shadow: ShadowRoot;
+  readonly #viewportElement: HTMLElement;
+  readonly #world: HTMLElement;
+  readonly #svg: SVGSVGElement;
+  readonly #edgeLayer: SVGGElement;
+  readonly #previewPath: SVGPathElement;
+  readonly #emptyState: HTMLElement;
+  readonly #zoomLabel: HTMLButtonElement;
+  readonly #addStateButton: HTMLButtonElement;
+  readonly #stateViews = new Map<string, StateView>();
+  readonly #transitionViews = new Map<string, TransitionView>();
+
+  #machine: StateMachine = createEmptyMachine();
+  #viewport: Viewport = createViewport();
+  #selection: Selection = null;
+  #provider: SideEffectProvider | undefined;
+  #readOnly = false;
+  #drag: DragState | undefined;
+  #dialog: SideEffectsDialogElement | undefined;
+  #renameCleanup: (() => void) | undefined;
+
+  constructor() {
+    super();
+    this.#shadow = this.attachShadow({ mode: 'open' });
+    this.#shadow.append(createElement('style', { text: editorStyles }));
+
+    this.#viewportElement = createElement('div', {
+      className: 'viewport',
+      parent: this.#shadow,
+      attrs: { part: 'viewport' },
+    });
+    this.#world = createElement('div', { className: 'world', parent: this.#viewportElement });
+    this.#svg = createSvgElement('svg', { className: 'edges', parent: this.#world });
+
+    const defs = createSvgElement('defs', { parent: this.#svg });
+    const marker = createSvgElement('marker', {
+      parent: defs,
+      attrs: {
+        id: 'sme-arrow',
+        viewBox: '0 0 10 10',
+        refX: '9',
+        refY: '5',
+        markerWidth: '7',
+        markerHeight: '7',
+        orient: 'auto',
+      },
+    });
+    createSvgElement('path', {
+      className: 'arrow',
+      parent: marker,
+      attrs: { d: 'M 0 0 L 10 5 L 0 10 z' },
+    });
+
+    this.#edgeLayer = createSvgElement('g', { parent: this.#svg });
+    this.#previewPath = createSvgElement('path', {
+      className: 'edge edge--preview',
+      parent: this.#svg,
+    });
+    this.#previewPath.style.display = 'none';
+
+    this.#emptyState = createElement('div', {
+      className: 'empty-state',
+      parent: this.#shadow,
+      text: 'No states yet — use “Add state” to start.',
+    });
+
+    const toolbar = createElement('div', {
+      className: 'toolbar',
+      parent: this.#shadow,
+      attrs: { part: 'toolbar', role: 'toolbar', 'aria-label': 'Editor tools' },
+    });
+    this.#addStateButton = createButton({
+      className: 'toolbar__add',
+      parent: toolbar,
+      text: 'Add state',
+    });
+    const zoomOut = createButton({
+      parent: toolbar,
+      text: '−',
+      attrs: { 'aria-label': 'Zoom out' },
+    });
+    this.#zoomLabel = createButton({
+      className: 'toolbar__zoom',
+      parent: toolbar,
+      text: '100%',
+      attrs: { 'aria-label': 'Reset zoom to 100%' },
+    });
+    const zoomIn = createButton({ parent: toolbar, text: '+', attrs: { 'aria-label': 'Zoom in' } });
+    const fit = createButton({
+      parent: toolbar,
+      text: 'Fit',
+      attrs: { 'aria-label': 'Zoom to fit' },
+    });
+
+    this.#addStateButton.addEventListener('click', () => {
+      this.addState();
+    });
+    zoomOut.addEventListener('click', () => this.zoomOut());
+    zoomIn.addEventListener('click', () => this.zoomIn());
+    fit.addEventListener('click', () => this.zoomToFit());
+    this.#zoomLabel.addEventListener('click', () => this.setZoom(1));
+
+    this.#viewportElement.addEventListener('pointerdown', this.#onBackgroundPointerDown);
+    this.#viewportElement.addEventListener('wheel', this.#onWheel, { passive: false });
+    this.addEventListener('keydown', this.#onKeyDown);
+  }
+
+  // -- lifecycle ------------------------------------------------------------
+
+  connectedCallback(): void {
+    if (!this.hasAttribute('tabindex')) {
+      this.setAttribute('tabindex', '0');
+    }
+    this.#render();
+  }
+
+  disconnectedCallback(): void {
+    this.#endDrag();
+  }
+
+  attributeChangedCallback(name: string, _previous: string | null, next: string | null): void {
+    if (name === 'readonly') {
+      this.#readOnly = next !== null;
+      this.#render();
+    }
+  }
+
+  // -- public API -----------------------------------------------------------
+
+  /** The machine being edited. Setting it validates the input and re-renders. */
+  get value(): StateMachine {
+    return this.#machine;
+  }
+
+  set value(machine: StateMachine) {
+    this.#machine = assertStateMachine(machine);
+    this.#selection = null;
+    this.#render();
+  }
+
+  /** Supplies the catalog of side effects available in the dialog. */
+  get sideEffectProvider(): SideEffectProvider | undefined {
+    return this.#provider;
+  }
+
+  set sideEffectProvider(provider: SideEffectProvider | undefined) {
+    this.#provider = provider;
+  }
+
+  get readOnly(): boolean {
+    return this.#readOnly;
+  }
+
+  set readOnly(value: boolean) {
+    this.toggleAttribute('readonly', value);
+    this.#readOnly = value;
+    this.#render();
+  }
+
+  get selection(): Selection {
+    return this.#selection;
+  }
+
+  set selection(selection: Selection) {
+    this.#setSelection(selection);
+  }
+
+  get viewport(): Viewport {
+    return this.#viewport;
+  }
+
+  set viewport(viewport: Viewport) {
+    this.#viewport = viewport;
+    this.#applyViewport();
+  }
+
+  /** Adds a state, by default at the center of the visible area. */
+  addState(options: { readonly name?: string; readonly position?: Point } = {}): StateNode {
+    const position = options.position ?? this.#defaultStatePosition();
+    const state = createState({
+      name: options.name ?? `State ${this.#machine.states.length + 1}`,
+      position,
+    });
+    this.#commit(addState(this.#machine, state), { kind: 'state-add', stateId: state.id });
+    return state;
+  }
+
+  /** Connects two states with a transition. */
+  addTransition(from: string, to: string, name = 'transition'): Transition {
+    const transition = createTransition({ from, to, name });
+    this.#commit(addTransition(this.#machine, transition), {
+      kind: 'transition-add',
+      transitionId: transition.id,
+    });
+    return transition;
+  }
+
+  zoomIn(): void {
+    this.#setViewport(zoomBy(this.#viewport, ZOOM_STEP, this.#viewportCenter()));
+  }
+
+  zoomOut(): void {
+    this.#setViewport(zoomBy(this.#viewport, 1 / ZOOM_STEP, this.#viewportCenter()));
+  }
+
+  setZoom(scale: number): void {
+    this.#setViewport(zoomTo(this.#viewport, scale, this.#viewportCenter()));
+  }
+
+  /** Fits every state in view. Does nothing when the machine is empty. */
+  zoomToFit(padding = 56): void {
+    const bounds = boundsOf(this.#machine.states.map((state) => this.#rectFor(state)));
+    if (bounds === undefined) {
+      return;
+    }
+    const size = {
+      width: this.#viewportElement.clientWidth || bounds.width + padding * 2,
+      height: this.#viewportElement.clientHeight || bounds.height + padding * 2,
+    };
+    this.#setViewport(fitViewport(bounds, size, padding));
+  }
+
+  /**
+   * Opens the side effects dialog for a list.
+   * Resolves with `true` when the user saved, `false` when they cancelled.
+   */
+  async openSideEffects(ref: SideEffectListRef): Promise<boolean> {
+    const dialog = this.#ensureDialog();
+    const labels = describeSideEffectList(this.#machine, ref);
+    const result = await dialog.open({
+      title: labels.title,
+      description: labels.description,
+      effects: getSideEffects(this.#machine, ref),
+      provider: this.#provider,
+      readOnly: this.#readOnly,
+    });
+    dialog.remove();
+    if (result === null) {
+      return false;
+    }
+    this.#commit(setSideEffects(this.#machine, ref, result), {
+      kind: 'side-effects-change',
+      ref,
+    });
+    return true;
+  }
+
+  override addEventListener<K extends keyof StateMachineEditorEventMap>(
+    type: K,
+    listener: (this: StateMachineEditorElement, event: StateMachineEditorEventMap[K]) => void,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  override addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  override addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    super.addEventListener(type, listener, options);
+  }
+
+  override removeEventListener<K extends keyof StateMachineEditorEventMap>(
+    type: K,
+    listener: (this: StateMachineEditorElement, event: StateMachineEditorEventMap[K]) => void,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  override removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  override removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void {
+    super.removeEventListener(type, listener, options);
+  }
+
+  // -- internals ------------------------------------------------------------
+
+  #ensureDialog(): SideEffectsDialogElement {
+    const existing = this.#dialog;
+    if (existing !== undefined) {
+      this.#shadow.append(existing);
+      return existing;
+    }
+    const dialog = new SideEffectsDialogElement();
+    this.#dialog = dialog;
+    this.#shadow.append(dialog);
+    return dialog;
+  }
+
+  #commit(next: StateMachine, change: MachineChange, transient = false): void {
+    this.#machine = next;
+    this.#render();
+    const event: StateMachineChangeEvent = new CustomEvent(STATE_MACHINE_CHANGE_EVENT, {
+      detail: { value: next, change, transient },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
+  }
+
+  #setSelection(selection: Selection): void {
+    if (sameSelection(this.#selection, selection)) {
+      return;
+    }
+    this.#selection = selection;
+    this.#render();
+    const event: SelectionChangeEvent = new CustomEvent(SELECTION_CHANGE_EVENT, {
+      detail: { selection },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
+  }
+
+  #setViewport(viewport: Viewport): void {
+    this.#viewport = viewport;
+    this.#applyViewport();
+  }
+
+  #viewportCenter(): Point {
+    return {
+      x: this.#viewportElement.clientWidth / 2,
+      y: this.#viewportElement.clientHeight / 2,
+    };
+  }
+
+  #defaultStatePosition(): Point {
+    const center = toWorld(this.#viewport, this.#viewportCenter());
+    const offset = this.#machine.states.length * 24;
+    return {
+      x: Math.round(center.x - FALLBACK_NODE_WIDTH / 2 + offset),
+      y: Math.round(center.y - FALLBACK_NODE_HEIGHT / 2 + offset),
+    };
+  }
+
+  #localPoint(event: { readonly clientX: number; readonly clientY: number }): Point {
+    const rect = this.#viewportElement.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  #worldPoint(event: { readonly clientX: number; readonly clientY: number }): Point {
+    return toWorld(this.#viewport, this.#localPoint(event));
+  }
+
+  #rectFor(state: StateNode): Rect {
+    const view = this.#stateViews.get(state.id);
+    return {
+      x: state.position.x,
+      y: state.position.y,
+      width: view?.root.offsetWidth || FALLBACK_NODE_WIDTH,
+      height: view?.root.offsetHeight || FALLBACK_NODE_HEIGHT,
+    };
+  }
+
+  #stateAt(point: Point): StateNode | undefined {
+    for (let index = this.#machine.states.length - 1; index >= 0; index -= 1) {
+      const state = this.#machine.states[index];
+      if (state !== undefined && containsPoint(this.#rectFor(state), point)) {
+        return state;
+      }
+    }
+    return undefined;
+  }
+
+  // -- rendering ------------------------------------------------------------
+
+  #render(): void {
+    this.#renderStates();
+    this.#renderTransitions();
+    this.#applyViewport();
+    this.#emptyState.hidden = this.#machine.states.length > 0;
+    this.#addStateButton.disabled = this.#readOnly;
+  }
+
+  #applyViewport(): void {
+    const { x, y, scale } = this.#viewport;
+    this.#world.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    this.#viewportElement.style.setProperty('--sme-grid-size', `${GRID_SIZE * scale}px`);
+    this.#viewportElement.style.setProperty('--sme-grid-offset-x', `${x % (GRID_SIZE * scale)}px`);
+    this.#viewportElement.style.setProperty('--sme-grid-offset-y', `${y % (GRID_SIZE * scale)}px`);
+    this.#zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+  }
+
+  #renderStates(): void {
+    const alive = new Set<string>();
+    for (const state of this.#machine.states) {
+      alive.add(state.id);
+      const view = this.#stateViews.get(state.id) ?? this.#createStateView(state.id);
+      this.#stateViews.set(state.id, view);
+      this.#updateStateView(view, state);
+    }
+    for (const [id, view] of this.#stateViews) {
+      if (!alive.has(id)) {
+        view.root.remove();
+        this.#stateViews.delete(id);
+      }
+    }
+  }
+
+  #createStateView(stateId: string): StateView {
+    const root = createElement('div', {
+      className: 'node',
+      parent: this.#world,
+      attrs: { part: 'state', 'data-state-id': stateId },
+    });
+    const header = createElement('div', { className: 'node__header', parent: root });
+    const name = createElement('span', { className: 'node__name', parent: header });
+    const removeButton = createButton({
+      className: 'icon-button',
+      parent: header,
+      text: '✕',
+      attrs: { 'aria-label': 'Remove state' },
+    });
+    const hooks = createElement('div', { className: 'hooks', parent: root });
+    const chips = new Map<HookKey, HTMLButtonElement>();
+    for (const key of HOOK_KEYS) {
+      const ref = hookRef(stateId, key);
+      const row = createElement('div', { className: 'hook', parent: hooks });
+      createElement('span', { className: 'hook__label', parent: row, text: shortHookLabel(ref) });
+      const chip = createButton({ className: 'chip', parent: row, attrs: { part: 'chip' } });
+      chip.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void this.openSideEffects(hookRef(stateId, key));
+      });
+      chips.set(key, chip);
+    }
+    const linkHandle = createButton({
+      className: 'node__link',
+      parent: root,
+      text: '→',
+      attrs: { 'aria-label': 'Drag to another state to create a transition' },
+    });
+
+    root.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      this.#setSelection({ kind: 'state', id: stateId });
+    });
+    header.addEventListener('pointerdown', (event) => this.#onNodePointerDown(event, stateId));
+    name.addEventListener('dblclick', () => this.#renameState(stateId));
+    removeButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#commit(removeState(this.#machine, stateId), { kind: 'state-remove', stateId });
+    });
+    linkHandle.addEventListener('pointerdown', (event) => this.#onLinkPointerDown(event, stateId));
+
+    return { root, header, name, removeButton, linkHandle, chips };
+  }
+
+  #updateStateView(view: StateView, state: StateNode): void {
+    view.root.style.left = `${state.position.x}px`;
+    view.root.style.top = `${state.position.y}px`;
+    view.root.classList.toggle(
+      'is-selected',
+      this.#selection?.kind === 'state' && this.#selection.id === state.id,
+    );
+    view.name.textContent = state.name;
+    view.removeButton.hidden = this.#readOnly;
+    view.linkHandle.hidden = this.#readOnly;
+    view.header.style.cursor = this.#readOnly ? 'default' : 'grab';
+    for (const key of HOOK_KEYS) {
+      const chip = view.chips.get(key);
+      if (chip !== undefined) {
+        this.#updateChip(chip, hookRef(state.id, key));
+      }
+    }
+  }
+
+  #updateChip(chip: HTMLButtonElement, ref: SideEffectListRef): void {
+    const effects = getSideEffects(this.#machine, ref);
+    const emptyLabel = this.#readOnly ? 'No side effects' : ADD_SIDE_EFFECT_LABEL;
+    chip.textContent = formatSideEffectSummary(effects, emptyLabel);
+    chip.classList.toggle('is-filled', effects.length > 0);
+    chip.title = formatSideEffectTitle(effects);
+    const labels = describeSideEffectList(this.#machine, ref);
+    chip.setAttribute(
+      'aria-label',
+      `${labels.description} ${effects.length} side effect${effects.length === 1 ? '' : 's'}. Open list.`,
+    );
+    chip.setAttribute('data-count', String(effects.length));
+  }
+
+  #renderTransitions(): void {
+    const alive = new Set<string>();
+    for (const transition of this.#machine.transitions) {
+      alive.add(transition.id);
+      const view =
+        this.#transitionViews.get(transition.id) ?? this.#createTransitionView(transition.id);
+      this.#transitionViews.set(transition.id, view);
+      this.#updateTransitionView(view, transition);
+    }
+    for (const [id, view] of this.#transitionViews) {
+      if (!alive.has(id)) {
+        view.path.remove();
+        view.card.remove();
+        this.#transitionViews.delete(id);
+      }
+    }
+  }
+
+  #createTransitionView(transitionId: string): TransitionView {
+    const path = createSvgElement('path', {
+      className: 'edge',
+      parent: this.#edgeLayer,
+      attrs: { 'marker-end': 'url(#sme-arrow)', part: 'edge', 'data-transition-id': transitionId },
+    });
+    const card = createElement('div', {
+      className: 'edge-card',
+      parent: this.#world,
+      attrs: { part: 'transition', 'data-transition-id': transitionId },
+    });
+    const header = createElement('div', { className: 'edge-card__header', parent: card });
+    const name = createElement('span', { className: 'edge-card__name', parent: header });
+    const removeButton = createButton({
+      className: 'icon-button',
+      parent: header,
+      text: '✕',
+      attrs: { 'aria-label': 'Remove transition' },
+    });
+    const hooks = createElement('div', { className: 'hooks', parent: card });
+    const chips = new Map<SideEffectPhase, HTMLButtonElement>();
+    for (const phase of ['before', 'after'] as const) {
+      const row = createElement('div', { className: 'hook', parent: hooks });
+      createElement('span', { className: 'hook__label', parent: row, text: phase });
+      const chip = createButton({ className: 'chip', parent: row, attrs: { part: 'chip' } });
+      chip.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void this.openSideEffects({ kind: 'transition', transitionId, phase });
+      });
+      chips.set(phase, chip);
+    }
+
+    card.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      this.#setSelection({ kind: 'transition', id: transitionId });
+    });
+    name.addEventListener('dblclick', () => this.#renameTransition(transitionId));
+    removeButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#commit(removeTransition(this.#machine, transitionId), {
+        kind: 'transition-remove',
+        transitionId,
+      });
+    });
+
+    return { path, card, name, removeButton, chips };
+  }
+
+  #updateTransitionView(view: TransitionView, transition: Transition): void {
+    const geometry = this.#geometryFor(transition);
+    view.path.setAttribute('d', geometry.path);
+    const selected = this.#selection?.kind === 'transition' && this.#selection.id === transition.id;
+    view.path.classList.toggle('is-selected', selected);
+    view.card.classList.toggle('is-selected', selected);
+    view.card.style.left = `${geometry.label.x}px`;
+    view.card.style.top = `${geometry.label.y}px`;
+    view.name.textContent = transition.name;
+    view.removeButton.hidden = this.#readOnly;
+    for (const phase of ['before', 'after'] as const) {
+      const chip = view.chips.get(phase);
+      if (chip !== undefined) {
+        this.#updateChip(chip, { kind: 'transition', transitionId: transition.id, phase });
+      }
+    }
+  }
+
+  #geometryFor(transition: Transition): EdgeGeometry {
+    const from = findState(this.#machine, transition.from);
+    const to = findState(this.#machine, transition.to);
+    if (from === undefined || to === undefined) {
+      return {
+        path: '',
+        source: { x: 0, y: 0 },
+        target: { x: 0, y: 0 },
+        label: { x: 0, y: 0 },
+        arrowAngle: 0,
+      };
+    }
+    const siblings = siblingTransitions(this.#machine, transition);
+    const index = Math.max(
+      siblings.findIndex((candidate) => candidate.id === transition.id),
+      0,
+    );
+    if (transition.from === transition.to) {
+      return computeSelfEdgeGeometry(this.#rectFor(from), index);
+    }
+    return computeEdgeGeometry(this.#rectFor(from), this.#rectFor(to), curvatureFor(index));
+  }
+
+  // -- interactions ---------------------------------------------------------
+
+  #onBackgroundPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0 || isInteractiveTarget(event.target)) {
+      return;
+    }
+    this.#setSelection(null);
+    this.#beginDrag({ kind: 'pan', origin: this.#localPoint(event), viewport: this.#viewport });
+    this.#viewportElement.classList.add('is-panning');
+  };
+
+  #onNodePointerDown(event: PointerEvent, stateId: string): void {
+    if (event.button !== 0 || this.#readOnly || isInteractiveTarget(event.target)) {
+      return;
+    }
+    const state = findState(this.#machine, stateId);
+    if (state === undefined) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    this.#setSelection({ kind: 'state', id: stateId });
+    const pointer = this.#worldPoint(event);
+    this.#beginDrag({
+      kind: 'node',
+      stateId,
+      offset: { x: pointer.x - state.position.x, y: pointer.y - state.position.y },
+      moved: false,
+    });
+  }
+
+  #onLinkPointerDown(event: PointerEvent, stateId: string): void {
+    if (event.button !== 0 || this.#readOnly) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    this.#beginDrag({ kind: 'link', fromId: stateId, pointer: this.#worldPoint(event) });
+    this.#updatePreview();
+  }
+
+  #beginDrag(drag: DragState): void {
+    this.#drag = drag;
+    const doc = this.ownerDocument;
+    doc.addEventListener('pointermove', this.#onPointerMove);
+    doc.addEventListener('pointerup', this.#onPointerUp);
+    doc.addEventListener('pointercancel', this.#onPointerCancel);
+  }
+
+  #endDrag(): void {
+    const doc = this.ownerDocument;
+    doc.removeEventListener('pointermove', this.#onPointerMove);
+    doc.removeEventListener('pointerup', this.#onPointerUp);
+    doc.removeEventListener('pointercancel', this.#onPointerCancel);
+    this.#drag = undefined;
+    this.#viewportElement.classList.remove('is-panning');
+    this.#previewPath.style.display = 'none';
+    for (const view of this.#stateViews.values()) {
+      view.root.classList.remove('is-link-target');
+    }
+  }
+
+  #onPointerMove = (event: PointerEvent): void => {
+    const drag = this.#drag;
+    if (drag === undefined) {
+      return;
+    }
+    if (drag.kind === 'pan') {
+      const current = this.#localPoint(event);
+      this.#setViewport(panBy(drag.viewport, current.x - drag.origin.x, current.y - drag.origin.y));
+      return;
+    }
+    if (drag.kind === 'node') {
+      const pointer = this.#worldPoint(event);
+      const position = {
+        x: Math.round(pointer.x - drag.offset.x),
+        y: Math.round(pointer.y - drag.offset.y),
+      };
+      this.#drag = { ...drag, moved: true };
+      this.#commit(
+        updateState(this.#machine, drag.stateId, { position }),
+        { kind: 'state-move', stateId: drag.stateId },
+        true,
+      );
+      return;
+    }
+    this.#drag = { ...drag, pointer: this.#worldPoint(event) };
+    this.#updatePreview();
+  };
+
+  #onPointerUp = (event: PointerEvent): void => {
+    const drag = this.#drag;
+    if (drag === undefined) {
+      return;
+    }
+    if (drag.kind === 'node' && drag.moved) {
+      const state = findState(this.#machine, drag.stateId);
+      if (state !== undefined) {
+        this.#endDrag();
+        this.#commit(
+          updateState(this.#machine, drag.stateId, { position: state.position }),
+          { kind: 'state-move', stateId: drag.stateId },
+          false,
+        );
+        return;
+      }
+    }
+    if (drag.kind === 'link') {
+      const target = this.#stateAt(this.#worldPoint(event));
+      this.#endDrag();
+      if (target !== undefined) {
+        this.addTransition(drag.fromId, target.id);
+      }
+      return;
+    }
+    this.#endDrag();
+  };
+
+  #onPointerCancel = (): void => {
+    this.#endDrag();
+  };
+
+  #updatePreview(): void {
+    const drag = this.#drag;
+    if (drag === undefined || drag.kind !== 'link') {
+      this.#previewPath.style.display = 'none';
+      return;
+    }
+    const from = findState(this.#machine, drag.fromId);
+    if (from === undefined) {
+      return;
+    }
+    const rect = this.#rectFor(from);
+    const start = { x: rect.x + rect.width, y: rect.y + 16 };
+    this.#previewPath.setAttribute(
+      'd',
+      `M ${start.x} ${start.y} L ${drag.pointer.x} ${drag.pointer.y}`,
+    );
+    this.#previewPath.style.display = '';
+    const hovered = this.#stateAt(drag.pointer);
+    for (const [id, view] of this.#stateViews) {
+      view.root.classList.toggle('is-link-target', hovered?.id === id);
+    }
+  }
+
+  #onWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    const anchor = this.#localPoint(event);
+    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+      this.#setViewport(
+        zoomBy(this.#viewport, event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, anchor),
+      );
+      return;
+    }
+    this.#setViewport(panBy(this.#viewport, -event.deltaX, -event.deltaY));
+  };
+
+  #onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.#drag?.kind === 'link') {
+      this.#endDrag();
+      return;
+    }
+    if (this.#readOnly || isInteractiveTarget(event.target)) {
+      return;
+    }
+    if (event.key !== 'Delete' && event.key !== 'Backspace') {
+      return;
+    }
+    const selection = this.#selection;
+    if (selection === null) {
+      return;
+    }
+    event.preventDefault();
+    this.#selection = null;
+    if (selection.kind === 'state') {
+      this.#commit(removeState(this.#machine, selection.id), {
+        kind: 'state-remove',
+        stateId: selection.id,
+      });
+      return;
+    }
+    this.#commit(removeTransition(this.#machine, selection.id), {
+      kind: 'transition-remove',
+      transitionId: selection.id,
+    });
+  };
+
+  // -- inline renaming ------------------------------------------------------
+
+  #renameState(stateId: string): void {
+    const state = findState(this.#machine, stateId);
+    const view = this.#stateViews.get(stateId);
+    if (state === undefined || view === undefined || this.#readOnly) {
+      return;
+    }
+    this.#startRename(view.name, state.name, (name) => {
+      this.#commit(updateState(this.#machine, stateId, { name }), {
+        kind: 'state-rename',
+        stateId,
+      });
+    });
+  }
+
+  #renameTransition(transitionId: string): void {
+    const view = this.#transitionViews.get(transitionId);
+    const transition = this.#machine.transitions.find((item) => item.id === transitionId);
+    if (transition === undefined || view === undefined || this.#readOnly) {
+      return;
+    }
+    this.#startRename(view.name, transition.name, (name) => {
+      this.#commit(updateTransition(this.#machine, transitionId, { name }), {
+        kind: 'transition-rename',
+        transitionId,
+      });
+    });
+  }
+
+  #startRename(label: HTMLElement, current: string, commit: (name: string) => void): void {
+    this.#renameCleanup?.();
+    const input = createElement('input', { className: 'name-input' });
+    input.value = current;
+    label.hidden = true;
+    label.after(input);
+    input.focus();
+    input.select();
+
+    let finished = false;
+    const cleanup = (): void => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      this.#renameCleanup = undefined;
+      input.remove();
+      label.hidden = false;
+    };
+    this.#renameCleanup = cleanup;
+
+    const confirm = (): void => {
+      const name = input.value.trim();
+      cleanup();
+      if (name.length > 0 && name !== current) {
+        commit(name);
+      }
+    };
+
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        confirm();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cleanup();
+      }
+    });
+    input.addEventListener('blur', confirm);
+    input.addEventListener('pointerdown', (event) => event.stopPropagation());
+    input.addEventListener('dblclick', (event) => event.stopPropagation());
+  }
+}
