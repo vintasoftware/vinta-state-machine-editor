@@ -166,6 +166,16 @@ function sameSelection(a: Selection, b: Selection): boolean {
   return a.kind === b.kind && a.id === b.id;
 }
 
+/** Whether the selected id still names an element of `machine`. */
+function selectionExists(machine: StateMachine, selection: Selection): boolean {
+  if (selection === null) {
+    return false;
+  }
+  return selection.kind === 'state'
+    ? findState(machine, selection.id) !== undefined
+    : findTransition(machine, selection.id) !== undefined;
+}
+
 function containsPoint(rect: Rect, point: Point): boolean {
   return (
     point.x >= rect.x &&
@@ -331,15 +341,29 @@ export class StateMachineEditorElement extends HTMLElement {
 
   // -- public API -----------------------------------------------------------
 
-  /** The machine being edited. Setting it validates the input and re-renders. */
+  /**
+   * The machine being edited. Setting it validates the input and re-renders.
+   *
+   * The selection survives the assignment as long as the selected id still
+   * names an element of the new machine, so a host that renders its own
+   * inspector panel can write edits back without the panel closing under the
+   * user. A selection that no longer exists is dropped, and that drop is
+   * announced with `state-machine-selection-change`.
+   */
   get value(): StateMachine {
     return this.#machine;
   }
 
   set value(machine: StateMachine) {
     this.#machine = assertStateMachine(machine);
-    this.#selection = null;
+    const dropped = this.#selection !== null && !selectionExists(this.#machine, this.#selection);
+    if (dropped) {
+      this.#selection = null;
+    }
     this.#render();
+    if (dropped) {
+      this.#emitSelectionChange(null);
+    }
   }
 
   /** Supplies the catalog of side effects available in the dialog. */
@@ -564,6 +588,10 @@ export class StateMachineEditorElement extends HTMLElement {
     }
     this.#selection = selection;
     this.#render();
+    this.#emitSelectionChange(selection);
+  }
+
+  #emitSelectionChange(selection: Selection): void {
     const event: SelectionChangeEvent = new CustomEvent(SELECTION_CHANGE_EVENT, {
       detail: { selection },
       bubbles: true,

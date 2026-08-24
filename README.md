@@ -236,10 +236,10 @@ offset to `{ x: 0, y: 0 }`.
 
 | Property | Type | Notes |
 | --- | --- | --- |
-| `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`. |
+| `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`. The current `selection` is kept if the selected id still names a state (or transition) in the new machine, so a host inspector panel survives writing edits back. |
 | `sideEffectProvider` | `() => MaybePromise<SideEffectDefinition[]>` | Catalog used by the dialog. Called every time a dialog opens. |
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
-| `selection` | `{ kind: 'state' \| 'transition', id } \| null` | |
+| `selection` | `{ kind: 'state' \| 'transition', id } \| null` | Survives a `value` assignment that keeps the selected element; becomes `null` if that element is gone, and only that drop emits `state-machine-selection-change`. |
 | `viewport` | `{ x, y, scale }` | Pan/zoom state; assignable to restore a saved view. |
 
 ### Methods

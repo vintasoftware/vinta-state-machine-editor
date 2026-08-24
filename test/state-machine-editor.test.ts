@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toWorld } from '../src/geometry/viewport.js';
 import {
   defineStateMachineEditor,
+  type SelectionChangeEvent,
   type StateMachineChangeEvent,
   StateMachineEditorElement,
   StateMachineError,
 } from '../src/index.js';
 import { createTransition, getSideEffects } from '../src/model/machine.js';
-import type { MachineChange, Point } from '../src/types.js';
+import type { MachineChange, Point, Selection } from '../src/types.js';
 import {
   CATALOG,
   fireKey,
@@ -29,6 +30,14 @@ function changes(editor: StateMachineEditorElement): readonly MachineChange[] {
   const recorded: MachineChange[] = [];
   editor.addEventListener('state-machine-change', (event: StateMachineChangeEvent) => {
     recorded.push(event.detail.change);
+  });
+  return recorded;
+}
+
+function selectionsOf(editor: StateMachineEditorElement): readonly Selection[] {
+  const recorded: Selection[] = [];
+  editor.addEventListener('state-machine-selection-change', (event: SelectionChangeEvent) => {
+    recorded.push(event.detail.selection);
   });
   return recorded;
 }
@@ -414,6 +423,83 @@ describe('editing', () => {
     firePointer(queryOne(shadowOf(editor), '.viewport'), 'pointerdown');
     expect(editor.selection).toBeNull();
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the selection when assigning a machine that still has it', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    const listener = vi.fn();
+    editor.addEventListener('state-machine-selection-change', listener);
+    editor.addEventListener('state-machine-change', listener);
+
+    const renamed = sampleMachine();
+    editor.value = {
+      ...renamed,
+      states: renamed.states.map((state) =>
+        state.id === 'draft' ? { ...state, name: 'Drafting' } : state,
+      ),
+    };
+
+    expect(editor.selection).toEqual({ kind: 'state', id: 'draft' });
+    expect(listener).not.toHaveBeenCalled();
+    expect(queryOne(shadowOf(editor), '.node.is-selected').textContent).toContain('Drafting');
+  });
+
+  it('keeps a transition selected across an assignment that keeps the transition', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'transition', id: 'pay' };
+
+    editor.value = sampleMachine();
+
+    expect(editor.selection).toEqual({ kind: 'transition', id: 'pay' });
+  });
+
+  it('drops the selection, and says so, when the selected element is gone', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    const emitted = selectionsOf(editor);
+    const machineChanges = vi.fn();
+    editor.addEventListener('state-machine-change', machineChanges);
+
+    const without = sampleMachine();
+    editor.value = {
+      ...without,
+      states: without.states.filter((state) => state.id !== 'draft'),
+      transitions: [],
+      initialStateIds: [],
+    };
+
+    expect(editor.selection).toBeNull();
+    expect(emitted).toEqual([null]);
+    expect(machineChanges).not.toHaveBeenCalled();
+  });
+
+  it('drops a selected transition that the new machine no longer has', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'transition', id: 'pay' };
+    const emitted = selectionsOf(editor);
+
+    const without = sampleMachine();
+    editor.value = { ...without, transitions: [] };
+
+    expect(editor.selection).toBeNull();
+    expect(emitted).toEqual([null]);
+  });
+
+  it('stays silent when assigning a machine with nothing selected', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const listener = vi.fn();
+    editor.addEventListener('state-machine-selection-change', listener);
+
+    editor.value = { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
+
+    expect(editor.selection).toBeNull();
+    expect(listener).not.toHaveBeenCalled();
   });
 });
 
