@@ -13,10 +13,14 @@ import {
 import {
   boundsOf,
   createViewport,
+  distanceBetween,
   fitViewport,
+  midpointOf,
   panBy,
+  pinchScale,
   toWorld,
   type Viewport,
+  wheelZoomFactor,
   zoomBy,
   zoomTo,
 } from '../geometry/viewport.js';
@@ -87,6 +91,14 @@ interface TransitionView {
   readonly chips: ReadonlyMap<SideEffectPhase, HTMLButtonElement>;
 }
 
+/** A two finger pinch in progress. Anchored on the values captured when it started. */
+interface PinchState {
+  readonly pointers: readonly [number, number];
+  readonly startDistance: number;
+  readonly startCenter: Point;
+  readonly startViewport: Viewport;
+}
+
 type DragState =
   | { readonly kind: 'pan'; readonly origin: Point; readonly viewport: Viewport }
   | {
@@ -149,6 +161,10 @@ export class StateMachineEditorElement extends HTMLElement {
   #provider: SideEffectProvider | undefined;
   #readOnly = false;
   #drag: DragState | undefined;
+  /** Every pointer currently down on the canvas, in viewport-local coordinates. */
+  readonly #pointers = new Map<number, Point>();
+  #pinch: PinchState | undefined;
+  #trackingPointers = false;
   #dialog: SideEffectsDialogElement | undefined;
   #renameCleanup: (() => void) | undefined;
 
@@ -233,6 +249,9 @@ export class StateMachineEditorElement extends HTMLElement {
     fit.addEventListener('click', () => this.zoomToFit());
     this.#zoomLabel.addEventListener('click', () => this.setZoom(1));
 
+    this.#viewportElement.addEventListener('pointerdown', this.#onTrackPointerDown, {
+      capture: true,
+    });
     this.#viewportElement.addEventListener('pointerdown', this.#onBackgroundPointerDown);
     this.#viewportElement.addEventListener('wheel', this.#onWheel, { passive: false });
     this.addEventListener('keydown', this.#onKeyDown);
@@ -249,6 +268,9 @@ export class StateMachineEditorElement extends HTMLElement {
 
   disconnectedCallback(): void {
     this.#endDrag();
+    this.#endPinch();
+    this.#pointers.clear();
+    this.#stopTrackingPointers();
   }
 
   attributeChangedCallback(name: string, _previous: string | null, next: string | null): void {
@@ -346,10 +368,17 @@ export class StateMachineEditorElement extends HTMLElement {
     if (bounds === undefined) {
       return;
     }
-    const size = {
-      width: this.#viewportElement.clientWidth || bounds.width + padding * 2,
-      height: this.#viewportElement.clientHeight || bounds.height + padding * 2,
+    // A hidden, detached or not yet laid out canvas measures 0 (or nonsense) —
+    // fitting against that would clamp the zoom to its minimum, so fall back to
+    // the content's own size and land on a sane scale instead.
+    const measured = {
+      width: this.#viewportElement.clientWidth,
+      height: this.#viewportElement.clientHeight,
     };
+    const usable = measured.width > padding * 2 && measured.height > padding * 2;
+    const size = usable
+      ? measured
+      : { width: bounds.width + padding * 2, height: bounds.height + padding * 2 };
     this.#setViewport(fitViewport(bounds, size, padding));
   }
 
@@ -727,10 +756,115 @@ export class StateMachineEditorElement extends HTMLElement {
     return computeEdgeGeometry(this.#rectFor(from), this.#rectFor(to), curvatureFor(index));
   }
 
+  // -- multi touch ----------------------------------------------------------
+
+  /** Capture phase, so a second finger is seen even when it lands on a card. */
+  #onTrackPointerDown = (event: PointerEvent): void => {
+    this.#pointers.set(event.pointerId, this.#localPoint(event));
+    this.#startTrackingPointers();
+    if (this.#pointers.size === 2 && this.#pinch === undefined) {
+      this.#beginPinch();
+    }
+  };
+
+  #startTrackingPointers(): void {
+    if (this.#trackingPointers) {
+      return;
+    }
+    this.#trackingPointers = true;
+    const doc = this.ownerDocument;
+    doc.addEventListener('pointermove', this.#onTrackPointerMove, { capture: true });
+    doc.addEventListener('pointerup', this.#onTrackPointerUp, { capture: true });
+    doc.addEventListener('pointercancel', this.#onTrackPointerUp, { capture: true });
+  }
+
+  #stopTrackingPointers(): void {
+    if (!this.#trackingPointers) {
+      return;
+    }
+    this.#trackingPointers = false;
+    const doc = this.ownerDocument;
+    doc.removeEventListener('pointermove', this.#onTrackPointerMove, { capture: true });
+    doc.removeEventListener('pointerup', this.#onTrackPointerUp, { capture: true });
+    doc.removeEventListener('pointercancel', this.#onTrackPointerUp, { capture: true });
+  }
+
+  #onTrackPointerMove = (event: PointerEvent): void => {
+    if (!this.#pointers.has(event.pointerId)) {
+      return;
+    }
+    this.#pointers.set(event.pointerId, this.#localPoint(event));
+    this.#applyPinch();
+  };
+
+  #onTrackPointerUp = (event: PointerEvent): void => {
+    this.#pointers.delete(event.pointerId);
+    if (this.#pinch !== undefined && this.#pointers.size < 2) {
+      this.#endPinch();
+    }
+    if (this.#pointers.size === 0) {
+      this.#stopTrackingPointers();
+    }
+  };
+
+  #beginPinch(): void {
+    const entries = [...this.#pointers.entries()];
+    const first = entries[0];
+    const second = entries[1];
+    if (first === undefined || second === undefined) {
+      return;
+    }
+    // A pinch supersedes whatever the first finger had started (pan, node, link).
+    this.#endDrag();
+    this.#pinch = {
+      pointers: [first[0], second[0]],
+      startDistance: distanceBetween(first[1], second[1]),
+      startCenter: midpointOf(first[1], second[1]),
+      startViewport: this.#viewport,
+    };
+    this.#viewportElement.classList.add('is-pinching');
+  }
+
+  #endPinch(): void {
+    if (this.#pinch === undefined) {
+      return;
+    }
+    this.#pinch = undefined;
+    this.#viewportElement.classList.remove('is-pinching');
+  }
+
+  /**
+   * Recomputed from the values captured when the pinch started rather than
+   * accumulated frame by frame, so rounding never makes the canvas drift.
+   */
+  #applyPinch(): void {
+    const pinch = this.#pinch;
+    if (pinch === undefined) {
+      return;
+    }
+    const [firstId, secondId] = pinch.pointers;
+    const first = this.#pointers.get(firstId);
+    const second = this.#pointers.get(secondId);
+    if (first === undefined || second === undefined) {
+      return;
+    }
+    const center = midpointOf(first, second);
+    const scale = pinchScale(
+      pinch.startViewport.scale,
+      pinch.startDistance,
+      distanceBetween(first, second),
+    );
+    const zoomed = zoomTo(pinch.startViewport, scale, pinch.startCenter);
+    // Moving both fingers together pans, exactly like a one finger drag would.
+    this.#setViewport(
+      panBy(zoomed, center.x - pinch.startCenter.x, center.y - pinch.startCenter.y),
+    );
+  }
+
   // -- interactions ---------------------------------------------------------
 
   #onBackgroundPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || isInteractiveTarget(event.target)) {
+    if (event.button !== 0 || this.#pinch !== undefined || isInteractiveTarget(event.target)) {
       return;
     }
     this.#setSelection(null);
@@ -739,7 +873,10 @@ export class StateMachineEditorElement extends HTMLElement {
   };
 
   #onNodePointerDown(event: PointerEvent, stateId: string): void {
-    if (event.button !== 0 || this.#readOnly || isInteractiveTarget(event.target)) {
+    if (event.button !== 0 || this.#readOnly || this.#pinch !== undefined) {
+      return;
+    }
+    if (isInteractiveTarget(event.target)) {
       return;
     }
     const state = findState(this.#machine, stateId);
@@ -759,7 +896,7 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   #onLinkPointerDown(event: PointerEvent, stateId: string): void {
-    if (event.button !== 0 || this.#readOnly) {
+    if (event.button !== 0 || this.#readOnly || this.#pinch !== undefined) {
       return;
     }
     event.stopPropagation();
@@ -875,9 +1012,10 @@ export class StateMachineEditorElement extends HTMLElement {
   #onWheel = (event: WheelEvent): void => {
     event.preventDefault();
     const anchor = this.#localPoint(event);
-    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+    // A trackpad pinch arrives as a wheel event with ctrlKey set, in every browser.
+    if (event.ctrlKey || event.metaKey) {
       this.#setViewport(
-        zoomBy(this.#viewport, event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, anchor),
+        zoomBy(this.#viewport, wheelZoomFactor(event.deltaY, event.deltaMode), anchor),
       );
       return;
     }

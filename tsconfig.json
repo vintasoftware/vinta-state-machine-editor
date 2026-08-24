@@ -28,5 +28,5 @@
     "sourceMap": true,
     "noEmit": true
   },
-  "include": ["src", "test", "dev", "vitest.config.ts"]
+  "include": ["src", "test", "dev", "scripts", "vite.config.ts", "vitest.config.ts"]
 }

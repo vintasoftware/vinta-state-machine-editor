@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { toWorld } from '../src/geometry/viewport.js';
 import {
   defineStateMachineEditor,
   type StateMachineChangeEvent,
@@ -13,6 +14,9 @@ import {
   firePointer,
   flush,
   mountEditor,
+  pinchEnd,
+  pinchMove,
+  pinchStart,
   queryAll,
   queryButton,
   queryOne,
@@ -313,6 +317,200 @@ describe('viewport', () => {
     editor.zoomToFit();
     expect(editor.viewport.scale).toBeGreaterThan(0);
     expect(editor.viewport.scale).toBeLessThanOrEqual(3);
+  });
+
+  it('falls back to the content size when the canvas cannot be measured', () => {
+    // jsdom reports 0x0 for every element, like a hidden or not yet laid out canvas.
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.zoomToFit();
+    expect(editor.viewport.scale).toBe(1);
+  });
+
+  it('does nothing when there is nothing to fit', () => {
+    const editor = mountEditor();
+    editor.setZoom(2);
+    const before = editor.viewport;
+    editor.zoomToFit();
+    expect(editor.viewport).toBe(before);
+  });
+});
+
+describe('pinch to zoom', () => {
+  it('zooms by how much the fingers spread', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 200, clientY: 100 },
+    ]);
+    pinchMove(viewport, [
+      { clientX: 50, clientY: 100 },
+      { clientX: 250, clientY: 100 },
+    ]);
+
+    expect(editor.viewport.scale).toBeCloseTo(2, 5);
+  });
+
+  it('pinches in as well as out', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 300, clientY: 100 },
+    ]);
+    pinchMove(viewport, [
+      { clientX: 150, clientY: 100 },
+      { clientX: 250, clientY: 100 },
+    ]);
+
+    expect(editor.viewport.scale).toBeCloseTo(0.5, 5);
+  });
+
+  it('keeps the point between the fingers anchored', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+    const center = { x: 150, y: 120 };
+    const before = toWorld(editor.viewport, center);
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 120 },
+      { clientX: 200, clientY: 120 },
+    ]);
+    pinchMove(viewport, [
+      { clientX: 30, clientY: 120 },
+      { clientX: 270, clientY: 120 },
+    ]);
+
+    const after = toWorld(editor.viewport, center);
+    expect(after.x).toBeCloseTo(before.x, 5);
+    expect(after.y).toBeCloseTo(before.y, 5);
+  });
+
+  it('pans when both fingers move together', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 200, clientY: 100 },
+    ]);
+    pinchMove(viewport, [
+      { clientX: 140, clientY: 130 },
+      { clientX: 240, clientY: 130 },
+    ]);
+
+    expect(editor.viewport.scale).toBeCloseTo(1, 5);
+    expect(editor.viewport.x).toBeCloseTo(40, 5);
+    expect(editor.viewport.y).toBeCloseTo(30, 5);
+  });
+
+  it('stays inside the supported zoom range', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 110, clientY: 100 },
+    ]);
+    pinchMove(viewport, [
+      { clientX: 0, clientY: 100 },
+      { clientX: 4000, clientY: 100 },
+    ]);
+
+    expect(editor.viewport.scale).toBe(3);
+  });
+
+  it('takes over from a node drag that was already running', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+    const header = queryOne(shadow, '.node .node__header');
+
+    firePointer(header, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
+    firePointer(document, 'pointermove', { pointerId: 1, clientX: 60, clientY: 10 });
+    expect(editor.value.states[0]?.position).toEqual({ x: 50, y: 0 });
+
+    // Second finger lands: the pinch wins and the node stops following.
+    firePointer(queryOne(shadow, '.viewport'), 'pointerdown', {
+      pointerId: 2,
+      clientX: 260,
+      clientY: 10,
+    });
+    firePointer(document, 'pointermove', { pointerId: 1, clientX: 10, clientY: 10 });
+    firePointer(document, 'pointermove', { pointerId: 2, clientX: 460, clientY: 10 });
+
+    expect(editor.value.states[0]?.position).toEqual({ x: 50, y: 0 });
+    expect(editor.viewport.scale).toBeGreaterThan(1);
+  });
+
+  it('does not start a pan with the second finger', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 200, clientY: 100 },
+    ]);
+    // Both fingers hold still: nothing should move.
+    pinchMove(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 200, clientY: 100 },
+    ]);
+
+    expect(editor.viewport).toEqual({ x: 0, y: 0, scale: 1 });
+  });
+
+  it('ends the gesture when a finger is lifted', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    pinchStart(viewport, [
+      { clientX: 100, clientY: 100 },
+      { clientX: 200, clientY: 100 },
+    ]);
+    pinchMove(viewport, [
+      { clientX: 50, clientY: 100 },
+      { clientX: 250, clientY: 100 },
+    ]);
+    const zoomed = editor.viewport.scale;
+
+    firePointer(viewport, 'pointerup', { pointerId: 2, clientX: 250, clientY: 100 });
+    firePointer(document, 'pointermove', { pointerId: 1, clientX: 400, clientY: 400 });
+
+    expect(editor.viewport.scale).toBe(zoomed);
+    pinchEnd(viewport, 1);
+  });
+
+  it('zooms continuously with a trackpad pinch (ctrl + wheel)', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    viewport.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -4, ctrlKey: true, cancelable: true }),
+    );
+    const small = editor.viewport.scale;
+    expect(small).toBeGreaterThan(1);
+    expect(small).toBeLessThan(1.02);
+
+    viewport.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, cancelable: true }),
+    );
+    expect(editor.viewport.scale).toBeGreaterThan(small * 1.4);
+  });
+
+  it('treats shift + wheel as panning, not zooming', () => {
+    const editor = mountEditor();
+    const viewport = queryOne(shadowOf(editor), '.viewport');
+
+    viewport.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 40, shiftKey: true, cancelable: true }),
+    );
+
+    expect(editor.viewport.scale).toBe(1);
+    expect(editor.viewport.y).toBe(-40);
   });
 });
 

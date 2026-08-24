@@ -52,6 +52,49 @@ export function zoomTo(viewport: Viewport, scale: number, anchor: Point): Viewpo
   };
 }
 
+export function distanceBetween(a: Point, b: Point): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+export function midpointOf(a: Point, b: Point): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/** Pixels per wheel unit, per `WheelEvent.deltaMode`: pixel, line, page. */
+const DELTA_MODE_PIXELS: readonly number[] = [1, 16, 400];
+
+/** How many pixels of wheel travel it takes to change the scale by a factor of e. */
+export const WHEEL_ZOOM_SENSITIVITY = 250;
+
+/** Converts a wheel delta to pixels, whatever unit the browser reported it in. */
+export function normalizeWheelDelta(delta: number, deltaMode = 0): number {
+  if (!Number.isFinite(delta)) {
+    return 0;
+  }
+  return delta * (DELTA_MODE_PIXELS[deltaMode] ?? 1);
+}
+
+/**
+ * Continuous zoom factor for a wheel event, so a trackpad pinch (many small
+ * deltas) feels smooth while a notched mouse wheel still moves a visible step.
+ * Clamped per event so one huge delta cannot jump across the whole zoom range.
+ */
+export function wheelZoomFactor(delta: number, deltaMode = 0): number {
+  const pixels = normalizeWheelDelta(delta, deltaMode);
+  return Math.min(2, Math.max(0.5, Math.exp(-pixels / WHEEL_ZOOM_SENSITIVITY)));
+}
+
+/**
+ * Scale for a two finger pinch, derived from how much the distance between the
+ * fingers changed since the gesture started.
+ */
+export function pinchScale(startScale: number, startDistance: number, distance: number): number {
+  if (startDistance <= 0 || distance <= 0) {
+    return clampScale(startScale);
+  }
+  return clampScale(startScale * (distance / startDistance));
+}
+
 /** Smallest rect containing every input rect, or `undefined` when there is nothing to fit. */
 export function boundsOf(rects: readonly Rect[]): Rect | undefined {
   const first = rects[0];

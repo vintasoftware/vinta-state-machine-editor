@@ -87,6 +87,7 @@ export const editorStyles: string = `
   }
 
   .viewport.is-panning { cursor: grabbing; }
+  .viewport.is-pinching { cursor: zoom-in; }
 
   .world {
     position: absolute;

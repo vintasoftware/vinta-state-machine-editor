@@ -9,12 +9,17 @@ import {
   boundsOf,
   clampScale,
   createViewport,
+  distanceBetween,
   fitViewport,
   MAX_SCALE,
   MIN_SCALE,
+  midpointOf,
+  normalizeWheelDelta,
   panBy,
+  pinchScale,
   toScreen,
   toWorld,
+  wheelZoomFactor,
   zoomBy,
   zoomTo,
 } from '../src/geometry/viewport.js';
@@ -98,5 +103,48 @@ describe('edge geometry', () => {
     expect(first.path.startsWith('M ')).toBe(true);
     expect(first.path).toContain('C ');
     expect(second.label.y).toBeLessThan(first.label.y);
+  });
+});
+
+describe('gesture math', () => {
+  it('measures distance and midpoint between two pointers', () => {
+    expect(distanceBetween({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
+    expect(midpointOf({ x: 0, y: 10 }, { x: 10, y: 30 })).toEqual({ x: 5, y: 20 });
+  });
+
+  it('scales a pinch by how much the fingers spread', () => {
+    expect(pinchScale(1, 100, 200)).toBe(2);
+    expect(pinchScale(1, 200, 100)).toBe(0.5);
+    expect(pinchScale(2, 100, 100)).toBe(2);
+  });
+
+  it('clamps pinch scale and survives degenerate distances', () => {
+    expect(pinchScale(1, 100, 100_000)).toBe(MAX_SCALE);
+    expect(pinchScale(1, 100, 1)).toBe(MIN_SCALE);
+    expect(pinchScale(1.5, 0, 100)).toBe(1.5);
+    expect(pinchScale(1.5, 100, 0)).toBe(1.5);
+  });
+
+  it('normalizes wheel deltas across delta modes', () => {
+    expect(normalizeWheelDelta(100, 0)).toBe(100);
+    expect(normalizeWheelDelta(3, 1)).toBe(48);
+    expect(normalizeWheelDelta(1, 2)).toBe(400);
+    expect(normalizeWheelDelta(Number.NaN, 0)).toBe(0);
+  });
+
+  it('turns wheel deltas into a continuous zoom factor', () => {
+    expect(wheelZoomFactor(0)).toBe(1);
+    expect(wheelZoomFactor(-10)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(10)).toBeLessThan(1);
+    // Small trackpad pinch steps stay small.
+    expect(wheelZoomFactor(-4)).toBeLessThan(1.02);
+    // One notch of a mouse wheel is a visible step.
+    expect(wheelZoomFactor(-100)).toBeGreaterThan(1.4);
+  });
+
+  it('never lets a single wheel event jump more than 2x', () => {
+    expect(wheelZoomFactor(-100_000)).toBe(2);
+    expect(wheelZoomFactor(100_000)).toBe(0.5);
+    expect(wheelZoomFactor(-100, 2)).toBe(2);
   });
 });

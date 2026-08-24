@@ -77,8 +77,8 @@ defineStateMachineEditor('order-flow-editor');
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
 | Remove | Click **✕** on the card, or select it and press `Delete` |
-| Pan | Drag the background, or scroll |
-| Zoom | Toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
+| Pan | Drag the background, scroll, or move two fingers together |
+| Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
 
 ## Data model
 
@@ -201,6 +201,10 @@ state-machine-editor {
 ```
 
 Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `edge`, `chip`.
+
+The canvas sets `touch-action: none`, so touch gestures reach the component instead of scrolling
+the page. Pinch is handled from raw pointer events (two fingers) and from `wheel` events with
+`ctrlKey`, which is how every browser reports a trackpad pinch.
 
 ## Development
 

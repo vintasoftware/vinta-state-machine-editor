@@ -70,20 +70,41 @@ export interface PointerInit {
   readonly clientX?: number;
   readonly clientY?: number;
   readonly button?: number;
+  readonly pointerId?: number;
 }
 
-/** jsdom has no PointerEvent, and the component only relies on mouse coordinates. */
 export function firePointer(target: EventTarget, type: string, init: PointerInit = {}): void {
   target.dispatchEvent(
-    new MouseEvent(type, {
+    new PointerEvent(type, {
       bubbles: true,
       cancelable: true,
       composed: true,
       clientX: init.clientX ?? 0,
       clientY: init.clientY ?? 0,
       button: init.button ?? 0,
+      pointerId: init.pointerId ?? 1,
     }),
   );
+}
+
+/** Presses `count` fingers on `target` at the given points, in order. */
+export function pinchStart(target: EventTarget, points: readonly PointerInit[]): void {
+  points.forEach((point, index) => {
+    firePointer(target, 'pointerdown', { pointerId: index + 1, ...point });
+  });
+}
+
+/** Moves already-pressed fingers, one pointermove per finger. */
+export function pinchMove(target: EventTarget, points: readonly PointerInit[]): void {
+  points.forEach((point, index) => {
+    firePointer(target, 'pointermove', { pointerId: index + 1, ...point });
+  });
+}
+
+export function pinchEnd(target: EventTarget, count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    firePointer(target, 'pointerup', { pointerId: index + 1 });
+  }
 }
 
 export function fireKey(target: EventTarget, key: string, init: KeyboardEventInit = {}): void {

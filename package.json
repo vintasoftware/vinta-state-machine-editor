@@ -39,6 +39,10 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:network": "vite --host 0.0.0.0",
+    "demo:build": "vite build",
+    "demo:serve": "node scripts/serve-demo.ts",
+    "demo": "npm run demo:build && npm run demo:serve",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
