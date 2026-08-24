@@ -141,8 +141,16 @@ Every attached side effect carries a `params` JSON object, editable two ways fro
 - **Form** — a nested editor over the actual JSON. Each entry exposes its key, its type
   (`string`, `number`, `boolean`, `null`, `object`, `array`) and its value; objects and arrays
   recurse into indented rows of their own.
-- **JSON** — the same value as text. It validates as you type, and refuses to switch back to the
-  form while it does not parse, so a half-finished edit is never silently dropped.
+- **JSON** — the same value as text, syntax highlighted. It validates as you type, and refuses to
+  switch back to the form while it does not parse, so a half-finished edit is never silently
+  dropped.
+
+Highlighting is a `<pre>` of coloured tokens sitting under a transparent `<textarea>` in the same
+grid cell, so every native behaviour — selection, undo, IME, mobile keyboards, screen readers —
+still comes from the real form control. The tokenizer (`tokenizeJson`) is exported and pure; it
+never throws and never drops input, since joining its tokens has to reproduce the source exactly or
+the two layers would drift apart. Malformed tokens are underlined in red as you type, and an
+unterminated string stops at its line end rather than colouring the rest of the document.
 
 The catalog can prefill them: a definition with `defaultParams` seeds the parameters of every side
 effect attached from it.

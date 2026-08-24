@@ -14,6 +14,13 @@ export const tokens: string = `
     --sme-danger: #c62f3a;
     --sme-edge: #8b93a3;
     --sme-radius: 10px;
+    --sme-code-key: #8250df;
+    --sme-code-string: #0a7c42;
+    --sme-code-number: #b3541e;
+    --sme-code-keyword: #0550ae;
+    --sme-code-punctuation: #6b7280;
+    --sme-code-invalid: #c62f3a;
+    --sme-code-selection: rgba(61, 99, 221, 0.28);
     --sme-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 8px 24px rgba(16, 24, 40, 0.08);
     --sme-node-width: 248px;
     color-scheme: light dark;
@@ -33,6 +40,13 @@ export const tokens: string = `
       --sme-danger: #ff8080;
       --sme-edge: #6d7688;
       --sme-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+      --sme-code-key: #c8a8ff;
+      --sme-code-string: #7ee2a8;
+      --sme-code-number: #ffb27a;
+      --sme-code-keyword: #8ab4ff;
+      --sme-code-punctuation: #8b93a3;
+      --sme-code-invalid: #ff8080;
+      --sme-code-selection: rgba(125, 155, 255, 0.32);
     }
   }
 
@@ -577,19 +591,64 @@ export const dialogStyles: string = `
   .jf-add:hover { border-color: var(--sme-accent); color: var(--sme-text); }
   .jf-empty { margin: 0; font-size: 12px; color: var(--sme-text-muted); }
 
-  .params__text {
-    width: 100%;
-    min-height: 108px;
-    padding: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    color: inherit;
+  /*
+   * The highlighted copy and the textarea are stacked in one grid cell and must
+   * measure text identically, or the caret drifts away from the colours.
+   */
+  .params__editor {
+    display: grid;
     background: var(--sme-surface);
     border: 1px solid var(--sme-border);
     border-radius: 8px;
-    resize: vertical;
+    overflow: hidden;
   }
+
+  .params__editor:focus-within { border-color: var(--sme-accent); }
+
+  .params__highlight,
+  .params__text {
+    grid-area: 1 / 1;
+    margin: 0;
+    width: 100%;
+    min-height: 108px;
+    padding: 8px;
+    border: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    letter-spacing: normal;
+    tab-size: 2;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    background: transparent;
+  }
+
+  .params__highlight {
+    pointer-events: none;
+    overflow: hidden;
+    color: var(--sme-text);
+  }
+
+  .params__text {
+    color: transparent;
+    caret-color: var(--sme-text);
+    resize: vertical;
+    overflow: auto;
+  }
+
+  .params__text:focus-visible { outline: none; }
+
+  /* Selection is painted above the colours, so keep it translucent. */
+  .params__text::selection { background: var(--sme-code-selection); }
+
+  .tok--key { color: var(--sme-code-key); }
+  .tok--string { color: var(--sme-code-string); }
+  .tok--number { color: var(--sme-code-number); }
+  .tok--boolean,
+  .tok--null { color: var(--sme-code-keyword); }
+  .tok--punctuation { color: var(--sme-code-punctuation); }
+  .tok--invalid { color: var(--sme-code-invalid); text-decoration: wavy underline; }
 
   .params__error { margin: 4px 0 0; font-size: 11px; color: var(--sme-danger); }
 

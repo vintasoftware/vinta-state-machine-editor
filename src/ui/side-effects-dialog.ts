@@ -5,6 +5,7 @@ import { parseSideEffectDefinitions } from '../model/parse.js';
 import type { JsonObject, SideEffect, SideEffectDefinition, SideEffectProvider } from '../types.js';
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
 import { JsonFormEditor } from './json-form.js';
+import { JsonTextEditor } from './json-text-editor.js';
 import { ReorderController } from './reorder.js';
 import { dialogStyles } from './styles.js';
 
@@ -299,10 +300,16 @@ export class SideEffectsDialogElement extends HTMLElement {
     });
     const form = createElement('div', { className: 'params__form', parent: panel });
     const json = createElement('div', { className: 'params__json', parent: panel });
-    const textarea = createElement('textarea', {
-      className: 'params__text',
-      parent: json,
-      attrs: { spellcheck: 'false', 'aria-label': `Parameters of ${effect.name} as JSON` },
+    const text = new JsonTextEditor({
+      container: json,
+      label: `Parameters of ${effect.name} as JSON`,
+      onInput: (value) => {
+        const parsed = parseParamsText(value);
+        error.textContent = parsed.ok ? '' : parsed.error;
+        if (parsed.ok) {
+          this.#updateParams(effect.id, parsed.value);
+        }
+      },
     });
     const error = createElement('p', { className: 'params__error', parent: json });
 
@@ -325,7 +332,7 @@ export class SideEffectsDialogElement extends HTMLElement {
       if (mode === 'form') {
         editor.setValue(current, this.#readOnly);
       } else {
-        textarea.value = formatJson(current);
+        text.value = formatJson(current);
         error.textContent = '';
       }
     };
@@ -341,7 +348,7 @@ export class SideEffectsDialogElement extends HTMLElement {
         event.stopPropagation();
         if (mode === 'form' && this.#paramsMode === 'json') {
           // Refuse to leave the text tab while it does not parse, so the edit is not lost.
-          const parsed = parseParamsText(textarea.value);
+          const parsed = parseParamsText(text.value);
           if (!parsed.ok) {
             error.textContent = parsed.error;
             return;
@@ -352,14 +359,7 @@ export class SideEffectsDialogElement extends HTMLElement {
       });
     }
 
-    textarea.readOnly = this.#readOnly;
-    textarea.addEventListener('input', () => {
-      const parsed = parseParamsText(textarea.value);
-      error.textContent = parsed.ok ? '' : parsed.error;
-      if (parsed.ok) {
-        this.#updateParams(effect.id, parsed.value);
-      }
-    });
+    text.readOnly = this.#readOnly;
 
     showMode(this.#paramsMode);
   }
