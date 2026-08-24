@@ -19,13 +19,19 @@ import {
   setFinalStates,
   setInitialStates,
   setSideEffects,
+  setStateColor,
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
   updateState,
   updateTransition,
 } from '../src/model/machine.js';
-import type { SideEffectListRef, StateMachine } from '../src/types.js';
+import {
+  isStateColor,
+  type SideEffectListRef,
+  STATE_COLORS,
+  type StateMachine,
+} from '../src/types.js';
 
 const CATALOG = [
   { id: 'a', name: 'alpha' },
@@ -302,5 +308,44 @@ describe('initial and final states', () => {
     const next = toggleInitialState(machine, 's1');
     expect(machine.initialStateIds).toEqual([]);
     expect(next.initialStateIds).toEqual(['s1']);
+  });
+});
+
+describe('state colours', () => {
+  it('starts neutral', () => {
+    expect(createState({ name: 'A', position: { x: 0, y: 0 } }).color).toBe('neutral');
+  });
+
+  it('can be created with a colour', () => {
+    expect(createState({ name: 'A', position: { x: 0, y: 0 }, color: 'danger' }).color).toBe(
+      'danger',
+    );
+  });
+
+  it('repaints one state without touching the rest', () => {
+    const machine = machineWithTwoStates();
+    const next = setStateColor(machine, 's1', 'success');
+    expect(next.states[0]?.color).toBe('success');
+    expect(next.states[1]?.color).toBe('neutral');
+    expect(machine.states[0]?.color).toBe('neutral');
+  });
+
+  it('keeps the colour through unrelated edits', () => {
+    let machine = setStateColor(machineWithTwoStates(), 's1', 'warning');
+    machine = updateState(machine, 's1', { name: 'Renamed', position: { x: 5, y: 5 } });
+    expect(machine.states[0]?.color).toBe('warning');
+  });
+
+  it('rejects unknown states', () => {
+    expect(() => setStateColor(machineWithTwoStates(), 'ghost', 'info')).toThrow(StateMachineError);
+  });
+
+  it('knows which strings name a colour', () => {
+    expect(STATE_COLORS).toEqual(['neutral', 'info', 'success', 'warning', 'danger', 'muted']);
+    for (const color of STATE_COLORS) {
+      expect(isStateColor(color)).toBe(true);
+    }
+    expect(isStateColor('purple')).toBe(false);
+    expect(isStateColor(undefined)).toBe(false);
   });
 });

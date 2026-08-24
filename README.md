@@ -79,6 +79,7 @@ defineStateMachineEditor('order-flow-editor');
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
 | Edit side effect parameters | Press **{ }** on a row in the dialog, then use the nested form or the JSON tab |
+| Colour a state | Press the round swatch in the card header and pick one of the six |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
 | Remove | Click **✕** on the card, or select it and press `Delete` |
 | Pan | Drag the background, scroll, or move two fingers together |
@@ -102,6 +103,7 @@ interface StateNode {
   position: { x: number; y: number }; // world coordinates, unaffected by zoom
   onEnter: SideEffectHooks; // around entering the state
   onLeave: SideEffectHooks; // around leaving the state
+  color: StateColor; // 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
 }
 
 interface Transition {
@@ -175,6 +177,29 @@ with its parameters inline.
 The helpers behind all of this are exported and pure, so hosts can reuse them: `setAtPath`,
 `removeAtPath`, `renameKeyAtPath`, `appendEntry`, `coerceTo`, `jsonTypeOf`, `parseParamsText`,
 `toJsonObject`, plus `setSideEffectParams` on the model.
+
+### State colours
+
+Each state carries a semantic colour, drawn as a bar across the top of its card and editable from
+the round swatch in the card header:
+
+```ts
+type StateColor = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted';
+```
+
+They are names, not hex values, so the palette follows the theme: each maps to a
+`--sme-color-<name>` custom property with a light and a dark value, overridable from the host.
+
+```css
+state-machine-editor {
+  --sme-color-success: #047857;
+  --sme-color-danger: #b91c1c;
+}
+```
+
+`editor.setStateColor('paid', 'success')` sets one programmatically, `setStateColor` does the same
+on a plain machine, and changes arrive as `state-color`. States without a colour parse as
+`neutral`; an unknown name is a validation error rather than a silent fallback.
 
 ### Initial and final states
 

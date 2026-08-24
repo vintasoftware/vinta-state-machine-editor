@@ -182,3 +182,35 @@ describe('side effect parameters', () => {
     );
   });
 });
+
+describe('state colour parsing', () => {
+  it('defaults to neutral when absent', () => {
+    const result = parseStateMachine(VALID);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.states[0]?.color).toBe('neutral');
+    }
+  });
+
+  it('keeps a valid colour', () => {
+    const result = parseStateMachine({
+      ...VALID,
+      states: [{ ...VALID.states[0], color: 'success' }],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.states[0]?.color).toBe('success');
+    }
+  });
+
+  it('rejects a colour outside the palette', () => {
+    const result = parseStateMachine({
+      ...VALID,
+      states: [{ ...VALID.states[0], color: 'chartreuse' }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(' ')).toContain('must be one of neutral, info, success');
+    }
+  });
+});

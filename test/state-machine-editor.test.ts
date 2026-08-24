@@ -668,6 +668,131 @@ describe('parameter hints on the canvas', () => {
   });
 });
 
+describe('state colours', () => {
+  function colored(): ReturnType<typeof sampleMachine> {
+    const base = sampleMachine();
+    return {
+      ...base,
+      states: base.states.map((state, index) => ({
+        ...state,
+        color: index === 0 ? 'info' : 'neutral',
+      })),
+    };
+  }
+
+  it('paints a bar on every card and records the colour on the element', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+
+    const nodes = queryAll(shadowOf(editor), '.node');
+    expect(nodes[0]?.getAttribute('data-color')).toBe('info');
+    expect(nodes[1]?.getAttribute('data-color')).toBe('neutral');
+    expect(queryAll(shadowOf(editor), '.node__bar')).toHaveLength(2);
+  });
+
+  it('keeps the palette closed until the swatch is pressed', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    const shadow = shadowOf(editor);
+
+    expect(queryAll(shadow, '.node__palette').every((palette) => palette.hidden)).toBe(true);
+    expect(queryAll(shadow, '.node__color')[0]?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('offers exactly the six named colours', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    const shadow = shadowOf(editor);
+    queryAll(shadow, '.node__color')[0]?.click();
+
+    const palette = queryAll(shadow, '.node__palette')[0];
+    expect(palette?.hidden).toBe(false);
+    expect(
+      queryAll(palette ?? shadow, '.palette__option').map((o) => o.getAttribute('data-color')),
+    ).toEqual(['neutral', 'info', 'success', 'warning', 'danger', 'muted']);
+    expect(
+      queryAll(palette ?? shadow, '.palette__option')
+        .filter((o) => o.getAttribute('aria-selected') === 'true')
+        .map((o) => o.getAttribute('data-color')),
+    ).toEqual(['info']);
+    expect(queryAll(shadow, '.node__color')[0]?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('applies the picked colour, reports it and closes', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    const recorded = changes(editor);
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__color')[0]?.click();
+    const danger = queryAll(shadow, '.palette__option').find(
+      (option) => option.getAttribute('data-color') === 'danger',
+    );
+    danger?.click();
+
+    expect(editor.value.states[0]?.color).toBe('danger');
+    expect(recorded).toEqual([{ kind: 'state-color', stateId: 'draft' }]);
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(true);
+    expect(queryAll(shadow, '.node')[0]?.getAttribute('data-color')).toBe('danger');
+  });
+
+  it('closes on a second press of the same swatch', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__color')[0]?.click();
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(false);
+    queryAll(shadow, '.node__color')[0]?.click();
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(true);
+  });
+
+  it('closes with Escape and when the canvas is pressed', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__color')[0]?.click();
+    fireKey(editor, 'Escape');
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(true);
+
+    queryAll(shadow, '.node__color')[0]?.click();
+    firePointer(queryOne(shadow, '.viewport'), 'pointerdown');
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(true);
+  });
+
+  it('only keeps one palette open at a time', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__color')[0]?.click();
+    // Pressing the other card dismisses the first palette.
+    firePointer(queryAll(shadow, '.node')[1] ?? shadow, 'pointerdown');
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(true);
+  });
+
+  it('sets a colour through the public API', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    editor.setStateColor('paid', 'warning');
+    expect(editor.value.states[1]?.color).toBe('warning');
+    expect(queryAll(shadowOf(editor), '.node')[1]?.getAttribute('data-color')).toBe('warning');
+  });
+
+  it('hides the picker in read-only mode but keeps the bar', () => {
+    const editor = mountEditor();
+    editor.value = colored();
+    editor.readOnly = true;
+    const shadow = shadowOf(editor);
+
+    expect(queryButton(shadow, '.node__color').hidden).toBe(true);
+    expect(queryAll(shadow, '.node__bar')).toHaveLength(2);
+    queryAll(shadow, '.node__color')[0]?.click();
+    expect(queryAll(shadow, '.node__palette')[0]?.hidden).toBe(true);
+  });
+});
+
 describe('parallel transitions', () => {
   function machineWithParallelEdges(): ReturnType<typeof sampleMachine> {
     const base = sampleMachine();

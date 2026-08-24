@@ -70,9 +70,19 @@ function effect(
 }
 
 function exampleMachine(): StateMachine {
-  const draft = createState({ id: 'draft', name: 'Draft', position: { x: 60, y: 180 } });
+  const draft = createState({
+    id: 'draft',
+    name: 'Draft',
+    position: { x: 60, y: 180 },
+    color: 'info',
+  });
   const pending = {
-    ...createState({ id: 'pending', name: 'Pending payment', position: { x: 560, y: 60 } }),
+    ...createState({
+      id: 'pending',
+      name: 'Pending payment',
+      position: { x: 560, y: 60 },
+      color: 'warning',
+    }),
     onEnter: {
       before: [effect('reserve-stock', 'e-reserve')],
       after: [effect('send-confirmation', 'e-confirm'), effect('audit-log', 'e-audit-1')],
@@ -80,7 +90,12 @@ function exampleMachine(): StateMachine {
     onLeave: { before: [], after: [effect('release-stock', 'e-release')] },
   };
   const paid = {
-    ...createState({ id: 'paid', name: 'Paid', position: { x: 1080, y: 240 } }),
+    ...createState({
+      id: 'paid',
+      name: 'Paid',
+      position: { x: 1080, y: 240 },
+      color: 'success',
+    }),
     onEnter: { before: [], after: [effect('notify-warehouse', 'e-warehouse')] },
     onLeave: { before: [], after: [] },
   };
