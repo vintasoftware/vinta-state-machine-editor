@@ -1,8 +1,22 @@
+import { undo } from '@codemirror/commands';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineStateMachineEditor, type SideEffectsDialogElement } from '../src/index.js';
+import { formatJson } from '../src/model/json.js';
 import { createSideEffect } from '../src/model/machine.js';
 import type { SideEffect, SideEffectDefinition } from '../src/types.js';
-import { CATALOG, fireKey, flush, queryAll, queryButton, queryOne, shadowOf } from './helpers.js';
+import {
+  CATALOG,
+  codeEditor,
+  fireKey,
+  flush,
+  queryAll,
+  queryButton,
+  queryOne,
+  readCode,
+  shadowOf,
+  typeCode,
+  waitForCodeEditor,
+} from './helpers.js';
 
 function mountDialog(): SideEffectsDialogElement {
   defineStateMachineEditor();
@@ -375,15 +389,11 @@ describe('side effect parameters', () => {
     const shadow = shadowOf(dialog);
     queryButton(shadow, '.row__params').click();
     queryAll(shadow, '.params__mode')[1]?.click();
+    await waitForCodeEditor(shadow);
 
-    const textarea = shadow.querySelector('.params__text');
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error('missing textarea');
-    }
-    expect(textarea.value).toBe('{\n  "amount": 10\n}');
+    expect(readCode(shadow)).toBe('{\n  "amount": 10\n}');
 
-    textarea.value = '{"amount": 99, "note": "manual"}';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    typeCode(shadow, '{"amount": 99, "note": "manual"}');
     expect(queryOne(shadow, '.params__error').textContent).toBe('');
 
     queryButton(shadow, '.button--primary').click();
@@ -407,13 +417,9 @@ describe('side effect parameters', () => {
     const shadow = shadowOf(dialog);
     queryButton(shadow, '.row__params').click();
     queryAll(shadow, '.params__mode')[1]?.click();
+    await waitForCodeEditor(shadow);
 
-    const textarea = shadow.querySelector('.params__text');
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error('missing textarea');
-    }
-    textarea.value = '{"amount": }';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    typeCode(shadow, '{"amount": }');
 
     expect(queryOne(shadow, '.params__error').textContent?.length).toBeGreaterThan(0);
     expect(dialog.effects[0]?.params).toEqual({ amount: 10 });
@@ -434,13 +440,9 @@ describe('side effect parameters', () => {
     const shadow = shadowOf(dialog);
     queryButton(shadow, '.row__params').click();
     queryAll(shadow, '.params__mode')[1]?.click();
+    await waitForCodeEditor(shadow);
 
-    const textarea = shadow.querySelector('.params__text');
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error('missing textarea');
-    }
-    textarea.value = '{"to": "user", "retries": 2}';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    typeCode(shadow, '{"to": "user", "retries": 2}');
     queryAll(shadow, '.params__mode')[0]?.click();
 
     const keys = queryAll(shadow, '.jf-key').map((input) =>
@@ -492,5 +494,112 @@ describe('side effect parameters', () => {
     expect(shadow.querySelector('.jf-remove')).toBeNull();
     const value = shadow.querySelector('.jf-value');
     expect(value instanceof HTMLInputElement && value.disabled).toBe(true);
+  });
+});
+
+describe('the JSON editor', () => {
+  async function openJsonTab(dialog: SideEffectsDialogElement): Promise<ShadowRoot> {
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { amount: 10, note: 'manual', ok: true, missing: null },
+        },
+      ],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+    queryAll(shadow, '.params__mode')[1]?.click();
+    await waitForCodeEditor(shadow);
+    return shadow;
+  }
+
+  it('mounts CodeMirror inside the dialog shadow root', async () => {
+    const dialog = mountDialog();
+    const shadow = await openJsonTab(dialog);
+    expect(shadow.querySelector('.cm-editor')).not.toBeNull();
+    // The editor must live in the shadow root, not leak into the document.
+    expect(document.querySelector('.cm-editor')).toBeNull();
+  });
+
+  it('highlights the document, naming each kind of token', async () => {
+    const dialog = mountDialog();
+    const shadow = await openJsonTab(dialog);
+
+    const view = codeEditor(shadow);
+    // CodeMirror renders lazily; force the viewport to be measured.
+    view.dispatch({ selection: { anchor: 0 } });
+    const styled = shadow.querySelectorAll('.cm-line span');
+    expect(styled.length).toBeGreaterThan(0);
+  });
+
+  it('gives the editor an accessible name', async () => {
+    const dialog = mountDialog();
+    const shadow = await openJsonTab(dialog);
+    expect(shadow.querySelector('.cm-content')?.getAttribute('aria-label')).toBe(
+      'Parameters of chargeCard as JSON',
+    );
+  });
+
+  it('supports undo through CodeMirror history', async () => {
+    const dialog = mountDialog();
+    const shadow = await openJsonTab(dialog);
+
+    typeCode(shadow, '{"amount": 99}');
+    expect(dialog.effects[0]?.params).toEqual({ amount: 99 });
+
+    undo(codeEditor(shadow));
+    expect(readCode(shadow)).toBe(
+      formatJson({ amount: 10, note: 'manual', ok: true, missing: null }),
+    );
+    expect(dialog.effects[0]?.params).toEqual({
+      amount: 10,
+      note: 'manual',
+      ok: true,
+      missing: null,
+    });
+  });
+
+  it('is not editable when the dialog is read-only', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      readOnly: true,
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { amount: 10 },
+        },
+      ],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+    queryAll(shadow, '.params__mode')[1]?.click();
+    await waitForCodeEditor(shadow);
+
+    expect(codeEditor(shadow).state.readOnly).toBe(true);
+    expect(shadow.querySelector('.cm-content')?.getAttribute('contenteditable')).not.toBe('true');
+  });
+
+  it('tears the editor down when the panel closes', async () => {
+    const dialog = mountDialog();
+    const shadow = await openJsonTab(dialog);
+    expect(shadow.querySelector('.cm-editor')).not.toBeNull();
+
+    // Collapsing the row re-renders the list, which must dispose the view.
+    queryButton(shadow, '.row__params').click();
+    expect(shadow.querySelector('.cm-editor')).toBeNull();
+  });
+
+  it('tears the editor down when the dialog closes', async () => {
+    const dialog = mountDialog();
+    const shadow = await openJsonTab(dialog);
+    queryAll(shadow, '.footer .button')[0]?.click();
+    expect(shadow.querySelector('.cm-editor')).toBeNull();
   });
 });

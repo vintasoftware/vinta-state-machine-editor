@@ -4,7 +4,8 @@ A framework-agnostic **Web Component** to create, edit and visualize state machi
 pan/zoom canvas — including the ordered side effects that run around states and transitions.
 
 - Plain custom element (`<state-machine-editor>`) — works with React, Vue, Angular, Svelte or no framework at all.
-- **Zero runtime dependencies.** Shadow DOM, HTML nodes and SVG edges, no canvas bitmap.
+- **One runtime dependency.** The graph itself is hand-written — Shadow DOM, HTML nodes and SVG
+  edges, no canvas bitmap; [CodeMirror 6](https://codemirror.net) backs the JSON parameters editor.
 - Strict TypeScript: no `any`, no type assertions, no non-null assertions — enforced by lint **and** a test that scans `src/`.
 - Side effects are ordered lists; the UI collapses them to `"sendEmail and 2 more"` and opens a dialog for the full list.
 
@@ -145,12 +146,17 @@ Every attached side effect carries a `params` JSON object, editable two ways fro
   switch back to the form while it does not parse, so a half-finished edit is never silently
   dropped.
 
-Highlighting is a `<pre>` of coloured tokens sitting under a transparent `<textarea>` in the same
-grid cell, so every native behaviour — selection, undo, IME, mobile keyboards, screen readers —
-still comes from the real form control. The tokenizer (`tokenizeJson`) is exported and pure; it
-never throws and never drops input, since joining its tokens has to reproduce the source exactly or
-the two layers would drift apart. Malformed tokens are underlined in red as you type, and an
-unterminated string stops at its line end rather than colouring the rest of the document.
+The JSON tab is [CodeMirror 6](https://codemirror.net), configured for a small document: syntax
+highlighting, bracket matching, auto indentation, undo history and inline parse errors from
+`jsonParseLinter`. It is mounted with `root` set to the component's shadow root, so its stylesheet
+lands there rather than in the host document, and its colours are CSS custom properties
+(`--sme-code-key`, `--sme-code-string`, …) so it follows the light and dark themes without being
+rebuilt. Programmatic fills are marked `addToHistory: false`, so undo only ever walks back the
+user's own edits.
+
+`JsonTextEditor` is intentionally absent from the package's main entry point: re-exporting it there
+would make the import static again and pull CodeMirror into every bundle. Import it from
+`vinta-state-machine-editor/dist/ui/json-text-editor.js` if you need it directly.
 
 The catalog can prefill them: a definition with `defaultParams` seeds the parameters of every side
 effect attached from it.
@@ -288,6 +294,12 @@ side effects has `Alt` + arrows alongside the drag handle, and zoom has toolbar 
 
 Development needs Node 22.22 or newer (jsdom and rolldown both require it); the published package
 itself is browser-only and has no Node requirement.
+
+Consumers install CodeMirror transitively (`@codemirror/state`, `view`, `commands`, `language`,
+`lang-json`, `lint` and `@lezer/highlight`). The dialog reaches it through a dynamic `import()`, and
+nothing else in the package references it, so bundlers put it in its own chunk that is fetched the
+first time someone opens the JSON tab. In this repo's demo build that is 67 kB up front (19 kB
+gzipped) with CodeMirror's 339 kB in a separate chunk.
 
 ```bash
 npm install

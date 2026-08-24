@@ -5,7 +5,7 @@ import { parseSideEffectDefinitions } from '../model/parse.js';
 import type { JsonObject, SideEffect, SideEffectDefinition, SideEffectProvider } from '../types.js';
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
 import { JsonFormEditor } from './json-form.js';
-import { JsonTextEditor } from './json-text-editor.js';
+import type { JsonTextEditor } from './json-text-editor.js';
 import { ReorderController } from './reorder.js';
 import { dialogStyles } from './styles.js';
 
@@ -57,6 +57,8 @@ export class SideEffectsDialogElement extends HTMLElement {
   #previouslyFocused: Element | null = null;
   /** Id of the side effect whose parameters are open, if any. */
   #expandedId: string | undefined;
+  /** CodeMirror instance of the open parameters panel, if any. */
+  #textEditor: JsonTextEditor | undefined;
   #paramsMode: ParamsMode = 'form';
 
   constructor() {
@@ -125,6 +127,8 @@ export class SideEffectsDialogElement extends HTMLElement {
 
   disconnectedCallback(): void {
     this.#reorder.destroy();
+    this.#textEditor?.destroy();
+    this.#textEditor = undefined;
   }
 
   /** Current draft, exposed for testing and host inspection. */
@@ -155,6 +159,8 @@ export class SideEffectsDialogElement extends HTMLElement {
   }
 
   #finish(result: readonly SideEffect[] | null): void {
+    this.#textEditor?.destroy();
+    this.#textEditor = undefined;
     const resolve = this.#resolve;
     this.#resolve = undefined;
     this.dispatchEvent(new CustomEvent('dialog-close', { detail: { saved: result !== null } }));
@@ -217,6 +223,9 @@ export class SideEffectsDialogElement extends HTMLElement {
   }
 
   #renderList(focusIndex?: number): void {
+    // Every render throws the panel away, so the editor has to go with it.
+    this.#textEditor?.destroy();
+    this.#textEditor = undefined;
     this.#list.replaceChildren();
     this.#empty.hidden = this.#draft.length > 0;
 
@@ -300,23 +309,57 @@ export class SideEffectsDialogElement extends HTMLElement {
     });
     const form = createElement('div', { className: 'params__form', parent: panel });
     const json = createElement('div', { className: 'params__json', parent: panel });
-    const text = new JsonTextEditor({
-      container: json,
-      label: `Parameters of ${effect.name} as JSON`,
-      onInput: (value) => {
-        const parsed = parseParamsText(value);
-        error.textContent = parsed.ok ? '' : parsed.error;
-        if (parsed.ok) {
-          this.#updateParams(effect.id, parsed.value);
-        }
-      },
-    });
     const error = createElement('p', { className: 'params__error', parent: json });
 
     const editor = new JsonFormEditor({
       container: form,
       onChange: (value) => this.#updateParams(effect.id, value),
     });
+
+    const currentParams = (): JsonObject =>
+      this.#draft.find((entry) => entry.id === effect.id)?.params ?? {};
+
+    let text: JsonTextEditor | undefined;
+    let loading: Promise<void> | undefined;
+
+    /**
+     * CodeMirror is a large dependency for a panel most sessions never open, so
+     * it is fetched the first time the JSON tab is shown. Bundlers split it into
+     * its own chunk, keeping it out of the initial download.
+     */
+    const mountTextEditor = async (): Promise<void> => {
+      const module = await import('./json-text-editor.js');
+      // The panel can be torn down while the chunk is in flight.
+      if (!json.isConnected) {
+        return;
+      }
+      text = new module.JsonTextEditor({
+        container: json,
+        root: this.#shadow,
+        label: `Parameters of ${effect.name} as JSON`,
+        value: formatJson(currentParams()),
+        onInput: (value) => {
+          const parsed = parseParamsText(value);
+          error.textContent = parsed.ok ? '' : parsed.error;
+          if (parsed.ok) {
+            this.#updateParams(effect.id, parsed.value);
+          }
+        },
+      });
+      text.readOnly = this.#readOnly;
+      json.insertBefore(text.element, error);
+      this.#textEditor = text;
+    };
+
+    const showJson = async (): Promise<void> => {
+      loading ??= mountTextEditor();
+      await loading;
+      if (text === undefined) {
+        return;
+      }
+      text.value = formatJson(currentParams());
+      error.textContent = '';
+    };
 
     const showMode = (mode: ParamsMode): void => {
       this.#paramsMode = mode;
@@ -328,13 +371,11 @@ export class SideEffectsDialogElement extends HTMLElement {
           tab.getAttribute('data-mode') === mode ? 'true' : 'false',
         );
       }
-      const current = this.#draft.find((item) => item.id === effect.id)?.params ?? {};
       if (mode === 'form') {
-        editor.setValue(current, this.#readOnly);
-      } else {
-        text.value = formatJson(current);
-        error.textContent = '';
+        editor.setValue(currentParams(), this.#readOnly);
+        return;
       }
+      void showJson();
     };
 
     for (const mode of ['form', 'json'] as const) {
@@ -346,7 +387,7 @@ export class SideEffectsDialogElement extends HTMLElement {
       });
       tab.addEventListener('click', (event) => {
         event.stopPropagation();
-        if (mode === 'form' && this.#paramsMode === 'json') {
+        if (mode === 'form' && this.#paramsMode === 'json' && text !== undefined) {
           // Refuse to leave the text tab while it does not parse, so the edit is not lost.
           const parsed = parseParamsText(text.value);
           if (!parsed.ok) {
@@ -358,8 +399,6 @@ export class SideEffectsDialogElement extends HTMLElement {
         showMode(mode);
       });
     }
-
-    text.readOnly = this.#readOnly;
 
     showMode(this.#paramsMode);
   }

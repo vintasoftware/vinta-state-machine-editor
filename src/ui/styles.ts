@@ -463,6 +463,7 @@ export const dialogStyles: string = `
     .jf-key,
     .jf-value,
     .jf-type { padding: 7px; font-size: 13px; }
+    .params__editor .cm-scroller { font-size: 13px; }
     .row__handle,
     .row__remove { width: 32px; height: 32px; font-size: 16px; }
     .button { padding: 11px 18px; }
@@ -591,64 +592,7 @@ export const dialogStyles: string = `
   .jf-add:hover { border-color: var(--sme-accent); color: var(--sme-text); }
   .jf-empty { margin: 0; font-size: 12px; color: var(--sme-text-muted); }
 
-  /*
-   * The highlighted copy and the textarea are stacked in one grid cell and must
-   * measure text identically, or the caret drifts away from the colours.
-   */
-  .params__editor {
-    display: grid;
-    background: var(--sme-surface);
-    border: 1px solid var(--sme-border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .params__editor:focus-within { border-color: var(--sme-accent); }
-
-  .params__highlight,
-  .params__text {
-    grid-area: 1 / 1;
-    margin: 0;
-    width: 100%;
-    min-height: 108px;
-    padding: 8px;
-    border: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    letter-spacing: normal;
-    tab-size: 2;
-    white-space: pre-wrap;
-    overflow-wrap: break-word;
-    word-break: break-word;
-    background: transparent;
-  }
-
-  .params__highlight {
-    pointer-events: none;
-    overflow: hidden;
-    color: var(--sme-text);
-  }
-
-  .params__text {
-    color: transparent;
-    caret-color: var(--sme-text);
-    resize: vertical;
-    overflow: auto;
-  }
-
-  .params__text:focus-visible { outline: none; }
-
-  /* Selection is painted above the colours, so keep it translucent. */
-  .params__text::selection { background: var(--sme-code-selection); }
-
-  .tok--key { color: var(--sme-code-key); }
-  .tok--string { color: var(--sme-code-string); }
-  .tok--number { color: var(--sme-code-number); }
-  .tok--boolean,
-  .tok--null { color: var(--sme-code-keyword); }
-  .tok--punctuation { color: var(--sme-code-punctuation); }
-  .tok--invalid { color: var(--sme-code-invalid); text-decoration: wavy underline; }
+  .params__editor { display: grid; }
 
   .params__error { margin: 4px 0 0; font-size: 11px; color: var(--sme-danger); }
 

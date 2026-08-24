@@ -97,10 +97,8 @@ export type * from './types.js';
 export { SIDE_EFFECT_PHASES, STATE_ROLES, STATE_TRIGGERS } from './types.js';
 export type { JsonFormOptions } from './ui/json-form.js';
 export { JsonFormEditor } from './ui/json-form.js';
-export type { JsonToken, JsonTokenKind } from './ui/json-highlight.js';
-export { renderHighlight, tokenizeJson } from './ui/json-highlight.js';
-export type { JsonTextEditorOptions } from './ui/json-text-editor.js';
-export { JsonTextEditor } from './ui/json-text-editor.js';
+// JsonTextEditor is deliberately not re-exported: a static export here would pull
+// CodeMirror into every bundle, defeating the dialog's dynamic import of it.
 export { describeSideEffectList, shortHookLabel } from './ui/labels.js';
 export { computeDropIndex } from './ui/reorder.js';
 export {

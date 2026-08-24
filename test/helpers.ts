@@ -1,3 +1,4 @@
+import { EditorView } from '@codemirror/view';
 import { defineStateMachineEditor, type StateMachineEditorElement } from '../src/index.js';
 import { createState, createTransition } from '../src/model/machine.js';
 import type { SideEffectDefinition, StateMachine } from '../src/types.js';
@@ -120,4 +121,44 @@ export async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+}
+
+/** The CodeMirror view backing the JSON parameters tab. */
+export function codeEditor(root: ParentNode): EditorView {
+  const dom = root.querySelector('.cm-editor');
+  if (!(dom instanceof HTMLElement)) {
+    throw new Error('No CodeMirror editor found.');
+  }
+  const view = EditorView.findFromDOM(dom);
+  if (view === null) {
+    throw new Error('CodeMirror editor has no view.');
+  }
+  return view;
+}
+
+export function readCode(root: ParentNode): string {
+  return codeEditor(root).state.doc.toString();
+}
+
+/** Replaces the whole document, as a paste would. */
+export function typeCode(root: ParentNode, text: string): void {
+  const view = codeEditor(root);
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+}
+
+/** Waits for the lazily loaded CodeMirror chunk to mount. */
+export async function waitForCodeEditor(root: ParentNode, tries = 50): Promise<EditorView> {
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const dom = root.querySelector('.cm-editor');
+    if (dom instanceof HTMLElement) {
+      const view = EditorView.findFromDOM(dom);
+      if (view !== null) {
+        return view;
+      }
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
+  throw new Error('CodeMirror editor did not mount.');
 }
