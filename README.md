@@ -1,4 +1,4 @@
-# @vinta/state-machine-editor
+# vinta-state-machine-editor
 
 A framework-agnostic **Web Component** to create, edit and visualize state machines on a
 pan/zoom canvas — including the ordered side effects that run around states and transitions.
@@ -9,7 +9,7 @@ pan/zoom canvas — including the ordered side effects that run around states an
 - Side effects are ordered lists; the UI collapses them to `"sendEmail and 2 more"` and opens a dialog for the full list.
 
 ```bash
-npm install @vinta/state-machine-editor
+npm install vinta-state-machine-editor
 ```
 
 ## Quick start
@@ -18,7 +18,7 @@ npm install @vinta/state-machine-editor
 <state-machine-editor id="editor" style="height: 600px"></state-machine-editor>
 
 <script type="module">
-  import '@vinta/state-machine-editor/register';
+  import 'vinta-state-machine-editor/register';
 
   const editor = document.querySelector('#editor');
 
@@ -57,11 +57,11 @@ npm install @vinta/state-machine-editor
 </script>
 ```
 
-`import '@vinta/state-machine-editor/register'` defines the elements for you. To choose the tag
+`import 'vinta-state-machine-editor/register'` defines the elements for you. To choose the tag
 name yourself, import `defineStateMachineEditor` from the package root instead:
 
 ```js
-import { defineStateMachineEditor } from '@vinta/state-machine-editor';
+import { defineStateMachineEditor } from 'vinta-state-machine-editor';
 
 defineStateMachineEditor('order-flow-editor');
 ```
@@ -200,7 +200,7 @@ helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`, …).
 
 ```jsx
 // React 19+ (earlier versions need a ref to set object properties)
-import '@vinta/state-machine-editor/register';
+import 'vinta-state-machine-editor/register';
 
 <state-machine-editor
   ref={(el) => { if (el) { el.value = machine; el.sideEffectProvider = fetchCatalog; } }}

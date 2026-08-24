@@ -1,5 +1,5 @@
 {
-  "name": "@vinta/state-machine-editor",
+  "name": "vinta-state-machine-editor",
   "version": "0.1.0",
   "description": "Framework-agnostic Web Component to create, edit and visualize state machines on a pan/zoom canvas.",
   "keywords": [
@@ -12,6 +12,14 @@
   ],
   "license": "MIT",
   "author": "Vinta Software",
+  "homepage": "https://github.com/vintasoftware/vinta-state-machine-editor#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vintasoftware/vinta-state-machine-editor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vintasoftware/vinta-state-machine-editor/issues"
+  },
   "type": "module",
   "sideEffects": [
     "./dist/register.js"
@@ -61,12 +69,7 @@
     ]
   },
   "publishConfig": {
-    "access": "public",
     "provenance": true
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/vintasoftware/state-machine-editor.git"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
