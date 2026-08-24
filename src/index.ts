@@ -80,6 +80,7 @@ export {
   setInitialStates,
   setSideEffectParams,
   setSideEffects,
+  setStateColor,
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
@@ -94,7 +95,13 @@ export {
   parseStateMachine,
 } from './model/parse.js';
 export type * from './types.js';
-export { SIDE_EFFECT_PHASES, STATE_ROLES, STATE_TRIGGERS } from './types.js';
+export {
+  isStateColor,
+  SIDE_EFFECT_PHASES,
+  STATE_COLORS,
+  STATE_ROLES,
+  STATE_TRIGGERS,
+} from './types.js';
 export type { JsonFormOptions } from './ui/json-form.js';
 export { JsonFormEditor } from './ui/json-form.js';
 // JsonTextEditor is deliberately not re-exported: a static export here would pull

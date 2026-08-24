@@ -7,6 +7,7 @@ import type {
   SideEffectHooks,
   SideEffectListRef,
   SideEffectPhase,
+  StateColor,
   StateMachine,
   StateNode,
   Transition,
@@ -30,6 +31,7 @@ export function createState(options: {
   readonly name: string;
   readonly position: Point;
   readonly id?: string;
+  readonly color?: StateColor;
 }): StateNode {
   return {
     id: options.id ?? createId('state'),
@@ -37,6 +39,7 @@ export function createState(options: {
     position: options.position,
     onEnter: emptyHooks(),
     onLeave: emptyHooks(),
+    color: options.color ?? 'neutral',
   };
 }
 
@@ -100,13 +103,14 @@ export function addState(machine: StateMachine, state: StateNode): StateMachine 
 export function updateState(
   machine: StateMachine,
   stateId: string,
-  patch: { readonly name?: string; readonly position?: Point },
+  patch: { readonly name?: string; readonly position?: Point; readonly color?: StateColor },
 ): StateMachine {
   const current = requireState(machine, stateId);
   const next: StateNode = {
     ...current,
     name: patch.name ?? current.name,
     position: patch.position ?? current.position,
+    color: patch.color ?? current.color,
   };
   return {
     ...machine,
@@ -335,6 +339,15 @@ export function moveSideEffect(
   return updateSideEffects(machine, ref, (effects) => moveItem(effects, from, to));
 }
 
+/** Paints a state's colour bar. */
+export function setStateColor(
+  machine: StateMachine,
+  stateId: string,
+  color: StateColor,
+): StateMachine {
+  return updateState(machine, stateId, { color });
+}
+
 /** Transitions sharing the same unordered endpoint pair, used to fan out parallel edges. */
 export function siblingTransitions(
   machine: StateMachine,
@@ -358,6 +371,8 @@ export function describeChange(change: MachineChange): string {
       return 'Rename state';
     case 'state-move':
       return 'Move state';
+    case 'state-color':
+      return 'Change state colour';
     case 'transition-add':
       return 'Add transition';
     case 'transition-remove':

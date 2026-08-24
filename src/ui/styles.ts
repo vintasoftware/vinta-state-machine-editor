@@ -21,6 +21,12 @@ export const tokens: string = `
     --sme-code-punctuation: #6b7280;
     --sme-code-invalid: #c62f3a;
     --sme-code-selection: rgba(61, 99, 221, 0.28);
+    --sme-color-neutral: #64748b;
+    --sme-color-info: #3b82f6;
+    --sme-color-success: #16a34a;
+    --sme-color-warning: #d97706;
+    --sme-color-danger: #dc2626;
+    --sme-color-muted: #cbd5e1;
     --sme-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 8px 24px rgba(16, 24, 40, 0.08);
     --sme-node-width: 248px;
     color-scheme: light dark;
@@ -47,6 +53,12 @@ export const tokens: string = `
       --sme-code-punctuation: #8b93a3;
       --sme-code-invalid: #ff8080;
       --sme-code-selection: rgba(125, 155, 255, 0.32);
+      --sme-color-neutral: #94a3b8;
+      --sme-color-info: #60a5fa;
+      --sme-color-success: #4ade80;
+      --sme-color-warning: #fbbf24;
+      --sme-color-danger: #f87171;
+      --sme-color-muted: #475569;
     }
   }
 
@@ -140,6 +152,7 @@ export const editorStyles: string = `
   .arrow { fill: var(--sme-edge); }
 
   .node {
+    --sme-state-color: var(--sme-color-neutral);
     position: absolute;
     width: var(--sme-node-width);
     background: var(--sme-surface);
@@ -147,6 +160,18 @@ export const editorStyles: string = `
     border-radius: var(--sme-radius);
     box-shadow: var(--sme-shadow);
     user-select: none;
+  }
+
+  .node[data-color='info'] { --sme-state-color: var(--sme-color-info); }
+  .node[data-color='success'] { --sme-state-color: var(--sme-color-success); }
+  .node[data-color='warning'] { --sme-state-color: var(--sme-color-warning); }
+  .node[data-color='danger'] { --sme-state-color: var(--sme-color-danger); }
+  .node[data-color='muted'] { --sme-state-color: var(--sme-color-muted); }
+
+  .node__bar {
+    height: 5px;
+    border-radius: calc(var(--sme-radius) - 1px) calc(var(--sme-radius) - 1px) 0 0;
+    background: var(--sme-state-color);
   }
 
   .node.is-selected { border-color: var(--sme-accent); box-shadow: 0 0 0 2px var(--sme-accent-soft), var(--sme-shadow); }
@@ -280,6 +305,61 @@ export const editorStyles: string = `
   .node__remove:hover,
   .edge-card__remove:hover { color: var(--sme-danger); }
 
+  .node__color {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+  }
+
+  .node__color::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--sme-state-color);
+    box-shadow: 0 0 0 1px var(--sme-border);
+  }
+
+  .node__color:hover { background: var(--sme-surface-muted); }
+
+  .node__palette {
+    position: absolute;
+    top: 38px;
+    right: 8px;
+    z-index: 3;
+    display: grid;
+    grid-template-columns: repeat(3, 22px);
+    gap: 8px;
+    padding: 9px;
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 9px;
+    box-shadow: var(--sme-shadow);
+  }
+
+  .palette__option {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--sme-border);
+  }
+
+  .palette__option:hover { transform: scale(1.12); }
+
+  .palette__option.is-selected {
+    box-shadow: 0 0 0 2px var(--sme-surface), 0 0 0 4px var(--sme-accent);
+  }
+
+  .palette__option--neutral { background: var(--sme-color-neutral); }
+  .palette__option--info { background: var(--sme-color-info); }
+  .palette__option--success { background: var(--sme-color-success); }
+  .palette__option--warning { background: var(--sme-color-warning); }
+  .palette__option--danger { background: var(--sme-color-danger); }
+  .palette__option--muted { background: var(--sme-color-muted); }
+
   .node__roles {
     display: flex;
     gap: 6px;
@@ -401,6 +481,10 @@ export const editorStyles: string = `
   @media (pointer: coarse) {
     .icon-button { width: 32px; height: 32px; font-size: 15px; }
     .node__role { padding: 7px 8px; font-size: 12px; }
+    .node__color { width: 32px; height: 32px; }
+    .node__color::before { width: 16px; height: 16px; }
+    .node__palette { grid-template-columns: repeat(3, 32px); gap: 10px; top: 48px; }
+    .palette__option { width: 32px; height: 32px; }
     .node__header { padding: 10px; gap: 10px; }
     .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }
     .chip { padding: 8px 10px; font-size: 13px; }

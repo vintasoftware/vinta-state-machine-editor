@@ -4,10 +4,12 @@ import type {
   SideEffect,
   SideEffectDefinition,
   SideEffectHooks,
+  StateColor,
   StateMachine,
   StateNode,
   Transition,
 } from '../types.js';
+import { isStateColor, STATE_COLORS } from '../types.js';
 import { StateMachineError } from './errors.js';
 import { toJsonObject } from './json.js';
 
@@ -119,6 +121,17 @@ function parseHooks(value: unknown, path: string, issues: Issues): SideEffectHoo
   };
 }
 
+function parseColor(value: unknown, path: string, issues: Issues): StateColor {
+  if (value === undefined) {
+    return 'neutral';
+  }
+  if (!isStateColor(value)) {
+    issues.push(`${path} must be one of ${STATE_COLORS.join(', ')}.`);
+    return 'neutral';
+  }
+  return value;
+}
+
 function parseState(value: unknown, path: string, issues: Issues): StateNode {
   if (!isRecord(value)) {
     issues.push(`${path} must be an object.`);
@@ -128,6 +141,7 @@ function parseState(value: unknown, path: string, issues: Issues): StateNode {
       position: { x: 0, y: 0 },
       onEnter: { before: [], after: [] },
       onLeave: { before: [], after: [] },
+      color: 'neutral',
     };
   }
   return {
@@ -136,6 +150,7 @@ function parseState(value: unknown, path: string, issues: Issues): StateNode {
     position: parsePoint(value['position'], `${path}.position`, issues),
     onEnter: parseHooks(value['onEnter'], `${path}.onEnter`, issues),
     onLeave: parseHooks(value['onLeave'], `${path}.onLeave`, issues),
+    color: parseColor(value['color'], `${path}.color`, issues),
   };
 }
 

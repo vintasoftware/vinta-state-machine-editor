@@ -57,12 +57,14 @@ import type {
   SideEffectListRef,
   SideEffectPhase,
   SideEffectProvider,
+  StateColor,
   StateMachine,
   StateNode,
   StateRole,
   StateTrigger,
   Transition,
 } from '../types.js';
+import { STATE_COLORS } from '../types.js';
 import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
 import { describeSideEffectList, shortHookLabel } from './labels.js';
 import {
@@ -98,6 +100,11 @@ const HOOK_KEYS: readonly HookKey[] = [
 
 interface StateView {
   readonly root: HTMLElement;
+  /** Colour bar across the top of the card. */
+  readonly bar: HTMLElement;
+  readonly colorButton: HTMLButtonElement;
+  readonly palette: HTMLElement;
+  readonly swatches: ReadonlyMap<StateColor, HTMLButtonElement>;
   /** Entry arrow drawn to the left of a state the machine can start in. */
   readonly startMarker: SVGGElement;
   readonly roleButtons: ReadonlyMap<StateRole, HTMLButtonElement>;
@@ -195,6 +202,8 @@ export class StateMachineEditorElement extends HTMLElement {
   #readOnly = false;
   #drag: DragState | undefined;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** State whose colour palette is open, if any. */
+  #paletteFor: string | undefined;
   /** Every pointer currently down on the canvas, in viewport-local coordinates. */
   readonly #pointers = new Map<number, Point>();
   #pinch: PinchState | undefined;
@@ -388,6 +397,14 @@ export class StateMachineEditorElement extends HTMLElement {
       transitionId: transition.id,
     });
     return transition;
+  }
+
+  /** Paints a state's colour bar. */
+  setStateColor(stateId: string, color: StateColor): void {
+    this.#commit(updateState(this.#machine, stateId, { color }), {
+      kind: 'state-color',
+      stateId,
+    });
   }
 
   /** Marks (or unmarks) a state as one the machine can start in. */
@@ -663,8 +680,22 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: this.#world,
       attrs: { part: 'state', 'data-state-id': stateId },
     });
+    const bar = createElement('div', {
+      className: 'node__bar',
+      parent: root,
+      attrs: { 'aria-hidden': 'true' },
+    });
     const header = createElement('div', { className: 'node__header', parent: root });
     const name = createElement('span', { className: 'node__name', parent: header });
+    const colorButton = createButton({
+      className: 'node__color',
+      parent: header,
+      attrs: { 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
+    });
+    colorButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#togglePalette(stateId);
+    });
     const renameButton = createButton({
       className: 'icon-button node__rename',
       parent: header,
@@ -690,6 +721,26 @@ export class StateMachineEditorElement extends HTMLElement {
       });
       chips.set(key, chip);
     }
+    const palette = createElement('div', {
+      className: 'node__palette',
+      parent: root,
+      attrs: { role: 'listbox', 'aria-label': `Colour of ${stateId}` },
+    });
+    palette.hidden = true;
+    const swatches = new Map<StateColor, HTMLButtonElement>();
+    for (const color of STATE_COLORS) {
+      const option = createButton({
+        className: `palette__option palette__option--${color}`,
+        parent: palette,
+        attrs: { role: 'option', 'data-color': color, title: color, 'aria-label': color },
+      });
+      option.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.#pickColor(stateId, color);
+      });
+      swatches.set(color, option);
+    }
+
     const roles = createElement('div', { className: 'node__roles', parent: root });
     const roleButtons = new Map<StateRole, HTMLButtonElement>();
     for (const role of ['initial', 'final'] as const) {
@@ -726,6 +777,11 @@ export class StateMachineEditorElement extends HTMLElement {
 
     root.addEventListener('pointerdown', (event) => {
       event.stopPropagation();
+      // Pressing a different card dismisses an open palette; pressing this one
+      // leaves it be, so its own button can toggle it shut on the click.
+      if (this.#paletteFor !== undefined && this.#paletteFor !== stateId) {
+        this.#closePalette();
+      }
       this.#setSelection({ kind: 'state', id: stateId });
     });
     header.addEventListener('pointerdown', (event) => this.#onNodePointerDown(event, stateId));
@@ -742,6 +798,10 @@ export class StateMachineEditorElement extends HTMLElement {
 
     return {
       root,
+      bar,
+      colorButton,
+      palette,
+      swatches,
       header,
       name,
       renameButton,
@@ -774,6 +834,47 @@ export class StateMachineEditorElement extends HTMLElement {
       }
     }
     this.#updateStateRoles(view, state);
+    this.#updateStateColor(view, state);
+  }
+
+  #updateStateColor(view: StateView, state: StateNode): void {
+    view.root.setAttribute('data-color', state.color);
+    const open = this.#paletteFor === state.id && !this.#readOnly;
+    view.colorButton.hidden = this.#readOnly;
+    view.colorButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    view.colorButton.setAttribute('aria-label', `Colour: ${state.color}. Pick another.`);
+    view.colorButton.title = `Colour: ${state.color}`;
+    view.palette.hidden = !open;
+    view.palette.setAttribute('aria-label', `Colour of “${state.name}”`);
+    for (const [color, option] of view.swatches) {
+      const selected = color === state.color;
+      option.setAttribute('aria-selected', selected ? 'true' : 'false');
+      option.classList.toggle('is-selected', selected);
+    }
+  }
+
+  #togglePalette(stateId: string): void {
+    if (this.#readOnly) {
+      return;
+    }
+    this.#paletteFor = this.#paletteFor === stateId ? undefined : stateId;
+    this.#render();
+  }
+
+  #closePalette(): void {
+    if (this.#paletteFor === undefined) {
+      return;
+    }
+    this.#paletteFor = undefined;
+    this.#render();
+  }
+
+  #pickColor(stateId: string, color: StateColor): void {
+    this.#paletteFor = undefined;
+    this.#commit(updateState(this.#machine, stateId, { color }), {
+      kind: 'state-color',
+      stateId,
+    });
   }
 
   #updateStateRoles(view: StateView, state: StateNode): void {
@@ -1139,6 +1240,7 @@ export class StateMachineEditorElement extends HTMLElement {
     if (event.button !== 0 || this.#pinch !== undefined || isInteractiveTarget(event.target)) {
       return;
     }
+    this.#closePalette();
     this.#setSelection(null);
     this.#beginDrag({ kind: 'pan', origin: this.#localPoint(event), viewport: this.#viewport });
     this.#viewportElement.classList.add('is-panning');
@@ -1366,6 +1468,10 @@ export class StateMachineEditorElement extends HTMLElement {
   #onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.#drag?.kind === 'link') {
       this.#endDrag();
+      return;
+    }
+    if (event.key === 'Escape' && this.#paletteFor !== undefined) {
+      this.#closePalette();
       return;
     }
     if (this.#readOnly || isInteractiveTarget(event.target)) {

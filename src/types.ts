@@ -63,6 +63,22 @@ export interface SideEffectHooks {
   readonly after: readonly SideEffect[];
 }
 
+/** The palette a state card can be tinted with. */
+export type StateColor = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted';
+
+export const STATE_COLORS: readonly StateColor[] = [
+  'neutral',
+  'info',
+  'success',
+  'warning',
+  'danger',
+  'muted',
+];
+
+export function isStateColor(value: unknown): value is StateColor {
+  return STATE_COLORS.some((color) => color === value);
+}
+
 export interface StateNode {
   readonly id: string;
   readonly name: string;
@@ -72,6 +88,8 @@ export interface StateNode {
   readonly onEnter: SideEffectHooks;
   /** Side effects that run around *leaving* this state. */
   readonly onLeave: SideEffectHooks;
+  /** Colour of the bar across the top of the card. */
+  readonly color: StateColor;
 }
 
 export interface Transition {
@@ -140,6 +158,7 @@ export type MachineChange =
   | { readonly kind: 'state-remove'; readonly stateId: string }
   | { readonly kind: 'state-rename'; readonly stateId: string }
   | { readonly kind: 'state-move'; readonly stateId: string }
+  | { readonly kind: 'state-color'; readonly stateId: string }
   | { readonly kind: 'transition-add'; readonly transitionId: string }
   | { readonly kind: 'transition-remove'; readonly transitionId: string }
   | { readonly kind: 'transition-rename'; readonly transitionId: string }

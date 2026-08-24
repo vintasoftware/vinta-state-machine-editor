@@ -88,6 +88,7 @@ function exampleMachine(): StateMachine {
     id: 'cancelled',
     name: 'Cancelled',
     position: { x: 560, y: 520 },
+    color: 'danger',
   });
 
   const submit = createTransition({ id: 'submit', name: 'submit', from: 'draft', to: 'pending' });
