@@ -10,15 +10,18 @@ export type {
   StateMachineEditorEventMap,
 } from './events.js';
 export { SELECTION_CHANGE_EVENT, STATE_MACHINE_CHANGE_EVENT } from './events.js';
-export type { EdgeGeometry } from './geometry/edge.js';
+export type { CreationAnchorInput, EdgeGeometry } from './geometry/edge.js';
 export {
   bendEdgeThrough,
   bendSelfEdgeThrough,
   borderPoint,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
+  creationAnchorPoint,
   curvatureFor,
+  orderCreationAnchors,
 } from './geometry/edge.js';
+export { boxAround, findFreeLabelSpot, rectsOverlap } from './geometry/placement.js';
 export type { Viewport } from './geometry/viewport.js';
 export {
   boundsOf,

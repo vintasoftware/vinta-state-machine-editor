@@ -159,3 +159,44 @@ export function bendSelfEdgeThrough(rect: Rect, index: number, through: Point): 
     control2: { x: controls.control2.x + pull.x, y: controls.control2.y + pull.y },
   });
 }
+
+/** One creation edge competing for a slot on the start bar. */
+export interface CreationAnchorInput {
+  readonly id: string;
+  /**
+   * Height the edge heads for once it leaves the bar — the vertical position of
+   * its own card, which is where the curve is bent through. Measured against a
+   * neutral anchor so it does not depend on the slot being chosen here.
+   */
+  readonly labelY: number;
+}
+
+/**
+ * Which creation edge leaves the start bar from which slot, top to bottom.
+ *
+ * Every one of these edges starts on the same vertical line, so two of them
+ * cross exactly when one starts above the other and ends below it. Handing out
+ * the slots in the order of where the edges are heading therefore removes every
+ * crossing the layout is free to remove — what is left is edges heading for the
+ * same place, which no ordering can separate and the fanning already handles.
+ *
+ * The key is the card's height rather than the target state's, because the edge
+ * is bent through its card: dragging a card is what changes where the line goes,
+ * so it has to be what changes which slot the line leaves from.
+ *
+ * Ties break on the id so the assignment is stable: two edges at the same height
+ * must not swap slots between renders.
+ */
+export function orderCreationAnchors(edges: readonly CreationAnchorInput[]): readonly string[] {
+  return [...edges]
+    .sort((a, b) => a.labelY - b.labelY || (a.id < b.id ? -1 : Number(a.id > b.id)))
+    .map((edge) => edge.id);
+}
+
+/** Point on the right edge of the start bar that slot `index` of `total` sits at. */
+export function creationAnchorPoint(bar: Rect, index: number, total: number): Point {
+  return {
+    x: bar.x + bar.width,
+    y: bar.y + (bar.height * (index + 0.5)) / Math.max(total, 1),
+  };
+}

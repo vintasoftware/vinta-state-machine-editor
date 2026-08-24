@@ -85,7 +85,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Move a transition | Drag the transition card's header — the edge bends to keep passing through it. Drop it back on the edge to return to automatic placement |
 | Create a transition | Drag the round **→** handle onto another state (drop it on the same state for a self transition) |
 | Create a *creation* transition | Press **+ Creation** on an initial state's card — it appears next to **▶ Initial** only while the state is marked initial |
-| Add another creation transition | Drag the start pseudo-node's **→** handle onto a state |
+| Add another creation transition | Drag the start bar's **→** handle onto a state |
 | Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
 | Edit properties | Press **⚙** on a state or transition card, or call `openProperties(ref)` |
 | Reorder the edges leaving a state | Open a transition's **⚙** and use **↑** / **↓** under *Order* |
@@ -379,14 +379,41 @@ into which of several initial states*. Two guarded creation edges into different
 under different triggers is the case that forces it, and none of that is expressible as the target
 state's `onEnter` side effects, which only run once the decision has already been made.
 
-**It is not a dangling edge.** A single **start pseudo-node** — a small filled dot, the UML initial
-pseudostate — is drawn on the canvas, and every creation edge originates there. So every transition
-card still sits on an edge with a real source and a real target: fanning, bending and `labelOffset`
-all apply unchanged, with no null-source special case in the geometry layer.
+**It is not a dangling edge.** A single **start bar** — the UML initial pseudostate, drawn as a slim
+vertical bar — is placed on the canvas, and every creation edge originates there. So every
+transition card still sits on an edge with a real source and a real target: fanning, bending and
+`labelOffset` all apply unchanged, with no null-source special case in the geometry layer.
 
-The pseudo-node appears with the first creation edge and disappears with the last. It is not a
-state: it never enters `states`, `initialStateIds` or `finalStateIds`, has no name, colour, side
-effects or Initial/Final toggles, and cannot be selected or deleted. It is **placed, not persisted** —
+It is a bar rather than a dot because a dot makes every creation edge leave from the same point,
+so their lines emerge on top of each other and cross. The bar **reserves a slot per edge** (38 px
+each, so it grows with them) and hands each edge its own anchor on the bar's right edge. Each edge
+therefore starts on its own line, with real space between it and its neighbours. It is labelled
+**Create** down its length, so the shape does not have to be guessed at, and never shrinks below
+the height that label needs.
+
+The bar keeps a whole transition card's width plus a margin between itself and the state it feeds.
+That distance is derived from the measured card and node widths rather than hard-coded, so a coarse
+pointer — where both grow — moves the bar out with them, and so does a host that restyles either.
+
+The slots are **handed out in the order the edges are heading**, top to bottom. Two edges leaving a
+common vertical line cross exactly when one starts above the other and ends below it, so that order
+removes every crossing the layout is free to remove. What is left is edges heading for the same
+place, which no ordering can separate — those get adjacent slots and the existing fan spreads their
+cards.
+
+The key is the height of each edge's **card**, not of its target state, because the edge is bent to
+pass through its card: the card is what the line actually heads for. So dragging a creation card
+past another swaps which slot each one leaves from, and so does dragging a state, since that moves
+the cards with it. The assignment is recomputed on every render rather than stored, and it is
+measured against a neutral point on the bar so that it never depends on the slots it is choosing.
+
+That ordering is purely visual and has nothing to do with [Ordering](#ordering): the evaluation
+order of the creation edges stays their position in `machine.transitions`, and reordering them there
+does not move a single line.
+
+The bar appears with the first creation edge and disappears with the last. It is not a state: it
+never enters `states`, `initialStateIds` or `finalStateIds`, has no name, colour, side effects or
+Initial/Final toggles, and cannot be selected or deleted. It is **placed, not persisted** —
 deterministically, left of the leftmost state it feeds and centred on them vertically — so nothing
 new has to be stored on the machine and no `creationOrigin` field was added.
 
@@ -394,9 +421,10 @@ Creating them:
 
 - **+ Creation** on a state card, beside **▶ Initial** and visible only while the state is marked
   initial. There is nothing to drag from until the first edge exists, so the button is the way in.
-  It creates the edge, brings the pseudo-node into existence, selects the new edge and starts inline
+  It creates the edge, brings the bar into existence, selects the new edge and starts inline
   rename — selecting it is the point, since the trigger and guard are filled in from there.
-- Dragging the pseudo-node's **→** handle onto a state, for every one after that.
+- Dragging the start bar's **→** handle onto a state, for every one after that. The handle sits
+  just below the bar, so it never covers an edge leaving it.
 
 Default names are unique across the **whole machine**, not per target state, because the backend
 namespaces creation edges version-wide while ordinary edges are namespaced per source state:
@@ -430,6 +458,14 @@ creationTransitions(machine); // every null-source edge
 
 Transitions between the same pair of states are fanned apart automatically, in both directions, so
 they never stack on top of each other. The fan spacing follows the measured card height.
+
+A new transition's card is placed into free space rather than dropped wherever the midpoint lands.
+The editor checks the spot against every state card and every transition card already on the canvas
+and, if it is taken, steps out a card at a time — vertically first, since a card is much wider than
+it is tall — until it finds room, giving up after a few rings rather than flinging the label away
+from its own edge. When the spot is already free it is used untouched, so the card keeps automatic
+placement. New states are placed the same way: at the middle of the view, nudged to the nearest
+spot that covers nothing.
 
 Dragging a transition card overrides that with a `labelOffset` relative to the automatic position —
 relative, so the card keeps its arrangement when the states move. The edge is then reshaped to pass

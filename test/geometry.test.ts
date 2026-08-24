@@ -5,7 +5,9 @@ import {
   borderPoint,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
+  creationAnchorPoint,
   curvatureFor,
+  orderCreationAnchors,
 } from '../src/geometry/edge.js';
 import {
   boundsOf,
@@ -199,5 +201,56 @@ describe('bending an edge through a point', () => {
     const auto = computeSelfEdgeGeometry(left, 1);
     const bent = bendSelfEdgeThrough(left, 1, auto.label);
     expect(bent.path).toBe(auto.path);
+  });
+});
+
+describe('start bar anchors', () => {
+  it('hands out slots in the order the edges are heading', () => {
+    // Two edges from a common vertical line cross exactly when one starts above
+    // the other and ends below it, so that order is the crossing-free order.
+    expect(
+      orderCreationAnchors([
+        { id: 'low', labelY: 400 },
+        { id: 'high', labelY: 10 },
+        { id: 'middle', labelY: 200 },
+      ]),
+    ).toEqual(['high', 'middle', 'low']);
+  });
+
+  it('breaks ties on the id so slots never swap between renders', () => {
+    const edges = [
+      { id: 'b', labelY: 100 },
+      { id: 'a', labelY: 100 },
+    ];
+    expect(orderCreationAnchors(edges)).toEqual(['a', 'b']);
+    expect(orderCreationAnchors([...edges].reverse())).toEqual(['a', 'b']);
+  });
+
+  it('leaves the input alone and copes with an empty list', () => {
+    const edges = [
+      { id: 'b', labelY: 2 },
+      { id: 'a', labelY: 1 },
+    ];
+    orderCreationAnchors(edges);
+    expect(edges.map((edge) => edge.id)).toEqual(['b', 'a']);
+    expect(orderCreationAnchors([])).toEqual([]);
+  });
+
+  it('spreads the slots evenly down the right edge of the bar', () => {
+    const bar = { x: 0, y: 100, width: 10, height: 120 };
+    const points = [0, 1, 2].map((index) => creationAnchorPoint(bar, index, 3));
+    expect(points.map((point) => point.x)).toEqual([10, 10, 10]);
+    expect(points.map((point) => point.y)).toEqual([120, 160, 200]);
+    // Evenly spaced, and half a slot of padding at each end of the bar.
+    expect(points[1] && points[0] && points[1].y - points[0].y).toBe(40);
+  });
+
+  it('centres a lone edge on the bar', () => {
+    expect(creationAnchorPoint({ x: 0, y: 0, width: 10, height: 40 }, 0, 1)).toEqual({
+      x: 10,
+      y: 20,
+    });
+    // A zero total would divide by zero rather than simply centring.
+    expect(creationAnchorPoint({ x: 0, y: 0, width: 10, height: 40 }, 0, 0).y).toBe(20);
   });
 });

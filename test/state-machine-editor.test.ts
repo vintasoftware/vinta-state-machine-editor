@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { rectsOverlap } from '../src/geometry/placement.js';
 import { toWorld } from '../src/geometry/viewport.js';
 import {
   defineStateMachineEditor,
@@ -8,7 +9,7 @@ import {
   StateMachineError,
 } from '../src/index.js';
 import { createTransition, getSideEffects } from '../src/model/machine.js';
-import type { GuardValidation, MachineChange, Point, Selection } from '../src/types.js';
+import type { GuardValidation, MachineChange, Point, Rect, Selection } from '../src/types.js';
 import {
   ACTIONS,
   CATALOG,
@@ -2025,5 +2026,374 @@ describe('host-owned data on the canvas', () => {
     editor.value = { ...editor.value, data: { anything: 'goes' } };
     expect(recorded).toEqual([]);
     expect(editor.value.data).toEqual({ anything: 'goes' });
+  });
+});
+
+describe('the start bar', () => {
+  /** Where an edge's path leaves its source: the `M x y` at the head of the `d`. */
+  function pathStart(editor: StateMachineEditorElement, transitionId: string): Point {
+    const path = querySvg(shadowOf(editor), `path.edge[data-transition-id="${transitionId}"]`);
+    const match = /^M (-?[\d.]+) (-?[\d.]+)/.exec(path.getAttribute('d') ?? '');
+    if (match?.[1] === undefined || match[2] === undefined) {
+      throw new Error(`Transition "${transitionId}" has no path.`);
+    }
+    return { x: Number.parseFloat(match[1]), y: Number.parseFloat(match[2]) };
+  }
+
+  function barHeight(editor: StateMachineEditorElement): number {
+    return Number.parseFloat(queryOne(shadowOf(editor), '.start-node').style.height);
+  }
+
+  /** Two states stacked vertically, each fed by its own creation edge. */
+  function twoCreationEdges(): ReturnType<typeof sampleMachine> {
+    const base = sampleMachine();
+    const tops: Readonly<Record<string, number>> = { draft: 600, paid: 0 };
+    return {
+      ...base,
+      states: base.states.map((state) => ({
+        ...state,
+        position: { x: 400, y: tops[state.id] ?? 0 },
+      })),
+      transitions: [
+        createTransition({ id: 'to-draft', name: 'create', from: null, to: 'draft' }),
+        createTransition({ id: 'to-paid', name: 'create 2', from: null, to: 'paid' }),
+      ],
+    };
+  }
+
+  it('grows with the number of creation edges', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const one = barHeight(editor);
+    expect(one).toBeGreaterThan(0);
+
+    const base = machineWithCreation();
+    editor.value = {
+      ...base,
+      transitions: [
+        ...base.transitions,
+        createTransition({ id: 'c2', name: 'create 2', from: null, to: 'draft' }),
+        createTransition({ id: 'c3', name: 'create 3', from: null, to: 'paid' }),
+        createTransition({ id: 'c4', name: 'create 4', from: null, to: 'paid' }),
+        createTransition({ id: 'c5', name: 'create 5', from: null, to: 'draft' }),
+      ],
+    };
+    // Five slots outgrow the floor the label sets, so the bar starts growing.
+    expect(barHeight(editor)).toBeGreaterThan(one);
+  });
+
+  it('gives every creation edge its own start, with room between them', () => {
+    const editor = mountEditor();
+    editor.value = twoCreationEdges();
+
+    const first = pathStart(editor, 'to-draft');
+    const second = pathStart(editor, 'to-paid');
+    // Same vertical line — the bar's right edge — at different heights.
+    expect(first.x).toBe(second.x);
+    expect(Math.abs(first.y - second.y)).toBeGreaterThan(20);
+  });
+
+  it('orders the slots by target so the lines do not cross', () => {
+    const editor = mountEditor();
+    editor.value = twoCreationEdges(); // draft sits low, paid sits high
+
+    // Paid is the higher state, so its edge takes the higher slot.
+    expect(pathStart(editor, 'to-paid').y).toBeLessThan(pathStart(editor, 'to-draft').y);
+  });
+
+  it('reshuffles the slots when a state is dragged past another', () => {
+    const editor = mountEditor();
+    editor.value = twoCreationEdges();
+    expect(pathStart(editor, 'to-paid').y).toBeLessThan(pathStart(editor, 'to-draft').y);
+
+    // Swap them: draft goes above paid, so the slots have to swap with them.
+    editor.value = {
+      ...editor.value,
+      states: editor.value.states.map((state) => ({
+        ...state,
+        position: { ...state.position, y: state.id === 'draft' ? 0 : 600 },
+      })),
+    };
+    expect(pathStart(editor, 'to-draft').y).toBeLessThan(pathStart(editor, 'to-paid').y);
+  });
+
+  it('reorders the starting points when a card is dragged past another', () => {
+    const editor = mountEditor();
+    editor.value = twoCreationEdges();
+    // paid sits high, so its edge starts above draft's.
+    expect(pathStart(editor, 'to-paid').y).toBeLessThan(pathStart(editor, 'to-draft').y);
+
+    // Drag the high edge's card well below the other one. The line now heads
+    // downwards, so leaving from the top slot would cross its neighbour.
+    const card = queryOne(shadowOf(editor), '.edge-card[data-transition-id="to-paid"]');
+    const from = {
+      x: Number.parseFloat(card.style.left),
+      y: Number.parseFloat(card.style.top),
+    };
+    const header = queryOne(card, '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: from.x, clientY: from.y });
+    firePointer(document, 'pointermove', { clientX: from.x, clientY: from.y + 700 });
+    firePointer(document, 'pointerup', { clientX: from.x, clientY: from.y + 700 });
+
+    expect(editor.value.transitions[1]?.labelOffset.y).toBeGreaterThan(0);
+    expect(pathStart(editor, 'to-paid').y).toBeGreaterThan(pathStart(editor, 'to-draft').y);
+  });
+
+  it('does not reshuffle for a nudge that changes nothing', () => {
+    const editor = mountEditor();
+    editor.value = twoCreationEdges();
+    const before = pathStart(editor, 'to-paid').y;
+
+    const card = queryOne(shadowOf(editor), '.edge-card[data-transition-id="to-paid"]');
+    const from = {
+      x: Number.parseFloat(card.style.left),
+      y: Number.parseFloat(card.style.top),
+    };
+    const header = queryOne(card, '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: from.x, clientY: from.y });
+    firePointer(document, 'pointermove', { clientX: from.x, clientY: from.y - 60 });
+    firePointer(document, 'pointerup', { clientX: from.x, clientY: from.y - 60 });
+
+    // It moved, but not past its neighbour, so the slots stay where they were.
+    expect(editor.value.transitions[1]?.labelOffset.y).toBeLessThan(0);
+    expect(pathStart(editor, 'to-paid').y).toBe(before);
+  });
+
+  it('keeps the slot order independent of the evaluation order', () => {
+    const editor = mountEditor();
+    editor.value = twoCreationEdges();
+    const before = pathStart(editor, 'to-paid').y;
+
+    // Reordering the array is what decides evaluation order; it is not layout.
+    editor.value = {
+      ...editor.value,
+      transitions: [...editor.value.transitions].reverse(),
+    };
+    expect(editor.value.transitions.map((transition) => transition.id)).toEqual([
+      'to-paid',
+      'to-draft',
+    ]);
+    expect(pathStart(editor, 'to-paid').y).toBe(before);
+  });
+
+  it('still fans two creation edges that share a target', () => {
+    const editor = mountEditor();
+    const base = machineWithCreation();
+    editor.value = {
+      ...base,
+      transitions: [
+        ...base.transitions,
+        createTransition({ id: 'c2', name: 'create 2', from: null, to: 'draft' }),
+      ],
+    };
+
+    // No ordering can separate edges with the same target, so the fan still has to.
+    const cards = queryAll(shadowOf(editor), '.edge-card').filter((card) =>
+      (card.getAttribute('data-transition-id') ?? '').startsWith('c'),
+    );
+    const centers = cards.map((card) => ({
+      x: Number.parseFloat(card.style.left),
+      y: Number.parseFloat(card.style.top),
+    }));
+    const [first, second] = centers;
+    if (first === undefined || second === undefined) {
+      throw new Error('missing card');
+    }
+    expect(Math.hypot(first.x - second.x, first.y - second.y)).toBeGreaterThan(70);
+  });
+
+  it('names itself, so nobody has to guess what the bar is', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const bar = queryOne(shadowOf(editor), '.start-node');
+    expect(queryOne(bar, '.start-node__label').textContent).toBe('Create');
+    expect(bar.getAttribute('aria-label')).toBe('Create: 1 creation transition');
+
+    editor.addCreationTransition('paid');
+    expect(queryOne(shadowOf(editor), '.start-node').getAttribute('aria-label')).toBe(
+      'Create: 2 creation transitions',
+    );
+  });
+
+  it('stays tall enough to read even with a single edge', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    // One edge needs 34px of slot, but the label needs more than that.
+    expect(barHeight(editor)).toBeGreaterThanOrEqual(96);
+  });
+
+  it('keeps a whole transition card between itself and the state it feeds', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    const shadow = shadowOf(editor);
+    const bar = queryOne(shadow, '.start-node');
+    const barRight = Number.parseFloat(bar.style.left) + 26;
+    const leftmost = Math.min(...editor.value.states.map((state) => state.position.x));
+    const card = queryOne(shadow, '.edge-card[data-transition-id="create"]');
+    const centre = Number.parseFloat(card.style.left);
+
+    // The card is 186px wide and does not sit half way: the control point pulls
+    // it towards the target, so both sides are checked rather than assumed.
+    expect(centre - 93 - barRight).toBeGreaterThan(40);
+    expect(leftmost - (centre + 93)).toBeGreaterThan(40);
+  });
+
+  it('leaves the bar out of the states and the roles', () => {
+    const editor = mountEditor();
+    editor.value = machineWithCreation();
+    expect(editor.value.states).toHaveLength(2);
+    expect(queryAll(shadowOf(editor), '.start-node .node__role')).toHaveLength(0);
+
+    // Pressing it selects nothing: it is not an element of the machine.
+    firePointer(queryOne(shadowOf(editor), '.start-node'), 'pointerdown');
+    expect(editor.selection).toBeNull();
+  });
+});
+
+describe('placing new elements in free space', () => {
+  /** Box a state occupies, at the sizes the editor falls back to under jsdom. */
+  function stateBoxes(editor: StateMachineEditorElement): readonly Rect[] {
+    return editor.value.states.map((state) => ({
+      x: state.position.x,
+      y: state.position.y,
+      width: 248,
+      height: 152,
+    }));
+  }
+
+  function cardBoxes(editor: StateMachineEditorElement): readonly Rect[] {
+    return queryAll(shadowOf(editor), '.edge-card').map((card) => ({
+      x: Number.parseFloat(card.style.left) - 93,
+      y: Number.parseFloat(card.style.top) - 36,
+      width: 186,
+      height: 72,
+    }));
+  }
+
+  it('never stacks a new state on an existing one', () => {
+    const editor = mountEditor();
+    editor.value = {
+      states: [],
+      transitions: [],
+      initialStateIds: [],
+      finalStateIds: [],
+      data: {},
+    };
+
+    for (let index = 0; index < 6; index += 1) {
+      editor.addState();
+    }
+
+    const boxes = stateBoxes(editor);
+    expect(boxes).toHaveLength(6);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a === undefined || b === undefined) {
+          throw new Error('missing state');
+        }
+        expect(rectsOverlap(a, b)).toBe(false);
+      }
+    }
+  });
+
+  it('still honours an explicit position', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    // draft already sits at 0,0 — an explicit position is the caller's business.
+    const state = editor.addState({ position: { x: 0, y: 0 } });
+    expect(state.position).toEqual({ x: 0, y: 0 });
+  });
+
+  it('keeps a new transition card off the cards already there', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const before = cardBoxes(editor);
+
+    // A second edge between the same pair, whose card would otherwise land on
+    // the first one once the fan is not enough on its own.
+    editor.addTransition('draft', 'paid');
+    editor.addTransition('draft', 'paid');
+
+    const boxes = cardBoxes(editor);
+    expect(boxes).toHaveLength(before.length + 2);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a === undefined || b === undefined) {
+          throw new Error('missing card');
+        }
+        expect(rectsOverlap(a, b)).toBe(false);
+      }
+    }
+  });
+
+  it('leaves the offset at zero when the spot is already free', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      // Far enough apart that a whole card fits in the gap between them.
+      states: base.states.map((state) => ({
+        ...state,
+        position: { ...state.position, x: state.id === 'draft' ? 0 : 700 },
+      })),
+      transitions: [],
+    };
+    // The spot the edge would use is clear, so the editor must not invent an
+    // offset — a non-zero one opts the card out of automatic placement for good.
+    expect(editor.addTransition('draft', 'paid').labelOffset).toEqual({ x: 0, y: 0 });
+  });
+
+  it('lifts the card off the nodes when they are too close to hold it', () => {
+    const editor = mountEditor();
+    editor.value = { ...sampleMachine(), transitions: [] };
+
+    // draft ends at x=248 and paid starts at x=400: a 186px card cannot sit in
+    // a 152px gap, so it has to leave the line rather than cover both nodes.
+    const transition = editor.addTransition('draft', 'paid');
+    expect(transition.labelOffset.y).not.toBe(0);
+
+    const card = cardBoxes(editor)[0];
+    if (card === undefined) {
+      throw new Error('missing card');
+    }
+    for (const state of stateBoxes(editor)) {
+      expect(rectsOverlap(card, state)).toBe(false);
+    }
+  });
+
+  it('places a creation edge clear of the cards around the bar', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addCreationTransition('draft');
+    editor.addCreationTransition('draft');
+
+    const boxes = cardBoxes(editor);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a === undefined || b === undefined) {
+          throw new Error('missing card');
+        }
+        expect(rectsOverlap(a, b)).toBe(false);
+      }
+    }
+  });
+
+  it('reports the placement as part of the add, not as a move', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+
+    editor.addTransition('draft', 'paid');
+    editor.addTransition('draft', 'paid');
+
+    // The card is placed before the machine is committed, so a host sees one
+    // event per new edge rather than an add followed by a correcting move.
+    expect(recorded.map((change) => change.kind)).toEqual(['transition-add', 'transition-add']);
   });
 });

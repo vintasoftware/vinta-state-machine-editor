@@ -1,6 +1,6 @@
 {
   "name": "vinta-state-machine-editor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Framework-agnostic Web Component to create, edit and visualize state machines on a pan/zoom canvas, with ordered side effects and JSON parameters.",
   "keywords": [
     "web-component",

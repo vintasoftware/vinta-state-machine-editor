@@ -9,9 +9,12 @@ import {
   bendSelfEdgeThrough,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
+  creationAnchorPoint,
   curvatureFor,
   type EdgeGeometry,
+  orderCreationAnchors,
 } from '../geometry/edge.js';
+import { boxAround, findFreeLabelSpot } from '../geometry/placement.js';
 import {
   boundsOf,
   createViewport,
@@ -69,6 +72,7 @@ import type {
   SideEffectListRef,
   SideEffectPhase,
   SideEffectProvider,
+  Size,
   StateColor,
   StateMachine,
   StateNode,
@@ -108,10 +112,21 @@ const FALLBACK_LABEL_SPACING = 160;
 /** How far the start arrow reaches left of an initial state, and how far down it sits. */
 const START_MARKER_REACH = 42;
 const START_MARKER_Y = 20;
-/** Diameter of the start pseudo-node, used before the DOM has been measured. */
-const START_NODE_SIZE = 18;
-/** How far left of the leftmost state it feeds the start pseudo-node is placed. */
-const START_NODE_GAP = 140;
+/** Thickness of the start bar every creation edge leaves from. */
+const START_BAR_WIDTH = 34;
+/** Vertical room reserved per creation edge, so no two leave the bar together. */
+const START_BAR_SLOT = 38;
+/** Floor on the bar's height. Tall enough for the label to read, whatever it holds. */
+const START_BAR_MIN_HEIGHT = 120;
+/** Written down the bar, so nobody has to guess what the dot-like thing is. */
+const START_BAR_LABEL = 'Create';
+/** Clear space demanded between a creation card and both the bar and its target. */
+const CREATION_CARD_MARGIN = 56;
+/** Card size assumed before the DOM has been measured. */
+const FALLBACK_LABEL_WIDTH = 186;
+const FALLBACK_LABEL_HEIGHT = 72;
+/** How far the search for a free spot may wander before giving up. */
+const PLACEMENT_RINGS = 6;
 /** Base name for a creation transition; made unique across the whole machine. */
 const CREATION_NAME = 'create';
 
@@ -266,8 +281,10 @@ export class StateMachineEditorElement extends HTMLElement {
   #provider: SideEffectProvider | undefined;
   #actionProvider: ActionProvider | undefined;
   #guardValidator: GuardValidator | undefined;
-  /** The start pseudo-node, present only while the machine has a creation edge. */
+  /** The start bar, present only while the machine has a creation edge. */
   #startNode: StartNodeView | undefined;
+  /** Slot each creation edge leaves the bar from. Rebuilt on every render. */
+  #creationAnchors: ReadonlyMap<string, Point> = new Map();
   #readOnly = false;
   #drag: DragState | undefined;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -507,7 +524,13 @@ export class StateMachineEditorElement extends HTMLElement {
   addTransition(from: string | null, to: string, name?: string): Transition {
     const label =
       name ?? (from === null ? uniqueTransitionName(this.#machine, CREATION_NAME) : 'transition');
-    const transition = createTransition({ from, to, name: label });
+    const draft = createTransition({ from, to, name: label });
+    // Placed against a machine that already holds it, so its own siblings and
+    // its slot on the start bar are part of the geometry it is measured against.
+    const transition: Transition = {
+      ...draft,
+      labelOffset: this.#freeLabelOffset(addTransition(this.#machine, draft), draft),
+    };
     this.#commit(addTransition(this.#machine, transition), {
       kind: 'transition-add',
       transitionId: transition.id,
@@ -584,7 +607,7 @@ export class StateMachineEditorElement extends HTMLElement {
   zoomToFit(padding = 56): void {
     const rects = this.#machine.states.map((state) => this.#rectFor(state));
     const bounds = boundsOf(
-      creationTransitions(this.#machine).length > 0 ? [...rects, this.#startNodeRect()] : rects,
+      creationTransitions(this.#machine).length > 0 ? [...rects, this.#startBarRect()] : rects,
     );
     if (bounds === undefined) {
       return;
@@ -865,12 +888,19 @@ export class StateMachineEditorElement extends HTMLElement {
     };
   }
 
+  /**
+   * Where a new state goes: the middle of the view, nudged to the nearest spot
+   * that covers nothing. This used to cascade every card 24px down and right of
+   * the last, which stacked them almost on top of each other and drifted off
+   * screen; searching for real free space puts each one somewhere usable.
+   */
   #defaultStatePosition(): Point {
+    const size = this.#nodeSize();
     const center = toWorld(this.#viewport, this.#viewportCenter());
-    const offset = this.#machine.states.length * 24;
+    const spot = findFreeLabelSpot(center, size, this.#occupiedRects(), PLACEMENT_RINGS);
     return {
-      x: Math.round(center.x - FALLBACK_NODE_WIDTH / 2 + offset),
-      y: Math.round(center.y - FALLBACK_NODE_HEIGHT / 2 + offset),
+      x: Math.round(spot.x - size.width / 2),
+      y: Math.round(spot.y - size.height / 2),
     };
   }
 
@@ -893,22 +923,60 @@ export class StateMachineEditorElement extends HTMLElement {
     };
   }
 
-  /** Rect of a transition's source: a state card, or the start pseudo-node. */
-  #sourceRect(from: string | null): Rect | undefined {
-    if (from === null) {
-      return this.#startNodeRect();
+  /**
+   * Rect a transition leaves from: a state card, or — for a creation edge — the
+   * single slot it owns on the start bar.
+   *
+   * The slot is handed back as a zero-size rect, which `borderPoint` resolves to
+   * the point itself. The whole geometry layer therefore keeps working on rects
+   * and needs no idea that a bar exists.
+   */
+  #sourceRect(transition: Transition): Rect | undefined {
+    if (transition.from === null) {
+      // Measuring the bar again per edge would re-read layout for nothing: the
+      // slot is already known, and the fallback only runs before the first render.
+      const slot = this.#creationAnchors.get(transition.id);
+      const anchor = slot ?? creationAnchorPoint(this.#startBarRect(), 0, 1);
+      return { x: anchor.x, y: anchor.y, width: 0, height: 0 };
     }
-    const state = findState(this.#machine, from);
+    const state = findState(this.#machine, transition.from);
     return state === undefined ? undefined : this.#rectFor(state);
   }
 
   /**
-   * Where the start pseudo-node sits. It is placed rather than persisted: left
-   * of the leftmost state it feeds, centred on them vertically. Deterministic,
-   * so nothing new has to be stored on the machine.
+   * How far left of the state it feeds the bar has to sit for the creation card
+   * to fit between the two with room to spare.
+   *
+   * The card does not land half way. A quadratic's midpoint is
+   * `(start + 2·control + end) / 4`, and the control point is the midpoint of
+   * the two *centres* — which for a zero-size source is pulled towards the
+   * target. Solving that for a gap `g` puts the card `g/2 - barWidth/2 -
+   * nodeWidth/8` short of the target, so clearing a whole card plus a margin on
+   * each side needs `g >= card + 2·margin + barWidth + nodeWidth/4`.
+   *
+   * Both widths are measured rather than assumed, so a coarse pointer — where
+   * the card and the node both grow — moves the bar out with them, and so does
+   * a host that restyles either.
    */
-  #startNodeRect(): Rect {
-    const size = this.#startNode?.root.offsetWidth || START_NODE_SIZE;
+  #startBarGap(): number {
+    const [transitionView] = this.#transitionViews.values();
+    const card = transitionView?.card.offsetWidth || FALLBACK_LABEL_WIDTH;
+    const [stateView] = this.#stateViews.values();
+    const node = stateView?.root.offsetWidth || FALLBACK_NODE_WIDTH;
+    return Math.round(card + CREATION_CARD_MARGIN * 2 + START_BAR_WIDTH + node / 4);
+  }
+
+  /**
+   * Where the start bar sits and how tall it is. It is placed rather than
+   * persisted: left of the leftmost state it feeds, centred on them vertically,
+   * and grown to reserve a slot per creation edge. Deterministic, so nothing new
+   * has to be stored on the machine.
+   */
+  #startBarRect(): Rect {
+    const height = Math.max(
+      START_BAR_MIN_HEIGHT,
+      creationTransitions(this.#machine).length * START_BAR_SLOT,
+    );
     const targets: Rect[] = [];
     for (const transition of creationTransitions(this.#machine)) {
       const state = findState(this.#machine, transition.to);
@@ -918,17 +986,143 @@ export class StateMachineEditorElement extends HTMLElement {
     }
     const [first] = targets;
     if (first === undefined) {
-      return { x: 0, y: 0, width: size, height: size };
+      return { x: 0, y: 0, width: START_BAR_WIDTH, height };
     }
     const left = Math.min(...targets.map((rect) => rect.x));
     const middle =
       targets.reduce((total, rect) => total + rect.y + rect.height / 2, 0) / targets.length;
     return {
-      x: Math.round(left - START_NODE_GAP),
-      y: Math.round(middle - size / 2),
-      width: size,
-      height: size,
+      x: Math.round(left - this.#startBarGap()),
+      y: Math.round(middle - height / 2),
+      width: START_BAR_WIDTH,
+      height,
     };
+  }
+
+  /**
+   * Hands each creation edge its slot on the bar, ordered by how high its target
+   * sits so the lines fan out instead of crossing. Rebuilt on every render, so
+   * dragging a state reshuffles the slots under it.
+   *
+   * This is purely visual and has nothing to do with the evaluation order of the
+   * edges, which stays their position in `machine.transitions`.
+   */
+  #computeCreationAnchors(creation: readonly Transition[], bar: Rect): ReadonlyMap<string, Point> {
+    const order = orderCreationAnchors(
+      creation.map((transition) => ({
+        id: transition.id,
+        labelY: this.#neutralLabelY(transition, bar),
+      })),
+    );
+    const anchors = new Map<string, Point>();
+    order.forEach((id, index) => {
+      anchors.set(id, creationAnchorPoint(bar, index, order.length));
+    });
+    return anchors;
+  }
+
+  /**
+   * Height a creation edge's card sits at, measured from the *middle* of the
+   * bar rather than from the edge's own slot.
+   *
+   * The slot is what this feeds into, so reading the card's real position would
+   * make the ordering depend on its own result. Anchoring every edge at the same
+   * neutral point breaks that: with no card moved it reduces to the order of the
+   * targets, and a card the user has dragged still moves its key by exactly the
+   * offset they dragged it.
+   */
+  #neutralLabelY(transition: Transition, bar: Rect): number {
+    const target = findState(this.#machine, transition.to);
+    const middle = bar.y + bar.height / 2;
+    if (target === undefined) {
+      return middle + transition.labelOffset.y;
+    }
+    const neutral: Rect = { x: bar.x + bar.width, y: middle, width: 0, height: 0 };
+    const curvature = curvatureFor(this.#fanIndexOf(transition), this.#labelSpacing());
+    const auto = computeEdgeGeometry(neutral, this.#rectFor(target), curvature);
+    return auto.label.y + transition.labelOffset.y;
+  }
+
+  /** Rect a link preview drags out of, which has no transition to anchor on yet. */
+  #linkSourceRect(fromId: string | null): Rect | undefined {
+    if (fromId === null) {
+      return this.#startBarRect();
+    }
+    const state = findState(this.#machine, fromId);
+    return state === undefined ? undefined : this.#rectFor(state);
+  }
+
+  /** Size a transition card renders at, measured where the DOM allows it. */
+  #labelSize(): Size {
+    const [view] = this.#transitionViews.values();
+    return {
+      width: view?.card.offsetWidth || FALLBACK_LABEL_WIDTH,
+      height: view?.card.offsetHeight || FALLBACK_LABEL_HEIGHT,
+    };
+  }
+
+  #nodeSize(): Size {
+    const [view] = this.#stateViews.values();
+    return {
+      width: view?.root.offsetWidth || FALLBACK_NODE_WIDTH,
+      height: view?.root.offsetHeight || FALLBACK_NODE_HEIGHT,
+    };
+  }
+
+  /**
+   * Everything already drawn that a newly placed card or node should not land
+   * on: the state cards, and every transition card at the point it actually
+   * sits. Read from the geometry rather than the DOM, so it is right even
+   * before the new element has rendered once.
+   */
+  #occupiedRects(exceptTransitionId?: string): readonly Rect[] {
+    const rects: Rect[] = this.#machine.states.map((state) => this.#rectFor(state));
+    const size = this.#labelSize();
+    for (const transition of this.#machine.transitions) {
+      if (transition.id !== exceptTransitionId) {
+        rects.push(boxAround(this.#geometryFor(transition).label, size));
+      }
+    }
+    return rects;
+  }
+
+  /**
+   * Reads a value with `machine` temporarily in place.
+   *
+   * Placing a brand new transition needs the geometry of a machine that already
+   * contains it — its siblings, its slot on the start bar. Threading a machine
+   * argument through every geometry helper would buy nothing, since nothing
+   * renders in between and the swap is undone before anything else can observe it.
+   */
+  #withMachine<T>(machine: StateMachine, read: () => T): T {
+    const previousMachine = this.#machine;
+    const previousAnchors = this.#creationAnchors;
+    this.#machine = machine;
+    const creation = creationTransitions(machine);
+    this.#creationAnchors =
+      creation.length > 0
+        ? this.#computeCreationAnchors(creation, this.#startBarRect())
+        : new Map();
+    try {
+      return read();
+    } finally {
+      this.#machine = previousMachine;
+      this.#creationAnchors = previousAnchors;
+    }
+  }
+
+  /**
+   * Offset that keeps a new transition's card off the cards already on the
+   * canvas. Zero when the spot it would take is free, which is the usual case —
+   * the editor should not invent an offset it does not need, since a non-zero
+   * one opts the card out of automatic placement for good.
+   */
+  #freeLabelOffset(machine: StateMachine, transition: Transition): Point {
+    return this.#withMachine(machine, () => {
+      const anchor = this.#autoLabelPoint(transition);
+      const spot = findFreeLabelSpot(anchor, this.#labelSize(), this.#occupiedRects(transition.id));
+      return { x: Math.round(spot.x - anchor.x), y: Math.round(spot.y - anchor.y) };
+    });
   }
 
   #stateAt(point: Point): StateNode | undefined {
@@ -979,29 +1173,47 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   /**
-   * The start pseudo-node exists only while a creation edge does. It is not a
-   * state: it never enters `states`, has no name, colour or roles, and cannot
-   * be selected or deleted.
+   * The start bar exists only while a creation edge does. It is not a state: it
+   * never enters `states`, has no name, colour or roles, and cannot be selected
+   * or deleted.
    */
   #renderStartNode(): void {
-    if (creationTransitions(this.#machine).length === 0) {
+    const creation = creationTransitions(this.#machine);
+    if (creation.length === 0) {
       this.#startNode?.root.remove();
       this.#startNode = undefined;
+      this.#creationAnchors = new Map();
       return;
     }
     const view = this.#startNode ?? this.#createStartNode();
     this.#startNode = view;
-    const rect = this.#startNodeRect();
+    const rect = this.#startBarRect();
     view.root.style.left = `${rect.x}px`;
     view.root.style.top = `${rect.y}px`;
+    view.root.style.height = `${rect.height}px`;
+    view.root.setAttribute(
+      'aria-label',
+      `${START_BAR_LABEL}: ${creation.length} creation transition${creation.length === 1 ? '' : 's'}`,
+    );
     view.linkHandle.hidden = this.#readOnly;
+    // Before the transitions render, so each one can read its own slot.
+    this.#creationAnchors = this.#computeCreationAnchors(creation, rect);
   }
 
   #createStartNode(): StartNodeView {
     const root = createElement('div', {
       className: 'start-node',
       parent: this.#world,
-      attrs: { part: 'start-node', title: 'Start' },
+      attrs: {
+        part: 'start-node',
+        title: 'Every transition leaving here creates a record',
+      },
+    });
+    // Written down the bar rather than across it, so naming it costs no width.
+    createElement('span', {
+      className: 'start-node__label',
+      parent: root,
+      text: START_BAR_LABEL,
     });
     const linkHandle = createButton({
       className: 'node__link start-node__link',
@@ -1491,7 +1703,7 @@ export class StateMachineEditorElement extends HTMLElement {
    * bending and label placement all apply unchanged.
    */
   #autoGeometry(transition: Transition): EdgeGeometry | undefined {
-    const sourceRect = this.#sourceRect(transition.from);
+    const sourceRect = this.#sourceRect(transition);
     const target = findState(this.#machine, transition.to);
     if (sourceRect === undefined || target === undefined) {
       return undefined;
@@ -1516,7 +1728,7 @@ export class StateMachineEditorElement extends HTMLElement {
     if (transition.labelOffset.x === 0 && transition.labelOffset.y === 0) {
       return auto;
     }
-    const sourceRect = this.#sourceRect(transition.from);
+    const sourceRect = this.#sourceRect(transition);
     const target = findState(this.#machine, transition.to);
     if (sourceRect === undefined || target === undefined) {
       return auto;
@@ -1853,11 +2065,15 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#previewPath.style.display = 'none';
       return;
     }
-    const rect = this.#sourceRect(drag.fromId);
+    const rect = this.#linkSourceRect(drag.fromId);
     if (rect === undefined) {
       return;
     }
-    const start = { x: rect.x + rect.width, y: rect.y + Math.min(16, rect.height / 2) };
+    // The bar has no header to leave from, so the preview starts at its middle.
+    const start = {
+      x: rect.x + rect.width,
+      y: drag.fromId === null ? rect.y + rect.height / 2 : rect.y + 16,
+    };
     this.#previewPath.setAttribute(
       'd',
       `M ${start.x} ${start.y} L ${drag.pointer.x} ${drag.pointer.y}`,

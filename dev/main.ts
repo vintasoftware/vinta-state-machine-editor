@@ -106,18 +106,24 @@ function effect(
   return params === undefined ? created : { ...created, params };
 }
 
+/*
+ * Laid out on a regular grid: 620px between columns and 520px between rows.
+ * A transition card is 186px wide and sits at the middle of its edge, so those
+ * gaps leave one clear card's width plus margins between any two state cards —
+ * which is what keeps the labels off the nodes and off each other.
+ */
 function exampleMachine(): StateMachine {
   const draft = createState({
     id: 'draft',
     name: 'Draft',
-    position: { x: 60, y: 180 },
+    position: { x: 400, y: 340 },
     color: 'info',
   });
   const pending = {
     ...createState({
       id: 'pending',
       name: 'Pending payment',
-      position: { x: 560, y: 60 },
+      position: { x: 1020, y: 340 },
       color: 'warning',
     }),
     onEnter: {
@@ -130,7 +136,7 @@ function exampleMachine(): StateMachine {
     ...createState({
       id: 'paid',
       name: 'Paid',
-      position: { x: 1080, y: 240 },
+      position: { x: 1640, y: 100 },
       color: 'success',
     }),
     onEnter: { before: [], after: [effect('notify-warehouse', 'e-warehouse')] },
@@ -139,7 +145,7 @@ function exampleMachine(): StateMachine {
   const cancelled = createState({
     id: 'cancelled',
     name: 'Cancelled',
-    position: { x: 560, y: 520 },
+    position: { x: 1640, y: 620 },
     color: 'danger',
   });
 

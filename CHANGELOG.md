@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-24
+
+### Added
+
+- New transitions and new states are placed into **free space**. Both used to appear wherever the
+  geometry happened to put them: a new card on top of whatever already sat at that midpoint, and a
+  new state 24 px down and right of the last, which stacked them almost on top of each other and
+  drifted off screen. Both now step out to the nearest spot that covers nothing — vertically first
+  for cards, since they are far wider than tall — and give up rather than wander so far that the
+  label stops reading as part of its own edge. A spot that is already free is used untouched, so
+  nothing gains a `labelOffset` it does not need. The placement is resolved before the machine is
+  committed, so a host still sees a single `transition-add` rather than an add followed by a
+  correcting move.
+- The start bar is labelled **Create** down its length, so the shape does not have to be guessed at,
+  and never shrinks below the height that label needs.
+- Pure helpers, all testable without a DOM: `orderCreationAnchors` and `creationAnchorPoint` in
+  `src/geometry/edge.ts`, and `findFreeLabelSpot`, `boxAround` and `rectsOverlap` in the new
+  `src/geometry/placement.ts`.
+
+### Changed
+
+- The start pseudostate is drawn as a slim vertical **bar** rather than a dot, and reserves a 38 px
+  slot per creation edge, so it grows with them. A dot made every creation edge leave from the same
+  point, so their lines emerged on top of one another and crossed; the bar gives each edge an anchor
+  of its own with real space between neighbours.
+- Creation edges take their slot **in the order they are heading**, top to bottom. Two edges leaving
+  a common vertical line cross exactly when one starts above the other and ends below it, so that
+  order removes every crossing the layout is free to remove; edges heading for the same place cannot
+  be separated by any ordering and keep relying on the existing fan.
+
+  The key is the height of each edge's own **card**, not of its target state, because the edge is
+  bent to pass through its card — the card is what the line actually heads for, and ordering by the
+  target alone left crossings in place as soon as anyone moved a label. It is measured from a
+  neutral point on the bar so the ordering never depends on the slots it is choosing, which is what
+  keeps it from feeding back on itself mid-drag. Recomputed on every render, so moving either a card
+  or a state reshuffles the slots under it. All of this is purely visual: the evaluation order of
+  the edges is still their position in `machine.transitions`, and reordering them there moves no
+  lines.
+- The gap between the bar and the state it feeds is derived from the measured transition card and
+  node widths, so a whole card plus a margin always fits between the two — and a coarse pointer,
+  where both grow, moves the bar out with them. A card does not land half way along its edge, since
+  the control point pulls it towards the target, so the gap solves for where the card actually ends
+  up rather than assuming the midpoint.
+- The demo machine is laid out on a regular grid — 620 px between columns, 520 px between rows —
+  which leaves one clear card's width between any two state cards. Its labels no longer sit on the
+  nodes or on each other.
+
+### Fixed
+
+- The start bar's **→** handle covered the **Create** label instead of hanging below the bar.
+  `.node__link` is declared later in the same stylesheet at equal specificity, so its `top`/`right`
+  won the cascade and, with `bottom`/`left` also set, the over-constrained box resolved back inside
+  the bar. The handle is now scoped to two classes so source order cannot decide it.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added
@@ -97,6 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vintasoftware/vinta-state-machine-editor/releases/tag/v0.1.0

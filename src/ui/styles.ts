@@ -187,18 +187,56 @@ export const editorStyles: string = `
   .start-marker__dot { fill: var(--sme-text); }
   .start-marker__line { stroke: var(--sme-text); stroke-width: 1.75; }
 
-  /* The UML initial pseudostate: a small filled dot, not a card. */
+  /*
+   * The start pseudostate, drawn as a slim vertical bar rather than a dot: every
+   * creation edge leaves it from a slot of its own, so they need room to spread
+   * instead of all radiating out of one point. Its height is set inline, from
+   * the number of edges.
+   */
   .start-node {
     position: absolute;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    border-radius: 999px;
     background: var(--sme-text);
     box-shadow: 0 0 0 3px var(--sme-canvas);
     user-select: none;
   }
 
-  .start-node__link { top: -2px; right: -13px; }
+  /*
+   * Down the bar, not across it, so the label costs no horizontal room. The
+   * clipping lives here rather than on the bar: overflow on the bar would also
+   * clip the handle hanging below it, dragging it back on top of this text.
+   */
+  .start-node__label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    max-height: 100%;
+    overflow: hidden;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--sme-canvas);
+  }
+
+  /*
+   * Clear of the bar's bottom edge and its halo, so it covers neither the label
+   * nor an edge leaving the bar.
+   *
+   * Two classes on purpose: .node__link is declared further down this sheet at
+   * the same specificity, so a single class here loses the cascade and its
+   * top/right pin the handle back inside the bar, on top of the label.
+   */
+  .start-node .start-node__link {
+    top: auto;
+    right: auto;
+    bottom: -34px;
+    left: 6px;
+  }
   .node.is-link-target { border-color: var(--sme-accent); }
 
   .node__header {
@@ -546,6 +584,9 @@ export const editorStyles: string = `
     .palette__option { width: 32px; height: 32px; }
     .node__header { padding: 10px; gap: 6px; }
     .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }
+    .start-node .start-node__link { top: auto; right: auto; bottom: -46px; left: 4px; }
+    .start-node { width: 40px; }
+    .start-node__label { font-size: 13px; }
     .chip { padding: 8px 10px; font-size: 13px; }
     .hook { grid-template-columns: 84px 1fr; gap: 10px; }
     .toolbar button { min-width: 40px; height: 40px; }
