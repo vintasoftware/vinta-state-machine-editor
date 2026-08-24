@@ -263,7 +263,10 @@ export const editorStyles: string = `
     gap: 6px;
     padding: 5px 8px;
     border-bottom: 1px solid var(--sme-border);
+    cursor: grab;
   }
+
+  .edge-card__header.is-dragging { cursor: grabbing; }
 
   .edge-card__name {
     flex: 1;

@@ -77,8 +77,45 @@ export function computeEdgeGeometry(source: Rect, target: Rect, curvature = 0): 
     y: midpoint.y + (dx / length) * curvature,
   };
 
-  const start = borderPoint(source, control);
-  const end = borderPoint(target, control);
+  return quadraticGeometry(borderPoint(source, control), control, borderPoint(target, control));
+}
+
+interface CubicControls {
+  readonly start: Point;
+  readonly control1: Point;
+  readonly control2: Point;
+  readonly end: Point;
+}
+
+function selfEdgeControls(rect: Rect, index: number): CubicControls {
+  const reach = 56 + index * 22;
+  const start: Point = { x: rect.x + rect.width * 0.65, y: rect.y };
+  const end: Point = { x: rect.x + rect.width, y: rect.y + rect.height * 0.4 };
+  return {
+    start,
+    end,
+    control1: { x: start.x, y: start.y - reach },
+    control2: { x: end.x + reach, y: end.y - reach },
+  };
+}
+
+function cubicGeometry(controls: CubicControls): EdgeGeometry {
+  const { start, control1, control2, end } = controls;
+  return {
+    path: `M ${start.x} ${start.y} C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${end.x} ${end.y}`,
+    source: start,
+    target: end,
+    label: cubicAt(start, control1, control2, end, 0.5),
+    arrowAngle: angleBetween(control2, end),
+  };
+}
+
+/** Geometry for a transition whose source and target are the same state. */
+export function computeSelfEdgeGeometry(rect: Rect, index = 0): EdgeGeometry {
+  return cubicGeometry(selfEdgeControls(rect, index));
+}
+
+function quadraticGeometry(start: Point, control: Point, end: Point): EdgeGeometry {
   return {
     path: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
     source: start,
@@ -88,18 +125,37 @@ export function computeEdgeGeometry(source: Rect, target: Rect, curvature = 0): 
   };
 }
 
-/** Geometry for a transition whose source and target are the same state. */
-export function computeSelfEdgeGeometry(rect: Rect, index = 0): EdgeGeometry {
-  const reach = 56 + index * 22;
-  const start: Point = { x: rect.x + rect.width * 0.65, y: rect.y };
-  const end: Point = { x: rect.x + rect.width, y: rect.y + rect.height * 0.4 };
-  const control1: Point = { x: start.x, y: start.y - reach };
-  const control2: Point = { x: end.x + reach, y: end.y - reach };
-  return {
-    path: `M ${start.x} ${start.y} C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${end.x} ${end.y}`,
-    source: start,
-    target: end,
-    label: cubicAt(start, control1, control2, end, 0.5),
-    arrowAngle: angleBetween(control2, end),
-  };
+/**
+ * Reshapes an edge so that its midpoint — where the transition card sits — lands
+ * exactly on `through`. Dragging a card therefore bends its line instead of
+ * detaching the label from it.
+ *
+ * A quadratic through `M` at `t = 0.5` needs `C = 2M - (P0 + P2) / 2`. The border
+ * anchors depend on `C`, so the control point is solved twice: once against a
+ * rough aim at `through`, then again against the anchors that produced.
+ */
+export function bendEdgeThrough(source: Rect, target: Rect, through: Point): EdgeGeometry {
+  const controlFor = (start: Point, end: Point): Point => ({
+    x: 2 * through.x - (start.x + end.x) / 2,
+    y: 2 * through.y - (start.y + end.y) / 2,
+  });
+  const rough = controlFor(borderPoint(source, through), borderPoint(target, through));
+  const start = borderPoint(source, rough);
+  const end = borderPoint(target, rough);
+  return quadraticGeometry(start, controlFor(start, end), end);
+}
+
+/**
+ * Same idea for a self transition: shifting both cubic control points by `k`
+ * moves the curve's midpoint by `0.75k`, so aim for `4/3` of the gap.
+ */
+export function bendSelfEdgeThrough(rect: Rect, index: number, through: Point): EdgeGeometry {
+  const controls = selfEdgeControls(rect, index);
+  const base = cubicAt(controls.start, controls.control1, controls.control2, controls.end, 0.5);
+  const pull = { x: ((through.x - base.x) * 4) / 3, y: ((through.y - base.y) * 4) / 3 };
+  return cubicGeometry({
+    ...controls,
+    control1: { x: controls.control1.x + pull.x, y: controls.control1.y + pull.y },
+    control2: { x: controls.control2.x + pull.x, y: controls.control2.y + pull.y },
+  });
 }

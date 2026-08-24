@@ -82,9 +82,15 @@ function exampleMachine(): StateMachine {
     effects: { before: [], after: [effect('refund', 'e-refund')] },
   };
 
+  // Two transitions between the same pair, in opposite directions, to show the fanning.
+  const refund = {
+    ...createTransition({ id: 'refund', name: 'refund', from: 'paid', to: 'pending' }),
+    effects: { before: [], after: [effect('refund', 'e-refund-2')] },
+  };
+
   return {
     states: [draft, pending, paid, cancelled],
-    transitions: [submit, pay, cancel],
+    transitions: [submit, pay, cancel, refund],
   };
 }
 

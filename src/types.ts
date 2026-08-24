@@ -70,6 +70,11 @@ export interface Transition {
   readonly from: string;
   /** Id of the target {@link StateNode}. */
   readonly to: string;
+  /**
+   * Where the transition card sits, relative to the point the editor picks on
+   * the edge. `{ x: 0, y: 0 }` keeps it on the edge, following the states.
+   */
+  readonly labelOffset: Point;
   /** Side effects that run around the transition itself. */
   readonly effects: SideEffectHooks;
 }
@@ -118,5 +123,6 @@ export type MachineChange =
   | { readonly kind: 'transition-add'; readonly transitionId: string }
   | { readonly kind: 'transition-remove'; readonly transitionId: string }
   | { readonly kind: 'transition-rename'; readonly transitionId: string }
+  | { readonly kind: 'transition-move'; readonly transitionId: string }
   | { readonly kind: 'side-effects-change'; readonly ref: SideEffectListRef }
   | { readonly kind: 'replace' };

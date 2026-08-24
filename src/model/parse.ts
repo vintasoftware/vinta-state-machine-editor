@@ -127,13 +127,25 @@ function parseState(value: unknown, path: string, issues: Issues): StateNode {
 function parseTransition(value: unknown, path: string, issues: Issues): Transition {
   if (!isRecord(value)) {
     issues.push(`${path} must be an object.`);
-    return { id: '', name: '', from: '', to: '', effects: { before: [], after: [] } };
+    return {
+      id: '',
+      name: '',
+      from: '',
+      to: '',
+      labelOffset: { x: 0, y: 0 },
+      effects: { before: [], after: [] },
+    };
   }
   return {
     id: readString(value, 'id', path, issues),
     name: readString(value, 'name', path, issues),
     from: readString(value, 'from', path, issues),
     to: readString(value, 'to', path, issues),
+    // Absent means "sit on the edge", so older documents keep working.
+    labelOffset:
+      value['labelOffset'] === undefined
+        ? { x: 0, y: 0 }
+        : parsePoint(value['labelOffset'], `${path}.labelOffset`, issues),
     effects: parseHooks(value['effects'], `${path}.effects`, issues),
   };
 }

@@ -72,6 +72,7 @@ defineStateMachineEditor('order-flow-editor');
 | --- | --- |
 | Create a state | **Add state** in the toolbar, or `editor.addState()` |
 | Move a state | Drag its header |
+| Move a transition | Drag the transition card's header — the edge bends to keep passing through it. Drop it back on the edge to return to automatic placement |
 | Create a transition | Drag the round **→** handle onto another state (drop it on the same state for a self transition) |
 | Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
 | Open a side effect list | Click any chip |
@@ -103,6 +104,7 @@ interface Transition {
   name: string;
   from: string; // state id
   to: string; // state id
+  labelOffset: { x: number; y: number }; // {0,0} = let the editor place it
   effects: SideEffectHooks; // around the transition itself
 }
 
@@ -126,6 +128,17 @@ Each state therefore owns four ordered lists (`enter · before`, `enter · after
 { kind: 'state', stateId: 'draft', trigger: 'enter' | 'leave', phase: 'before' | 'after' }
 { kind: 'transition', transitionId: 'pay', phase: 'before' | 'after' }
 ```
+
+### Laying out transitions
+
+Transitions between the same pair of states are fanned apart automatically, in both directions, so
+they never stack on top of each other. The fan spacing follows the measured card height.
+
+Dragging a transition card overrides that with a `labelOffset` relative to the automatic position —
+relative, so the card keeps its arrangement when the states move. The edge is then reshaped to pass
+through the card (`bendEdgeThrough` solves the Bézier control point for it), so a moved transition
+never floats away from its own line. Dropping the card within 16 px of the automatic spot resets the
+offset to `{ x: 0, y: 0 }`.
 
 ## Element API
 

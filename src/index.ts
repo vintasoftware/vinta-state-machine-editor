@@ -11,6 +11,8 @@ export type {
 export { SELECTION_CHANGE_EVENT, STATE_MACHINE_CHANGE_EVENT } from './events.js';
 export type { EdgeGeometry } from './geometry/edge.js';
 export {
+  bendEdgeThrough,
+  bendSelfEdgeThrough,
   borderPoint,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,

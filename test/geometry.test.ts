@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bendEdgeThrough,
+  bendSelfEdgeThrough,
   borderPoint,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
@@ -146,5 +148,56 @@ describe('gesture math', () => {
     expect(wheelZoomFactor(-100_000)).toBe(2);
     expect(wheelZoomFactor(100_000)).toBe(0.5);
     expect(wheelZoomFactor(-100, 2)).toBe(2);
+  });
+});
+
+describe('bending an edge through a point', () => {
+  const left = { x: 0, y: 0, width: 100, height: 60 };
+  const right = { x: 300, y: 0, width: 100, height: 60 };
+
+  it('puts the label exactly where it was asked to', () => {
+    for (const through of [
+      { x: 200, y: 200 },
+      { x: 200, y: -140 },
+      { x: 120, y: 30 },
+      { x: 640, y: 90 },
+    ]) {
+      const geometry = bendEdgeThrough(left, right, through);
+      expect(geometry.label.x).toBeCloseTo(through.x, 6);
+      expect(geometry.label.y).toBeCloseTo(through.y, 6);
+    }
+  });
+
+  it('still starts and ends on the node borders', () => {
+    const geometry = bendEdgeThrough(left, right, { x: 200, y: 220 });
+    expect(geometry.path.startsWith(`M ${geometry.source.x} ${geometry.source.y}`)).toBe(true);
+    const onLeftBorder =
+      geometry.source.x === left.x + left.width || geometry.source.y === left.y + left.height;
+    expect(onLeftBorder).toBe(true);
+    expect(geometry.target.x).toBeLessThanOrEqual(right.x + right.width);
+    expect(geometry.target.x).toBeGreaterThanOrEqual(right.x);
+  });
+
+  it('matches the straight edge when asked to pass through its midpoint', () => {
+    const straight = computeEdgeGeometry(left, right, 0);
+    const bent = bendEdgeThrough(left, right, straight.label);
+    expect(bent.label.x).toBeCloseTo(straight.label.x, 6);
+    expect(bent.label.y).toBeCloseTo(straight.label.y, 6);
+    expect(bent.source).toEqual(straight.source);
+    expect(bent.target).toEqual(straight.target);
+  });
+
+  it('bends a self transition through the point too', () => {
+    const through = { x: 260, y: -120 };
+    const geometry = bendSelfEdgeThrough(left, 0, through);
+    expect(geometry.label.x).toBeCloseTo(through.x, 6);
+    expect(geometry.label.y).toBeCloseTo(through.y, 6);
+    expect(geometry.path).toContain('C ');
+  });
+
+  it('leaves a self transition alone when aimed at its own midpoint', () => {
+    const auto = computeSelfEdgeGeometry(left, 1);
+    const bent = bendSelfEdgeThrough(left, 1, auto.label);
+    expect(bent.path).toBe(auto.path);
   });
 });

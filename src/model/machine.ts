@@ -43,12 +43,14 @@ export function createTransition(options: {
   readonly from: string;
   readonly to: string;
   readonly id?: string;
+  readonly labelOffset?: Point;
 }): Transition {
   return {
     id: options.id ?? createId('transition'),
     name: options.name,
     from: options.from,
     to: options.to,
+    labelOffset: options.labelOffset ?? { x: 0, y: 0 },
     effects: emptyHooks(),
   };
 }
@@ -132,14 +134,25 @@ export function addTransition(machine: StateMachine, transition: Transition): St
 export function updateTransition(
   machine: StateMachine,
   transitionId: string,
-  patch: { readonly name?: string; readonly from?: string; readonly to?: string },
+  patch: {
+    readonly name?: string;
+    readonly from?: string;
+    readonly to?: string;
+    readonly labelOffset?: Point;
+  },
 ): StateMachine {
   const current = requireTransition(machine, transitionId);
   const from = patch.from ?? current.from;
   const to = patch.to ?? current.to;
   requireState(machine, from);
   requireState(machine, to);
-  const next: Transition = { ...current, name: patch.name ?? current.name, from, to };
+  const next: Transition = {
+    ...current,
+    name: patch.name ?? current.name,
+    from,
+    to,
+    labelOffset: patch.labelOffset ?? current.labelOffset,
+  };
   return {
     ...machine,
     transitions: machine.transitions.map((transition) =>
@@ -281,6 +294,8 @@ export function describeChange(change: MachineChange): string {
       return 'Remove transition';
     case 'transition-rename':
       return 'Rename transition';
+    case 'transition-move':
+      return 'Move transition';
     case 'side-effects-change':
       return 'Change side effects';
     case 'replace':

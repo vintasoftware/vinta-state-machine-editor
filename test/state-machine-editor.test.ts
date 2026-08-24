@@ -6,8 +6,8 @@ import {
   StateMachineEditorElement,
   StateMachineError,
 } from '../src/index.js';
-import { getSideEffects } from '../src/model/machine.js';
-import type { MachineChange } from '../src/types.js';
+import { createTransition, getSideEffects } from '../src/model/machine.js';
+import type { MachineChange, Point } from '../src/types.js';
 import {
   CATALOG,
   fireKey,
@@ -136,7 +136,14 @@ describe('rendering', () => {
       editor.value = {
         states: [],
         transitions: [
-          { id: 't', name: 'x', from: 'ghost', to: 'ghost', effects: { before: [], after: [] } },
+          {
+            id: 't',
+            name: 'x',
+            from: 'ghost',
+            to: 'ghost',
+            labelOffset: { x: 0, y: 0 },
+            effects: { before: [], after: [] },
+          },
         ],
       };
     }).toThrow(StateMachineError);
@@ -474,6 +481,145 @@ describe('viewport', () => {
     const before = editor.viewport;
     editor.zoomToFit();
     expect(editor.viewport).toBe(before);
+  });
+});
+
+describe('parallel transitions', () => {
+  function machineWithParallelEdges(): ReturnType<typeof sampleMachine> {
+    const base = sampleMachine();
+    return {
+      ...base,
+      transitions: [
+        ...base.transitions,
+        createTransition({ id: 'retry', name: 'retry', from: 'draft', to: 'paid' }),
+        createTransition({ id: 'refund', name: 'refund', from: 'paid', to: 'draft' }),
+      ],
+    };
+  }
+
+  function cardCenters(editor: StateMachineEditorElement): readonly Point[] {
+    return queryAll(shadowOf(editor), '.edge-card').map((card) => ({
+      x: Number.parseFloat(card.style.left),
+      y: Number.parseFloat(card.style.top),
+    }));
+  }
+
+  it('fans transitions between the same pair apart, in both directions', () => {
+    const editor = mountEditor();
+    editor.value = machineWithParallelEdges();
+
+    const centers = cardCenters(editor);
+    expect(centers).toHaveLength(3);
+    for (let i = 0; i < centers.length; i += 1) {
+      for (let j = i + 1; j < centers.length; j += 1) {
+        const a = centers[i];
+        const b = centers[j];
+        if (a === undefined || b === undefined) {
+          throw new Error('missing card');
+        }
+        // Cards are around 64px tall, so anything closer would overlap.
+        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(70);
+      }
+    }
+  });
+
+  it('gives every edge of a pair its own path', () => {
+    const editor = mountEditor();
+    editor.value = machineWithParallelEdges();
+    const paths = queryAll(shadowOf(editor), '.edge-card').map((_, index) => {
+      const path = shadowOf(editor).querySelectorAll('path.edge')[index];
+      return path?.getAttribute('d') ?? '';
+    });
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+});
+
+describe('repositioning transitions', () => {
+  it('drags a transition card and bends its edge to follow', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+    const before = queryOne(shadow, '.edge-card');
+    const startLeft = Number.parseFloat(before.style.left);
+    const startTop = Number.parseFloat(before.style.top);
+
+    const header = queryOne(shadow, '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: startLeft, clientY: startTop });
+    firePointer(document, 'pointermove', { clientX: startLeft, clientY: startTop + 120 });
+    firePointer(document, 'pointerup', { clientX: startLeft, clientY: startTop + 120 });
+
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 120 });
+
+    const card = queryOne(shadow, '.edge-card');
+    expect(Number.parseFloat(card.style.top)).toBeCloseTo(startTop + 120, 5);
+    // The card sits on the curve's midpoint, so the curve went with it.
+    expect(querySvg(shadow, 'path.edge').getAttribute('d')).toContain('Q ');
+  });
+
+  it('reports the move as transient then committed', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded: { kind: string; transient: boolean }[] = [];
+    editor.addEventListener('state-machine-change', (event: StateMachineChangeEvent) => {
+      recorded.push({ kind: event.detail.change.kind, transient: event.detail.transient });
+    });
+
+    const header = queryOne(shadowOf(editor), '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: 0, clientY: 0 });
+    firePointer(document, 'pointermove', { clientX: 60, clientY: 90 });
+    firePointer(document, 'pointerup', { clientX: 60, clientY: 90 });
+
+    expect(recorded).toEqual([
+      { kind: 'transition-move', transient: true },
+      { kind: 'transition-move', transient: false },
+    ]);
+  });
+
+  it('snaps back to automatic placement when dropped near the edge', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const header = queryOne(shadowOf(editor), '.edge-card__header');
+
+    firePointer(header, 'pointerdown', { clientX: 0, clientY: 0 });
+    firePointer(document, 'pointermove', { clientX: 0, clientY: 120 });
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 120 });
+
+    firePointer(document, 'pointermove', { clientX: 4, clientY: 6 });
+    firePointer(document, 'pointerup', { clientX: 4, clientY: 6 });
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 0 });
+  });
+
+  it('keeps a moved card attached when its states move', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+    const header = queryOne(shadow, '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: 0, clientY: 0 });
+    firePointer(document, 'pointermove', { clientX: 0, clientY: 100 });
+    firePointer(document, 'pointerup', { clientX: 0, clientY: 100 });
+    const movedTop = Number.parseFloat(queryOne(shadow, '.edge-card').style.top);
+
+    // The offset is relative, so dragging the source state carries the card along.
+    const nodeHeader = queryOne(shadow, '.node .node__header');
+    firePointer(nodeHeader, 'pointerdown', { clientX: 10, clientY: 10 });
+    firePointer(document, 'pointermove', { clientX: 10, clientY: 210 });
+    firePointer(document, 'pointerup', { clientX: 10, clientY: 210 });
+
+    expect(Number.parseFloat(queryOne(shadow, '.edge-card').style.top)).toBeGreaterThan(movedTop);
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 100 });
+  });
+
+  it('does not move transitions in read-only mode', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.readOnly = true;
+
+    const header = queryOne(shadowOf(editor), '.edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: 0, clientY: 0 });
+    firePointer(document, 'pointermove', { clientX: 80, clientY: 80 });
+    firePointer(document, 'pointerup', { clientX: 80, clientY: 80 });
+
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 0 });
   });
 });
 

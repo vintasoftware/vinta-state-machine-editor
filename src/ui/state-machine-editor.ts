@@ -5,6 +5,8 @@ import type {
 } from '../events.js';
 import { SELECTION_CHANGE_EVENT, STATE_MACHINE_CHANGE_EVENT } from '../events.js';
 import {
+  bendEdgeThrough,
+  bendSelfEdgeThrough,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
   curvatureFor,
@@ -65,6 +67,9 @@ const FALLBACK_NODE_HEIGHT = 152;
 const ZOOM_STEP = 1.25;
 const GRID_SIZE = 24;
 const ADD_SIDE_EFFECT_LABEL = '+ Add side effect';
+/** Dropping a transition card this close to its edge snaps it back to automatic placement. */
+const LABEL_SNAP_DISTANCE = 16;
+const FALLBACK_LABEL_SPACING = 160;
 
 type HookKey = `${StateTrigger}:${SideEffectPhase}`;
 
@@ -110,7 +115,13 @@ type DragState =
       readonly offset: Point;
       readonly moved: boolean;
     }
-  | { readonly kind: 'link'; readonly fromId: string; readonly pointer: Point };
+  | { readonly kind: 'link'; readonly fromId: string; readonly pointer: Point }
+  | {
+      readonly kind: 'label';
+      readonly transitionId: string;
+      readonly grab: Point;
+      readonly moved: boolean;
+    };
 
 function hookRef(stateId: string, key: HookKey): SideEffectListRef {
   const [trigger, phase] = key.split(':');
@@ -740,6 +751,9 @@ export class StateMachineEditorElement extends HTMLElement {
       event.stopPropagation();
       this.#setSelection({ kind: 'transition', id: transitionId });
     });
+    header.addEventListener('pointerdown', (event) =>
+      this.#onLabelPointerDown(event, transitionId),
+    );
     name.addEventListener('dblclick', () => this.#renameTransition(transitionId));
     renameButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -762,6 +776,7 @@ export class StateMachineEditorElement extends HTMLElement {
     const selected = this.#selection?.kind === 'transition' && this.#selection.id === transition.id;
     view.path.classList.toggle('is-selected', selected);
     view.card.classList.toggle('is-selected', selected);
+    // The curve is bent to pass through the card, so the label point is the card.
     view.card.style.left = `${geometry.label.x}px`;
     view.card.style.top = `${geometry.label.y}px`;
     view.name.textContent = transition.name;
@@ -794,10 +809,67 @@ export class StateMachineEditorElement extends HTMLElement {
       siblings.findIndex((candidate) => candidate.id === transition.id),
       0,
     );
+    const moved = transition.labelOffset.x !== 0 || transition.labelOffset.y !== 0;
+
     if (transition.from === transition.to) {
-      return computeSelfEdgeGeometry(this.#rectFor(from), index);
+      const rect = this.#rectFor(from);
+      const auto = computeSelfEdgeGeometry(rect, index);
+      return moved ? bendSelfEdgeThrough(rect, index, this.#labelTarget(transition, auto)) : auto;
     }
-    return computeEdgeGeometry(this.#rectFor(from), this.#rectFor(to), curvatureFor(index));
+
+    const sourceRect = this.#rectFor(from);
+    const targetRect = this.#rectFor(to);
+    // The perpendicular flips with the edge direction, so a transition drawn the
+    // other way round has to invert its curvature to land on its own side of the
+    // pair instead of on top of a sibling.
+    const reversed = transition.from > transition.to;
+    const curvature = curvatureFor(index, this.#labelSpacing()) * (reversed ? -1 : 1);
+    const auto = computeEdgeGeometry(sourceRect, targetRect, curvature);
+    return moved
+      ? bendEdgeThrough(sourceRect, targetRect, this.#labelTarget(transition, auto))
+      : auto;
+  }
+
+  /** Where the user dragged the card to: the automatic point plus their offset. */
+  #labelTarget(transition: Transition, auto: EdgeGeometry): Point {
+    return {
+      x: auto.label.x + transition.labelOffset.x,
+      y: auto.label.y + transition.labelOffset.y,
+    };
+  }
+
+  /**
+   * How far apart parallel edges are fanned. A card sits at the midpoint of its
+   * curve, which is half the curvature off the straight line, so the spacing is
+   * twice the card height to keep neighbours from covering each other.
+   */
+  #labelSpacing(): number {
+    const [view] = this.#transitionViews.values();
+    const height = view?.card.offsetHeight ?? 0;
+    return Math.max((height + 16) * 2, FALLBACK_LABEL_SPACING);
+  }
+
+  /** The point a transition card would sit at if the user had not moved it. */
+  #autoLabelPoint(transition: Transition): Point {
+    const from = findState(this.#machine, transition.from);
+    if (from === undefined) {
+      return { x: 0, y: 0 };
+    }
+    const siblings = siblingTransitions(this.#machine, transition);
+    const index = Math.max(
+      siblings.findIndex((candidate) => candidate.id === transition.id),
+      0,
+    );
+    if (transition.from === transition.to) {
+      return computeSelfEdgeGeometry(this.#rectFor(from), index).label;
+    }
+    const to = findState(this.#machine, transition.to);
+    if (to === undefined) {
+      return { x: 0, y: 0 };
+    }
+    const reversed = transition.from > transition.to;
+    const curvature = curvatureFor(index, this.#labelSpacing()) * (reversed ? -1 : 1);
+    return computeEdgeGeometry(this.#rectFor(from), this.#rectFor(to), curvature).label;
   }
 
   // -- multi touch ----------------------------------------------------------
@@ -939,6 +1011,30 @@ export class StateMachineEditorElement extends HTMLElement {
     });
   }
 
+  #onLabelPointerDown(event: PointerEvent, transitionId: string): void {
+    if (event.button !== 0 || this.#readOnly || this.#pinch !== undefined) {
+      return;
+    }
+    if (isInteractiveTarget(event.target)) {
+      return;
+    }
+    const transition = findTransition(this.#machine, transitionId);
+    if (transition === undefined) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    this.#setSelection({ kind: 'transition', id: transitionId });
+    const pointer = this.#worldPoint(event);
+    const card = this.#geometryFor(transition).label;
+    this.#beginDrag({
+      kind: 'label',
+      transitionId,
+      grab: { x: pointer.x - card.x, y: pointer.y - card.y },
+      moved: false,
+    });
+  }
+
   #onLinkPointerDown(event: PointerEvent, stateId: string): void {
     if (event.button !== 0 || this.#readOnly || this.#pinch !== undefined) {
       return;
@@ -994,9 +1090,42 @@ export class StateMachineEditorElement extends HTMLElement {
       );
       return;
     }
+    if (drag.kind === 'label') {
+      const offset = this.#labelOffsetFor(drag, event);
+      if (offset !== undefined) {
+        this.#drag = { ...drag, moved: true };
+        this.#commit(
+          updateTransition(this.#machine, drag.transitionId, { labelOffset: offset }),
+          { kind: 'transition-move', transitionId: drag.transitionId },
+          true,
+        );
+      }
+      return;
+    }
     this.#drag = { ...drag, pointer: this.#worldPoint(event) };
     this.#updatePreview();
   };
+
+  /**
+   * Offset of the dragged card from where it would sit automatically. Dropping it
+   * back near that spot snaps to zero, which hands placement back to the editor.
+   */
+  #labelOffsetFor(
+    drag: { readonly transitionId: string; readonly grab: Point },
+    event: { readonly clientX: number; readonly clientY: number },
+  ): Point | undefined {
+    const transition = findTransition(this.#machine, drag.transitionId);
+    if (transition === undefined) {
+      return undefined;
+    }
+    const pointer = this.#worldPoint(event);
+    const anchor = this.#autoLabelPoint(transition);
+    const offset = {
+      x: Math.round(pointer.x - drag.grab.x - anchor.x),
+      y: Math.round(pointer.y - drag.grab.y - anchor.y),
+    };
+    return Math.hypot(offset.x, offset.y) < LABEL_SNAP_DISTANCE ? { x: 0, y: 0 } : offset;
+  }
 
   #onPointerUp = (event: PointerEvent): void => {
     const drag = this.#drag;
@@ -1014,6 +1143,18 @@ export class StateMachineEditorElement extends HTMLElement {
         );
         return;
       }
+    }
+    if (drag.kind === 'label' && drag.moved) {
+      const offset = this.#labelOffsetFor(drag, event);
+      this.#endDrag();
+      if (offset !== undefined) {
+        this.#commit(
+          updateTransition(this.#machine, drag.transitionId, { labelOffset: offset }),
+          { kind: 'transition-move', transitionId: drag.transitionId },
+          false,
+        );
+      }
+      return;
     }
     if (drag.kind === 'link') {
       const target = this.#stateAt(this.#worldPoint(event));
