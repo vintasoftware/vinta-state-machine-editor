@@ -22,6 +22,7 @@
   },
   "type": "module",
   "sideEffects": [
+    "./dist/bundled.js",
     "./dist/register.js"
   ],
   "exports": {
@@ -32,6 +33,10 @@
     "./register": {
       "types": "./dist/register.d.ts",
       "import": "./dist/register.js"
+    },
+    "./bundled": {
+      "types": "./dist/bundled.d.ts",
+      "import": "./dist/bundled.js"
     },
     "./package.json": "./package.json"
   },
@@ -67,7 +72,10 @@
     "demo:build": "vite build",
     "demo:serve": "node scripts/serve-demo.ts",
     "demo": "npm run demo:build && npm run demo:serve",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build:types && npm run build:bundled",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:bundled": "vite build -c vite.bundled.config.ts",
+    "verify:bundled": "node scripts/check-bundled.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -77,7 +85,7 @@
     "format": "biome format --write",
     "check": "npm run lint && npm run typecheck && npm run test",
     "prepare": "husky",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm run verify:bundled"
   },
   "lint-staged": {
     "*.{ts,js,json,jsonc,css,html,md}": [

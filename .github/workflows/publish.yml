@@ -46,6 +46,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify the bundled entry point
+        run: npm run verify:bundled
+
       - name: Publish
         if: github.event_name == 'release' || inputs.dry-run == false
         run: npm publish --provenance --access public

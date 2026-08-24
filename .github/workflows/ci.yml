@@ -41,6 +41,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      # dist/bundled.js is the no-bundler route: one file, no bare specifiers.
+      # A config change that breaks that only shows up on the host, so assert it here.
+      - name: Verify the bundled entry point
+        run: npm run verify:bundled
+
       - name: Upload coverage
         if: matrix.node == '24'
         uses: actions/upload-artifact@v7

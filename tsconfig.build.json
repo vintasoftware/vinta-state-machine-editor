@@ -6,5 +6,7 @@
     "rootDir": "src",
     "removeComments": false
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Built by vite.bundled.config.ts instead, which writes dist/bundled.js itself.
+  "exclude": ["src/bundled.ts"]
 }

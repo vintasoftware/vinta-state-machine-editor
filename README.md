@@ -67,6 +67,10 @@ import { defineStateMachineEditor } from 'vinta-state-machine-editor';
 defineStateMachineEditor('order-flow-editor');
 ```
 
+Both of those imports are bare specifiers and need a bundler. If your host serves JavaScript
+verbatim out of a static directory, use the single-file build instead — see
+[No build step](#no-build-step).
+
 ## Interactions
 
 | Action | Gesture |
@@ -288,6 +292,66 @@ import 'vinta-state-machine-editor/register';
 
 For Angular, add `CUSTOM_ELEMENTS_SCHEMA` and bind with `[value]`/`(state-machine-change)`.
 
+## No build step
+
+`vinta-state-machine-editor/register` imports CodeMirror by bare specifier, so it needs a bundler
+(or an import map) to resolve. Hosts that serve files verbatim out of a static directory — the
+Django admin, Rails' `public/`, a plain nginx root — have neither: the component loads fine and
+then throws `Failed to resolve module specifier "@codemirror/commands"` the moment someone opens a
+side effect's **JSON** tab.
+
+`vinta-state-machine-editor/bundled` is that same registration in a single self-contained file.
+Every dependency is inlined and the lazy CodeMirror chunk is flattened in, so it resolves nothing
+at runtime and issues no request of its own.
+
+Copy one file out of the package:
+
+```bash
+cp node_modules/vinta-state-machine-editor/dist/bundled.js static/vendor/
+```
+
+Then point a plain module script at it:
+
+```html
+<state-machine-editor id="editor" style="height: 600px"></state-machine-editor>
+
+<script type="module">
+  import './vendor/bundled.js'; // Django: "{% static 'vendor/bundled.js' %}"
+
+  const editor = document.querySelector('#editor');
+  editor.sideEffectProvider = async () => (await fetch('/api/side-effects')).json();
+  editor.value = machine;
+  editor.addEventListener('state-machine-change', (event) => {
+    if (!event.detail.transient) save(event.detail.value);
+  });
+</script>
+```
+
+`dist/bundled.js` is the only file to copy. There is no sibling chunk and no source map to 404 on,
+and the URL it is served from does not matter.
+
+The element API is identical — the page above is the [Quick start](#quick-start) with a relative
+path in place of the bare specifier. Everything else in this README applies unchanged.
+
+### What it costs
+
+| | `./register` (bundler) | `./bundled` (no bundler) |
+| --- | --- | --- |
+| Files to serve | your bundler's output | `bundled.js`, and nothing else |
+| Loaded up front | 67.1 kB → **19.0 kB gzipped** | 408.1 kB → **130.7 kB gzipped** |
+| Loaded on first **JSON** tab | 339.4 kB → 110.1 kB gzipped | — already there |
+| Total over the wire | 406.5 kB → 129.1 kB gzipped | 408.1 kB → 130.7 kB gzipped |
+
+Same bytes overall; the difference is *when*. The bundler route keeps CodeMirror out of the initial
+download and fetches it on first use. The bundled route pays for it up front, every load, even for
+the sessions that never open a JSON tab.
+
+That is the deliberate trade. Keeping the split would have meant emitting a second file with a
+stable name and asking every host to copy it too — a step that is easy to miss, and whose failure
+mode is a runtime error in one tab of one dialog rather than a broken build. One file cannot be
+half-deployed. If the eager 130 kB matters more to you than that, use a bundler and the `./register`
+export, which is unchanged and still code-split.
+
 ## Styling
 
 The component ships a self-contained light/dark theme driven by CSS custom properties, all
@@ -324,17 +388,26 @@ Consumers install CodeMirror transitively (`@codemirror/state`, `view`, `command
 `lang-json`, `lint` and `@lezer/highlight`). The dialog reaches it through a dynamic `import()`, and
 nothing else in the package references it, so bundlers put it in its own chunk that is fetched the
 first time someone opens the JSON tab. In this repo's demo build that is 67 kB up front (19 kB
-gzipped) with CodeMirror's 339 kB in a separate chunk.
+gzipped) with CodeMirror's 339 kB in a separate chunk. Hosts without a bundler take the
+[other route](#no-build-step) instead.
 
 ```bash
 npm install
-npm run dev        # interactive demo at http://localhost:5173
-npm test           # vitest
+npm run dev            # interactive demo at http://localhost:5173
+npm test               # vitest
 npm run coverage
-npm run lint       # biome (lint + format check)
-npm run typecheck  # tsc --noEmit
-npm run build      # dist/ (ESM + .d.ts)
+npm run lint           # biome (lint + format check)
+npm run typecheck      # tsc --noEmit
+npm run build          # dist/: tsc output, then dist/bundled.js
+npm run verify:bundled # assert dist/bundled.js resolves nothing at runtime
 ```
+
+`npm run build` is two steps. `tsc` emits the module graph that `.` and `./register` point at,
+then [`vite.bundled.config.ts`](vite.bundled.config.ts) adds the single-file `./bundled` export
+beside it — different entry, different filenames, so neither overwrites the other.
+`npm run verify:bundled` re-reads that file and fails if a bare specifier or a second chunk ever
+comes back; CI and `prepublishOnly` both run it, since that breakage is invisible until it reaches
+a host.
 
 `npm run dev` serves [`dev/`](dev/): a full order-fulfilment machine, a fake side-effect endpoint
 with latency, a read-only toggle, a live event log and the live JSON value.
