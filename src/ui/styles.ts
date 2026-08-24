@@ -108,8 +108,16 @@ export const editorStyles: string = `
     top: 0;
     left: 0;
     transform-origin: 0 0;
-    will-change: transform;
   }
+
+  /*
+   * will-change promotes the world to its own compositor layer, which makes a
+   * gesture cheap but freezes the layer's raster: zooming then scales that
+   * bitmap and the text goes soft. It is therefore only hinted while a gesture
+   * is running, and dropped afterwards so the browser re-renders text at the
+   * settled scale.
+   */
+  .world.is-transforming { will-change: transform; }
 
   .edges {
     position: absolute;

@@ -78,6 +78,8 @@ const FALLBACK_NODE_HEIGHT = 152;
 const ZOOM_STEP = 1.25;
 const GRID_SIZE = 24;
 const ADD_SIDE_EFFECT_LABEL = '+ Add side effect';
+/** How long after the last viewport change the canvas is considered settled. */
+const TRANSFORM_SETTLE_MS = 180;
 /** Dropping a transition card this close to its edge snaps it back to automatic placement. */
 const LABEL_SNAP_DISTANCE = 16;
 const FALLBACK_LABEL_SPACING = 160;
@@ -192,6 +194,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #provider: SideEffectProvider | undefined;
   #readOnly = false;
   #drag: DragState | undefined;
+  #settleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Every pointer currently down on the canvas, in viewport-local coordinates. */
   readonly #pointers = new Map<number, Point>();
   #pinch: PinchState | undefined;
@@ -300,6 +303,10 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   disconnectedCallback(): void {
+    if (this.#settleTimer !== undefined) {
+      clearTimeout(this.#settleTimer);
+      this.#settleTimer = undefined;
+    }
     this.#endDrag();
     this.#endPinch();
     this.#pointers.clear();
@@ -551,6 +558,22 @@ export class StateMachineEditorElement extends HTMLElement {
   #setViewport(viewport: Viewport): void {
     this.#viewport = viewport;
     this.#applyViewport();
+    this.#markTransforming();
+  }
+
+  /**
+   * Keeps the compositor hint on for the duration of a gesture only. Leaving it
+   * on permanently keeps the layer's raster frozen, so zoomed text stays soft.
+   */
+  #markTransforming(): void {
+    this.#world.classList.add('is-transforming');
+    if (this.#settleTimer !== undefined) {
+      clearTimeout(this.#settleTimer);
+    }
+    this.#settleTimer = setTimeout(() => {
+      this.#settleTimer = undefined;
+      this.#world.classList.remove('is-transforming');
+    }, TRANSFORM_SETTLE_MS);
   }
 
   #viewportCenter(): Point {
