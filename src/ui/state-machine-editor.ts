@@ -30,6 +30,18 @@ import {
   zoomTo,
 } from '../geometry/viewport.js';
 import {
+  canRedo,
+  canUndo,
+  createHistory,
+  type History,
+  type HistoryStep,
+  pendingRedo,
+  pendingUndo,
+  recordHistory,
+  redoHistory,
+  undoHistory,
+} from '../model/history.js';
+import {
   addState,
   addTransition,
   createEmptyMachine,
@@ -87,6 +99,7 @@ import {
   describeElement,
   describeSideEffectList,
   describeSource,
+  historyLabel,
   shortHookLabel,
 } from './labels.js';
 import type { OrderContext, PropertiesDraft } from './properties-dialog.js';
@@ -159,6 +172,8 @@ interface StateView {
   readonly roleButtons: ReadonlyMap<StateRole, HTMLButtonElement>;
   readonly header: HTMLElement;
   readonly name: HTMLElement;
+  /** Rail of card tools, floating clear of the card so the name keeps the header. */
+  readonly actions: HTMLElement;
   readonly renameButton: HTMLButtonElement;
   readonly propertiesButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
@@ -172,6 +187,8 @@ interface TransitionView {
   readonly path: SVGPathElement;
   readonly card: HTMLElement;
   readonly name: HTMLElement;
+  /** Rail of card tools, floating clear of the card so the name keeps the header. */
+  readonly actions: HTMLElement;
   readonly renameButton: HTMLButtonElement;
   readonly propertiesButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
@@ -246,6 +263,37 @@ function selectionExists(machine: StateMachine, selection: Selection): boolean {
     : findTransition(machine, selection.id) !== undefined;
 }
 
+type HistoryCommand = 'undo' | 'redo';
+
+/**
+ * Which history command a key press asks for, if any. `Ctrl`+`Y` is in there
+ * because that is where Windows apps put redo; `Alt` is not ours to claim.
+ */
+function historyShortcut(event: KeyboardEvent): HistoryCommand | undefined {
+  if (event.altKey || !(event.metaKey || event.ctrlKey)) {
+    return undefined;
+  }
+  const key = event.key.toLowerCase();
+  if (key === 'z') {
+    return event.shiftKey ? 'redo' : 'undo';
+  }
+  return key === 'y' && !event.shiftKey ? 'redo' : undefined;
+}
+
+/** Apple keyboards spell the modifiers with symbols, so the hints differ. */
+function isApplePlatform(): boolean {
+  const agent = globalThis.navigator?.userAgent;
+  return agent !== undefined && /Mac|iPhone|iPad|iPod/.test(agent);
+}
+
+/** What to print in a control's tooltip for a history command. */
+function historyHint(command: HistoryCommand): string {
+  if (isApplePlatform()) {
+    return command === 'undo' ? '\u2318Z' : '\u21e7\u2318Z';
+  }
+  return command === 'undo' ? 'Ctrl+Z' : 'Ctrl+Shift+Z';
+}
+
 function containsPoint(rect: Rect, point: Point): boolean {
   return (
     point.x >= rect.x &&
@@ -272,10 +320,21 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #emptyState: HTMLElement;
   readonly #zoomLabel: HTMLButtonElement;
   readonly #addStateButton: HTMLButtonElement;
+  readonly #undoButton: HTMLButtonElement;
+  readonly #redoButton: HTMLButtonElement;
   readonly #stateViews = new Map<string, StateView>();
   readonly #transitionViews = new Map<string, TransitionView>();
 
   #machine: StateMachine = createEmptyMachine();
+  #history: History = createHistory();
+  /**
+   * The machine as of the last recorded step. Transient commits — the frames of
+   * a drag — move `#machine` without moving this, so a whole gesture folds into
+   * the single undo step its final commit records.
+   */
+  #historyBase: StateMachine = this.#machine;
+  /** Set while several commits are being folded into one step. */
+  #batch: { readonly base: StateMachine; readonly change: MachineChange | undefined } | undefined;
   #viewport: Viewport = createViewport();
   #selection: Selection = null;
   #provider: SideEffectProvider | undefined;
@@ -296,9 +355,12 @@ export class StateMachineEditorElement extends HTMLElement {
   #trackingPointers = false;
   #dialog: SideEffectsDialogElement | undefined;
   #propertiesDialog: PropertiesDialogElement | undefined;
-  #renameCleanup: (() => void) | undefined;
-  /** Id of the state or transition whose name is currently being edited. */
-  #renamingId: string | undefined;
+  /**
+   * The open inline name editors, keyed by the state or transition they edit.
+   * Several can be open at once: an edit only ends when its own save or cancel
+   * is pressed, so starting one elsewhere must not throw the first one away.
+   */
+  readonly #renameEditors = new Map<string, HTMLInputElement>();
 
   constructor() {
     super();
@@ -355,6 +417,18 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: toolbar,
       text: 'Add state',
     });
+    this.#undoButton = createButton({
+      className: 'toolbar__history',
+      parent: toolbar,
+      text: '↶',
+      attrs: { 'aria-label': 'Undo' },
+    });
+    this.#redoButton = createButton({
+      className: 'toolbar__history',
+      parent: toolbar,
+      text: '↷',
+      attrs: { 'aria-label': 'Redo' },
+    });
     const zoomOut = createButton({
       parent: toolbar,
       text: '−',
@@ -375,6 +449,12 @@ export class StateMachineEditorElement extends HTMLElement {
 
     this.#addStateButton.addEventListener('click', () => {
       this.addState();
+    });
+    this.#undoButton.addEventListener('click', () => {
+      this.undo();
+    });
+    this.#redoButton.addEventListener('click', () => {
+      this.redo();
     });
     zoomOut.addEventListener('click', () => this.zoomOut());
     zoomIn.addEventListener('click', () => this.zoomIn());
@@ -426,13 +506,30 @@ export class StateMachineEditorElement extends HTMLElement {
    * inspector panel can write edits back without the panel closing under the
    * user. A selection that no longer exists is dropped, and that drop is
    * announced with `state-machine-selection-change`.
+   *
+   * Assigning a *different* machine replaces the document, so the undo history
+   * is cleared with it — there is nothing sensible for undo to put back once
+   * the host has swapped what is being edited. Assigning the machine already in
+   * place, which is what a host echoing `state-machine-change` back does, leaves
+   * the history untouched.
    */
   get value(): StateMachine {
     return this.#machine;
   }
 
   set value(machine: StateMachine) {
-    this.#machine = assertStateMachine(machine);
+    // A host handing back the machine it just received from
+    // `state-machine-change` is not replacing the document — that is the same
+    // edit coming home — so the identity check keeps undo alive for every host
+    // that renders the editor from its own state. It is made against the input,
+    // before validation rebuilds it into a machine of its own.
+    const echoed = machine === this.#machine;
+    const next = assertStateMachine(machine);
+    if (!echoed) {
+      this.#history = createHistory();
+      this.#historyBase = next;
+    }
+    this.#machine = next;
     const dropped = this.#selection !== null && !selectionExists(this.#machine, this.#selection);
     if (dropped) {
       this.#selection = null;
@@ -591,6 +688,41 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#renameTransition(selection.id);
   }
 
+  /** Whether there is a recorded step to take back. */
+  get canUndo(): boolean {
+    return canUndo(this.#history);
+  }
+
+  /** Whether an undone step is waiting to be put back. */
+  get canRedo(): boolean {
+    return canRedo(this.#history);
+  }
+
+  /**
+   * Takes the last change back, emitting one `state-machine-change` of kind
+   * `replace` — the whole machine is swapped, not one field of it. Returns
+   * `false` when there was nothing to undo.
+   */
+  undo(): boolean {
+    return this.#travel(undoHistory(this.#history, this.#machine));
+  }
+
+  /** Puts the last undone change back. Returns `false` when there was none. */
+  redo(): boolean {
+    return this.#travel(redoHistory(this.#history, this.#machine));
+  }
+
+  /**
+   * Forgets every recorded step, keeping the machine as it stands. Hosts that
+   * own their own history, or that treat the current machine as a fresh
+   * document (a save, a load), call this to start counting again.
+   */
+  clearHistory(): void {
+    this.#history = createHistory();
+    this.#historyBase = this.#machine;
+    this.#render();
+  }
+
   zoomIn(): void {
     this.#setViewport(zoomBy(this.#viewport, ZOOM_STEP, this.#viewportCenter()));
   }
@@ -718,6 +850,11 @@ export class StateMachineEditorElement extends HTMLElement {
 
   // -- internals ------------------------------------------------------------
 
+  /** True while either dialog sits in the shadow tree, which is to say: is open. */
+  #dialogOpen(): boolean {
+    return this.#dialog?.isConnected === true || this.#propertiesDialog?.isConnected === true;
+  }
+
   #ensureDialog(): SideEffectsDialogElement {
     const existing = this.#dialog;
     if (existing !== undefined) {
@@ -789,6 +926,12 @@ export class StateMachineEditorElement extends HTMLElement {
    * granular changes, so a save that touched three fields emits three events.
    */
   #applyProperties(ref: ElementRef, before: PropertiesDraft, after: PropertiesDraft): void {
+    this.#asOneStep(() => {
+      this.#writeProperties(ref, before, after);
+    });
+  }
+
+  #writeProperties(ref: ElementRef, before: PropertiesDraft, after: PropertiesDraft): void {
     if (ref.kind === 'state') {
       if (after.description !== before.description) {
         this.#commit(setStateDescription(this.#machine, ref.id, after.description), {
@@ -832,14 +975,84 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   #commit(next: StateMachine, change: MachineChange, transient = false): void {
+    if (!transient) {
+      this.#recordStep(next, change);
+    }
     this.#machine = next;
     this.#render();
+    this.#emitChange(next, change, transient);
+  }
+
+  #emitChange(value: StateMachine, change: MachineChange, transient: boolean): void {
     const event: StateMachineChangeEvent = new CustomEvent(STATE_MACHINE_CHANGE_EVENT, {
-      detail: { value: next, change, transient },
+      detail: { value, change, transient },
       bubbles: true,
       composed: true,
     });
     this.dispatchEvent(event);
+  }
+
+  /**
+   * Files one undoable step, from the last stable machine to `next`. A batch in
+   * progress swallows it: the first change it sees names the whole batch, and
+   * {@link StateMachineEditorElement.#asOneStep} records it on the way out.
+   */
+  #recordStep(next: StateMachine, change: MachineChange): void {
+    const batch = this.#batch;
+    if (batch !== undefined) {
+      if (batch.change === undefined) {
+        this.#batch = { base: batch.base, change };
+      }
+      return;
+    }
+    this.#history = recordHistory(this.#history, { machine: this.#historyBase, change });
+    this.#historyBase = next;
+  }
+
+  /**
+   * Folds every commit `run` makes into a single undo step. Saving the
+   * properties dialog emits one change event per edited field on purpose, but
+   * one save is still one thing the user did, and one undo should take all of
+   * it back.
+   */
+  #asOneStep(run: () => void): void {
+    if (this.#batch !== undefined) {
+      run();
+      return;
+    }
+    const base = this.#historyBase;
+    this.#batch = { base, change: undefined };
+    try {
+      run();
+    } finally {
+      const batch = this.#batch;
+      this.#batch = undefined;
+      const change = batch?.change;
+      if (change !== undefined) {
+        this.#history = recordHistory(this.#history, { machine: base, change });
+      }
+      this.#historyBase = this.#machine;
+    }
+  }
+
+  /** Moves to where a history step lands, announcing it as a whole-machine swap. */
+  #travel(step: HistoryStep | undefined): boolean {
+    if (step === undefined) {
+      return false;
+    }
+    this.#history = step.history;
+    this.#historyBase = step.machine;
+    this.#machine = step.machine;
+    const dropped = this.#selection !== null && !selectionExists(step.machine, this.#selection);
+    if (dropped) {
+      this.#selection = null;
+    }
+    this.#render();
+    this.#emitChange(step.machine, { kind: 'replace' }, false);
+    if (dropped) {
+      this.#emitSelectionChange(null);
+    }
+    return true;
   }
 
   #setSelection(selection: Selection): void {
@@ -1144,6 +1357,21 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#applyViewport();
     this.#emptyState.hidden = this.#machine.states.length > 0;
     this.#addStateButton.disabled = this.#readOnly;
+    this.#renderHistoryButtons();
+  }
+
+  /** Keeps the undo/redo pair disabled and named after what they would do. */
+  #renderHistoryButtons(): void {
+    const pending: readonly [HistoryCommand, HTMLButtonElement, MachineChange | undefined][] = [
+      ['undo', this.#undoButton, pendingUndo(this.#history)],
+      ['redo', this.#redoButton, pendingRedo(this.#history)],
+    ];
+    for (const [command, button, change] of pending) {
+      const label = historyLabel(command === 'undo' ? 'Undo' : 'Redo', change);
+      button.disabled = this.#readOnly || change === undefined;
+      button.setAttribute('aria-label', label);
+      button.title = `${label} (${historyHint(command)})`;
+    }
   }
 
   #applyViewport(): void {
@@ -1168,6 +1396,8 @@ export class StateMachineEditorElement extends HTMLElement {
         view.root.remove();
         view.startMarker.remove();
         this.#stateViews.delete(id);
+        // Any open name editor left the DOM with the card it was inside.
+        this.#renameEditors.delete(id);
       }
     }
   }
@@ -1238,9 +1468,19 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const header = createElement('div', { className: 'node__header', parent: root });
     const name = createElement('span', { className: 'node__name', parent: header });
+    /*
+     * The tools ride in a rail floating above the card rather than in the header
+     * beside the name: four hit targets and a name shared one line, which left
+     * the name a couple of characters. The rail costs the card no width at all.
+     */
+    const actions = createElement('div', {
+      className: 'card-actions',
+      parent: root,
+      attrs: { part: 'card-actions', role: 'toolbar' },
+    });
     const colorButton = createButton({
       className: 'node__color',
-      parent: header,
+      parent: actions,
       attrs: { 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
     });
     colorButton.addEventListener('click', (event) => {
@@ -1249,13 +1489,13 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const renameButton = createButton({
       className: 'icon-button node__rename',
-      parent: header,
+      parent: actions,
       text: '✎',
       attrs: { 'aria-label': 'Rename state', title: 'Rename (F2)' },
     });
     const propertiesButton = createButton({
       className: 'icon-button node__properties',
-      parent: header,
+      parent: actions,
       text: '⚙',
       attrs: { 'aria-label': 'State properties', title: 'Properties' },
     });
@@ -1265,7 +1505,7 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const removeButton = createButton({
       className: 'icon-button node__remove',
-      parent: header,
+      parent: actions,
       text: '✕',
       attrs: { 'aria-label': 'Remove state' },
     });
@@ -1380,6 +1620,7 @@ export class StateMachineEditorElement extends HTMLElement {
       swatches,
       header,
       name,
+      actions,
       renameButton,
       propertiesButton,
       removeButton,
@@ -1399,8 +1640,12 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#selection?.kind === 'state' && this.#selection.id === state.id,
     );
     view.name.textContent = state.name;
-    const editing = this.#renamingId === state.id;
+    const editing = this.#renameEditors.has(state.id);
     view.name.hidden = editing;
+    // The rename editor carries its own save and cancel, so the rail would only
+    // repeat the tools it disables — it steps aside for the length of the edit.
+    view.actions.hidden = editing;
+    view.actions.setAttribute('aria-label', `Tools for “${state.name}”`);
     view.renameButton.hidden = this.#readOnly || editing;
     // Properties stay reachable read-only, exactly like the side effect chips.
     view.propertiesButton.hidden = editing;
@@ -1556,6 +1801,7 @@ export class StateMachineEditorElement extends HTMLElement {
         view.path.remove();
         view.card.remove();
         this.#transitionViews.delete(id);
+        this.#renameEditors.delete(id);
       }
     }
   }
@@ -1573,15 +1819,22 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const header = createElement('div', { className: 'edge-card__header', parent: card });
     const name = createElement('span', { className: 'edge-card__name', parent: header });
+    // Above the card, like a state's: these cards are narrower still, so the
+    // name needs every pixel of the header it can keep.
+    const actions = createElement('div', {
+      className: 'card-actions',
+      parent: card,
+      attrs: { part: 'card-actions', role: 'toolbar' },
+    });
     const renameButton = createButton({
       className: 'icon-button edge-card__rename',
-      parent: header,
+      parent: actions,
       text: '✎',
       attrs: { 'aria-label': 'Rename transition', title: 'Rename (F2)' },
     });
     const propertiesButton = createButton({
       className: 'icon-button edge-card__properties',
-      parent: header,
+      parent: actions,
       text: '⚙',
       attrs: { 'aria-label': 'Transition properties', title: 'Properties' },
     });
@@ -1591,7 +1844,7 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const removeButton = createButton({
       className: 'icon-button edge-card__remove',
-      parent: header,
+      parent: actions,
       text: '✕',
       attrs: { 'aria-label': 'Remove transition' },
     });
@@ -1641,6 +1894,7 @@ export class StateMachineEditorElement extends HTMLElement {
       path,
       card,
       name,
+      actions,
       renameButton,
       propertiesButton,
       removeButton,
@@ -1662,8 +1916,10 @@ export class StateMachineEditorElement extends HTMLElement {
     view.card.style.top = `${geometry.label.y}px`;
     view.name.textContent = transition.name;
     view.card.classList.toggle('is-creation', transition.from === null);
-    const editing = this.#renamingId === transition.id;
+    const editing = this.#renameEditors.has(transition.id);
     view.name.hidden = editing;
+    view.actions.hidden = editing;
+    view.actions.setAttribute('aria-label', `Tools for “${transition.name}”`);
     view.renameButton.hidden = this.#readOnly || editing;
     view.propertiesButton.hidden = editing;
     view.removeButton.hidden = this.#readOnly || editing;
@@ -2107,7 +2363,19 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#closePalette();
       return;
     }
-    if (this.#readOnly || isInteractiveTarget(event.target)) {
+    // A dialog is a modal of its own: while one is open every key belongs to it,
+    // ⌘Z included, and nothing here should reach the canvas behind it.
+    if (this.#readOnly || isInteractiveTarget(event.target) || this.#dialogOpen()) {
+      return;
+    }
+    const command = historyShortcut(event);
+    if (command !== undefined) {
+      event.preventDefault();
+      if (command === 'undo') {
+        this.undo();
+      } else {
+        this.redo();
+      }
       return;
     }
     const selection = this.#selection;
@@ -2150,7 +2418,6 @@ export class StateMachineEditorElement extends HTMLElement {
       label: view.name,
       current: state.name,
       ariaLabel: 'State name',
-      controls: [view.renameButton, view.removeButton],
       commit: (name) => {
         this.#commit(updateState(this.#machine, stateId, { name }), {
           kind: 'state-rename',
@@ -2171,7 +2438,6 @@ export class StateMachineEditorElement extends HTMLElement {
       label: view.name,
       current: transition.name,
       ariaLabel: 'Transition name',
-      controls: [view.renameButton, view.removeButton],
       commit: (name) => {
         this.#commit(updateTransition(this.#machine, transitionId, { name }), {
           kind: 'transition-rename',
@@ -2184,17 +2450,23 @@ export class StateMachineEditorElement extends HTMLElement {
   /**
    * Swaps the name for an input plus save/cancel buttons. The buttons exist so the
    * gesture works on touch, where there is no Enter key in reach and no Escape at all.
+   * The editor stays open until the user resolves it: Enter or save commits,
+   * Escape or cancel discards, and clicking elsewhere does neither.
    */
   #startRename(options: {
     readonly id: string;
     readonly label: HTMLElement;
     readonly current: string;
     readonly ariaLabel: string;
-    readonly controls: readonly HTMLElement[];
     readonly commit: (name: string) => void;
   }): void {
-    this.#renameCleanup?.();
-    this.#renamingId = options.id;
+    const open = this.#renameEditors.get(options.id);
+    if (open !== undefined) {
+      // Reopening the same editor would drop whatever has been typed into it.
+      open.focus();
+      open.select();
+      return;
+    }
 
     const editor = createElement('span', { className: 'name-edit' });
     const input = createElement('input', { className: 'name-input' });
@@ -2212,29 +2484,22 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     editor.append(input, save, cancel);
 
-    options.label.hidden = true;
-    for (const control of options.controls) {
-      control.hidden = true;
-    }
     options.label.after(editor);
+    this.#renameEditors.set(options.id, input);
+    // The card's own render owns which of its parts an open editor hides, so
+    // both ends of the gesture go through it rather than toggling by hand.
+    this.#render();
     input.focus();
     input.select();
 
-    let finished = false;
     const cleanup = (): void => {
-      if (finished) {
+      if (this.#renameEditors.get(options.id) !== input) {
         return;
       }
-      finished = true;
-      this.#renameCleanup = undefined;
-      this.#renamingId = undefined;
+      this.#renameEditors.delete(options.id);
       editor.remove();
-      options.label.hidden = false;
-      for (const control of options.controls) {
-        control.hidden = this.#readOnly;
-      }
+      this.#render();
     };
-    this.#renameCleanup = cleanup;
 
     const confirm = (): void => {
       const name = input.value.trim();
@@ -2254,13 +2519,12 @@ export class StateMachineEditorElement extends HTMLElement {
         cleanup();
       }
     });
-    input.addEventListener('blur', confirm);
     input.addEventListener('pointerdown', (event) => event.stopPropagation());
     input.addEventListener('dblclick', (event) => event.stopPropagation());
 
     for (const button of [save, cancel]) {
-      // Keep focus in the input so the blur handler does not commit before the
-      // click lands — which would make Cancel save instead of discarding.
+      // Keep the caret in the field so a press on either button reads as part of
+      // the same edit rather than moving focus out of it.
       button.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         event.stopPropagation();

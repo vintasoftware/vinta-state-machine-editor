@@ -89,6 +89,38 @@ describe('rendering', () => {
     expect(nodes[1]?.style.top).toBe('0px');
   });
 
+  it('keeps the card tools out of the header, so the name has the line to itself', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+
+    // The header holds the name and, while one is open, the rename editor.
+    expect(queryAll(shadow, '.node .node__header button')).toHaveLength(0);
+    expect(queryAll(shadow, '.edge-card__header button')).toHaveLength(0);
+    const stateRail = queryAll(shadow, '.node .card-actions')[0] ?? shadow;
+    expect(queryAll(stateRail, 'button').map((button) => button.className)).toEqual([
+      'node__color',
+      'icon-button node__rename',
+      'icon-button node__properties',
+      'icon-button node__remove',
+    ]);
+    expect(queryAll(shadow, '.edge-card .card-actions button')).toHaveLength(3);
+  });
+
+  it('stands the tool rail down while its card is being renamed', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    const shadow = shadowOf(editor);
+    expect(queryAll(shadow, '.node .card-actions')[0]?.hidden).toBe(true);
+    // The editor lives in the header it took over, and keeps its own buttons.
+    expect(queryAll(shadow, '.node .node__header .name-input')).toHaveLength(1);
+
+    queryButton(shadow, '.icon-button--cancel').click();
+    expect(queryAll(shadow, '.node .card-actions')[0]?.hidden).toBe(false);
+  });
+
   it('exposes four side effect slots per state and two per transition', () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
@@ -348,6 +380,82 @@ describe('editing', () => {
     expect(queryOne(shadow, '.edge-card__name').hidden).toBe(false);
   });
 
+  it('keeps the edit open when the input loses focus', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    const shadow = shadowOf(editor);
+    const input = shadow.querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    const before = editor.value.states[0]?.name;
+    input.value = 'Submitted';
+    input.dispatchEvent(new FocusEvent('blur'));
+
+    // Clicking away neither commits nor discards — the pending text waits for
+    // the user to press save or cancel.
+    expect(editor.value.states[0]?.name).toBe(before);
+    expect(shadow.querySelector('.name-input')).toBe(input);
+    expect(input.value).toBe('Submitted');
+    expect(queryButton(shadow, '.node__rename').hidden).toBe(true);
+
+    queryButton(shadow, '.icon-button--confirm').click();
+    expect(editor.value.states[0]?.name).toBe('Submitted');
+  });
+
+  it('brings the card buttons back after a cancelled rename', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    const shadow = shadowOf(editor);
+    queryButton(shadow, '.icon-button--cancel').click();
+
+    // Cancelling restores every part of the card the editor stood in for —
+    // properties included, which no commit re-render comes along to fix.
+    expect(queryButton(shadow, '.node__properties').hidden).toBe(false);
+    expect(queryButton(shadow, '.node__rename').hidden).toBe(false);
+    expect(queryButton(shadow, '.node__remove').hidden).toBe(false);
+    expect(queryOne(shadow, '.node .node__name').hidden).toBe(false);
+  });
+
+  it('leaves an open rename alone when another one starts', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const renameButtons = queryAll(shadowOf(editor), '.node__rename');
+    renameButtons[0]?.click();
+
+    const shadow = shadowOf(editor);
+    const first = shadow.querySelector('.name-input');
+    if (!(first instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    first.value = 'Submitted';
+    queryAll(shadow, '.node__rename')[1]?.click();
+
+    // Two cards are being renamed at once; neither edit resolves the other.
+    const inputs = shadow.querySelectorAll('.name-input');
+    expect(inputs.length).toBe(2);
+    expect(first.isConnected).toBe(true);
+    expect(first.value).toBe('Submitted');
+
+    const second = inputs[1];
+    if (!(second instanceof HTMLInputElement)) {
+      throw new Error('missing second rename input');
+    }
+    second.value = 'Paid';
+    fireKey(second, 'Enter');
+
+    expect(editor.value.states[1]?.name).toBe('Paid');
+    expect(first.isConnected).toBe(true);
+    expect(first.value).toBe('Submitted');
+
+    queryOne(shadow, '.icon-button--confirm').click();
+    expect(editor.value.states[0]?.name).toBe('Submitted');
+  });
+
   it('keeps focus in the input when the buttons are pressed', () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
@@ -358,8 +466,8 @@ describe('editing', () => {
     const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true });
     save.dispatchEvent(event);
 
-    // Blocking the default keeps the caret in the field, so blur cannot commit
-    // an edit the user is about to cancel.
+    // Blocking the default keeps the caret in the field so pressing either button
+    // reads as part of the same edit.
     expect(event.defaultPrevented).toBe(true);
     expect(shadow.activeElement?.className).toBe('name-input');
   });
@@ -2395,5 +2503,260 @@ describe('placing new elements in free space', () => {
     // The card is placed before the machine is committed, so a host sees one
     // event per new edge rather than an add followed by a correcting move.
     expect(recorded.map((change) => change.kind)).toEqual(['transition-add', 'transition-add']);
+  });
+});
+
+describe('undo and redo', () => {
+  it('takes the last change back and puts it forward again', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryButton(shadowOf(editor), '.toolbar__add').click();
+    expect(editor.value.states).toHaveLength(3);
+
+    expect(editor.undo()).toBe(true);
+    expect(editor.value.states).toHaveLength(2);
+    expect(queryAll(shadowOf(editor), '.node')).toHaveLength(2);
+
+    expect(editor.redo()).toBe(true);
+    expect(editor.value.states).toHaveLength(3);
+    expect(queryAll(shadowOf(editor), '.node')).toHaveLength(3);
+  });
+
+  it('reports both directions and refuses to walk past either end', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    expect(editor.canUndo).toBe(false);
+    expect(editor.undo()).toBe(false);
+
+    editor.addState();
+    expect(editor.canUndo).toBe(true);
+    expect(editor.canRedo).toBe(false);
+
+    editor.undo();
+    expect(editor.canUndo).toBe(false);
+    expect(editor.canRedo).toBe(true);
+    expect(editor.redo()).toBe(true);
+    expect(editor.redo()).toBe(false);
+  });
+
+  it('announces a step as a whole-machine replacement', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+    const recorded: { kind: string; transient: boolean }[] = [];
+    editor.addEventListener('state-machine-change', (event: StateMachineChangeEvent) => {
+      recorded.push({ kind: event.detail.change.kind, transient: event.detail.transient });
+    });
+
+    editor.undo();
+    editor.redo();
+
+    expect(recorded).toEqual([
+      { kind: 'replace', transient: false },
+      { kind: 'replace', transient: false },
+    ]);
+  });
+
+  it('folds a whole drag into one step', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const start = editor.value.states[0]?.position;
+
+    const header = queryOne(shadowOf(editor), '.node .node__header');
+    firePointer(header, 'pointerdown', { clientX: 10, clientY: 10 });
+    firePointer(document, 'pointermove', { clientX: 60, clientY: 40 });
+    firePointer(document, 'pointermove', { clientX: 110, clientY: 60 });
+    firePointer(document, 'pointerup', { clientX: 110, clientY: 60 });
+    expect(editor.value.states[0]?.position).toEqual({ x: 100, y: 50 });
+
+    // The transient frames are not steps of their own: one undo goes all the way
+    // back to where the card sat before the gesture started.
+    expect(editor.undo()).toBe(true);
+    expect(editor.value.states[0]?.position).toEqual(start);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('folds one properties save into one step, however many fields it touched', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+    type(field(openedProperties(editor), 'guard'), 'order.total > 0');
+    type(field(openedProperties(editor), 'permission'), 'orders.pay');
+    await save(editor);
+    expect(editor.value.transitions[0]?.guard).toBe('order.total > 0');
+
+    editor.undo();
+    expect(editor.value.transitions[0]?.guard).toBe('');
+    expect(editor.value.transitions[0]?.requiredPermission).toBe('');
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('brings back a removed state along with its transitions', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__remove')[0]?.click();
+    expect(editor.value.states).toHaveLength(1);
+    expect(editor.value.transitions).toHaveLength(0);
+
+    editor.undo();
+    expect(editor.value.states.map((state) => state.id)).toEqual(['draft', 'paid']);
+    expect(editor.value.transitions).toHaveLength(1);
+    expect(editor.value.initialStateIds).toEqual(['draft']);
+  });
+
+  it('drops a selection the step leaves behind, and says so once', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const added = editor.addState();
+    editor.selection = { kind: 'state', id: added.id };
+    const selections = selectionsOf(editor);
+
+    editor.undo();
+
+    expect(editor.selection).toBeNull();
+    expect(selections).toEqual([null]);
+  });
+
+  it('keeps a selection the step leaves standing', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.addState();
+    const selections = selectionsOf(editor);
+
+    editor.undo();
+
+    expect(editor.selection).toEqual({ kind: 'state', id: 'draft' });
+    expect(selections).toEqual([]);
+  });
+
+  it('drops the redo branch once another edit is made', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+    editor.undo();
+    expect(editor.canRedo).toBe(true);
+
+    editor.addState({ name: 'Elsewhere' });
+
+    expect(editor.canRedo).toBe(false);
+    expect(editor.value.states[2]?.name).toBe('Elsewhere');
+  });
+
+  it('undoes with the keyboard and redoes with shift, on both modifiers', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+
+    fireKey(editor, 'z', { metaKey: true });
+    expect(editor.value.states).toHaveLength(2);
+    fireKey(editor, 'Z', { metaKey: true, shiftKey: true });
+    expect(editor.value.states).toHaveLength(3);
+
+    fireKey(editor, 'z', { ctrlKey: true });
+    expect(editor.value.states).toHaveLength(2);
+    fireKey(editor, 'y', { ctrlKey: true });
+    expect(editor.value.states).toHaveLength(3);
+  });
+
+  it('leaves the shortcut alone inside a text field and while a dialog is open', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+    const input = shadowOf(editor).querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    fireKey(input, 'z', { metaKey: true });
+    expect(editor.value.states).toHaveLength(3);
+    fireKey(input, 'Escape');
+
+    queryOne(shadowOf(editor), '.edge-card__properties').click();
+    await flush();
+    fireKey(openedProperties(editor).host, 'z', { metaKey: true });
+    expect(editor.value.states).toHaveLength(3);
+  });
+
+  it('names the buttons after the step they would take', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const undoButton = queryAll(shadowOf(editor), '.toolbar__history')[0];
+    const redoButton = queryAll(shadowOf(editor), '.toolbar__history')[1];
+    if (!(undoButton instanceof HTMLButtonElement) || !(redoButton instanceof HTMLButtonElement)) {
+      throw new Error('missing history buttons');
+    }
+    expect(undoButton.disabled).toBe(true);
+    expect(undoButton.getAttribute('aria-label')).toBe('Undo');
+
+    editor.addState();
+    expect(undoButton.disabled).toBe(false);
+    expect(undoButton.getAttribute('aria-label')).toBe('Undo add state');
+    expect(redoButton.disabled).toBe(true);
+
+    undoButton.click();
+    expect(editor.value.states).toHaveLength(2);
+    expect(redoButton.disabled).toBe(false);
+    expect(redoButton.getAttribute('aria-label')).toBe('Redo add state');
+
+    redoButton.click();
+    expect(editor.value.states).toHaveLength(3);
+  });
+
+  it('disables both buttons and both shortcuts in read-only mode', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+    editor.readOnly = true;
+
+    const buttons = queryAll(shadowOf(editor), '.toolbar__history');
+    expect(buttons.map((button) => button instanceof HTMLButtonElement && button.disabled)).toEqual(
+      [true, true],
+    );
+    fireKey(editor, 'z', { metaKey: true });
+    expect(editor.value.states).toHaveLength(3);
+  });
+
+  it('clears the history when the host replaces the machine', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+    expect(editor.canUndo).toBe(true);
+
+    editor.value = sampleMachine();
+
+    expect(editor.canUndo).toBe(false);
+    expect(editor.canRedo).toBe(false);
+  });
+
+  it('survives a host echoing the machine it was just handed', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    // What a host rendering from its own state does: take the machine off the
+    // event and write it straight back.
+    editor.addEventListener('state-machine-change', (event: StateMachineChangeEvent) => {
+      editor.value = event.detail.value;
+    });
+
+    editor.addState();
+
+    expect(editor.canUndo).toBe(true);
+    editor.undo();
+    expect(editor.value.states).toHaveLength(2);
+  });
+
+  it('forgets every step on demand, keeping the machine as it stands', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.addState();
+
+    editor.clearHistory();
+
+    expect(editor.canUndo).toBe(false);
+    expect(editor.canRedo).toBe(false);
+    expect(editor.value.states).toHaveLength(3);
   });
 });

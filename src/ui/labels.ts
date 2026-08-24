@@ -1,5 +1,5 @@
-import { findState, findTransition } from '../model/machine.js';
-import type { ElementRef, SideEffectListRef, StateMachine } from '../types.js';
+import { describeChange, findState, findTransition } from '../model/machine.js';
+import type { ElementRef, MachineChange, SideEffectListRef, StateMachine } from '../types.js';
 
 /** Name of a transition's source, or of the start pseudo-node for a creation edge. */
 export const START_NODE_LABEL = 'the start';
@@ -62,4 +62,16 @@ export function describeElement(machine: StateMachine, ref: ElementRef): SideEff
 /** What to call a transition's source in prose. */
 export function describeSource(machine: StateMachine, from: string | null): string {
   return from === null ? START_NODE_LABEL : (findState(machine, from)?.name ?? from);
+}
+
+/**
+ * Label for an undo or redo control, e.g. `Undo move state`. Without a change
+ * to name — nothing left to take back — it is the bare verb.
+ */
+export function historyLabel(verb: 'Undo' | 'Redo', change: MachineChange | undefined): string {
+  if (change === undefined) {
+    return verb;
+  }
+  const described = describeChange(change);
+  return `${verb} ${described.charAt(0).toLowerCase()}${described.slice(1)}`;
 }

@@ -38,6 +38,18 @@ export {
 } from './geometry/viewport.js';
 export { insertItem, moveItem } from './model/array.js';
 export { StateMachineError } from './model/errors.js';
+export type { History, HistoryEntry, HistoryStep } from './model/history.js';
+export {
+  canRedo,
+  canUndo,
+  createHistory,
+  HISTORY_LIMIT,
+  pendingRedo,
+  pendingUndo,
+  recordHistory,
+  redoHistory,
+  undoHistory,
+} from './model/history.js';
 export { createId } from './model/id.js';
 export type { JsonPath, JsonTextResult, JsonType } from './model/json.js';
 export {
@@ -126,6 +138,7 @@ export {
   describeElement,
   describeSideEffectList,
   describeSource,
+  historyLabel,
   START_NODE_LABEL,
   shortHookLabel,
 } from './ui/labels.js';

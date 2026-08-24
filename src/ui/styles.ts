@@ -340,6 +340,87 @@ export const editorStyles: string = `
 
   .chip:disabled { cursor: default; }
 
+  /*
+   * Both cards keep their tools in a rail floating above the card rather than in
+   * the header: a state card had four hit targets sharing that line with the
+   * name and a transition card three, and the name was what gave way. Out of
+   * flow, the rail costs the name nothing.
+   *
+   * It surfaces on hover, while the card is selected — which is what a tap gives
+   * touch — and whenever it holds focus, so the keyboard path stays unbroken.
+   *
+   * Anything the pointer can see it can reach:
+   *
+   *  - The rail hangs a transparent bridge across the gap over the card, so the
+   *    walk from card to rail never crosses ground that belongs to neither and
+   *    the hover never breaks. The rail is the card's own child, so standing on
+   *    it keeps the card hovered however far outside the card's box it sits.
+   *  - Leaving the card starts a grace period rather than a fade, so a pointer
+   *    that wanders off the side and back arrives to find the rail still there.
+   *  - The rail stops taking clicks on the same beat that it finishes fading,
+   *    rather than the moment the pointer leaves, so nothing on screen is ever
+   *    dead to a click. It goes out through pointer-events and not through
+   *    visibility, which would take the buttons out of the tab order and strand
+   *    the :focus-within that brings the rail back for the keyboard.
+   */
+  .card-actions {
+    --sme-rail-gap: 6px;
+    --sme-rail-fade: 120ms;
+    --sme-rail-grace: 260ms;
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + var(--sme-rail-gap));
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 9px;
+    box-shadow: var(--sme-shadow);
+    opacity: 0;
+    pointer-events: none;
+    /*
+     * pointer-events is a discrete property: the delay is the whole point of
+     * transitioning it, and allow-discrete is what lets it be transitioned at
+     * all. Where that is unsupported the flip is immediate, which is only the
+     * grace period going unclaimed — the bridge below covers the walk that
+     * matters without it.
+     */
+    transition:
+      opacity var(--sme-rail-fade) ease var(--sme-rail-grace),
+      pointer-events 0s linear calc(var(--sme-rail-grace) + var(--sme-rail-fade));
+    transition-behavior: allow-discrete;
+  }
+
+  /* The bridge. Inert with the rail, so it never sits over an idle card. */
+  .card-actions::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: calc(var(--sme-rail-gap) + 2px);
+  }
+
+  .node:hover > .card-actions,
+  .node.is-selected > .card-actions,
+  .edge-card:hover > .card-actions,
+  .edge-card.is-selected > .card-actions,
+  .card-actions:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+    transition:
+      opacity var(--sme-rail-fade) ease 0s,
+      pointer-events 0s linear 0s;
+  }
+
+  /* Keeps the grace period, drops the fade. */
+  @media (prefers-reduced-motion: reduce) {
+    .card-actions { --sme-rail-fade: 0s; }
+  }
+
   .icon-button {
     display: inline-flex;
     align-items: center;
@@ -376,10 +457,11 @@ export const editorStyles: string = `
 
   .node__color:hover { background: var(--sme-surface-muted); }
 
+  /* Opens above the rail, under the colour button it belongs to. */
   .node__palette {
     position: absolute;
-    top: 38px;
-    right: 8px;
+    right: 0;
+    bottom: calc(100% + 42px);
     z-index: 3;
     display: grid;
     grid-template-columns: repeat(3, 22px);
@@ -566,21 +648,25 @@ export const editorStyles: string = `
   .toolbar button:hover:not(:disabled) { background: var(--sme-surface-muted); }
   .toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
   .toolbar__zoom { min-width: 56px; font-variant-numeric: tabular-nums; }
+  /* The arrows sit small for their em box, so they need a size of their own. */
+  .toolbar__history { font-size: 16px; line-height: 1; }
 
   /*
    * Touch and pen: grow every hit target. 22px icons are comfortable with a
    * mouse and far too small for a fingertip.
    */
   @media (pointer: coarse) {
-    /* Five grown-up hit targets share the header, so the card grows with them —
-       otherwise the name is squeezed down to a couple of characters. */
+    /* The header is the name alone now, but the roles row still lines up three
+       grown-up pills, so the card keeps the width they need. */
     :host { --sme-node-width: 288px; }
     .icon-button { width: 32px; height: 32px; font-size: 15px; }
     .node__role { padding: 7px 8px; font-size: 12px; }
     .node__create { padding: 7px 10px; font-size: 12px; }
     .node__color { width: 32px; height: 32px; }
     .node__color::before { width: 16px; height: 16px; }
-    .node__palette { grid-template-columns: repeat(3, 32px); gap: 10px; top: 48px; }
+    .card-actions { gap: 4px; padding: 4px; border-radius: 11px; }
+    /* Clears the taller rail. */
+    .node__palette { grid-template-columns: repeat(3, 32px); gap: 10px; bottom: calc(100% + 54px); }
     .palette__option { width: 32px; height: 32px; }
     .node__header { padding: 10px; gap: 6px; }
     .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }

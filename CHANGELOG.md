@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Undo and redo**, from the toolbar's new **↶** / **↷** buttons, from `Ctrl`/`⌘` + `Z` and
+  `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too, where Windows apps put it), and from the new
+  `undo()` / `redo()` methods. `canUndo` and `canRedo` report whether there is a step to take, and
+  each button is named after the step it would take — *Undo move state* — through the existing
+  `describeChange`.
+
+  A step is one thing the user did rather than one event the host saw: the transient frames of a
+  drag record nothing and the gesture folds into the single step its final commit records, and one
+  properties dialog save is one step however many fields it touched, even though it still emits one
+  `state-machine-change` per field. Taking a step emits one non-transient change of kind `replace`,
+  since the whole machine is swapped and no narrower kind would be honest.
+
+  The last 100 steps are kept as whole machine snapshots — every model helper already returns a new
+  machine that shares everything it did not touch, so a step costs a reference rather than a copy,
+  and no inverse has to be written, or kept correct, per change kind.
+- `clearHistory()`, for hosts that own their own history or that treat the machine in place as a
+  freshly loaded document.
+- `src/model/history.ts`: `createHistory`, `recordHistory`, `undoHistory`, `redoHistory`, `canUndo`,
+  `canRedo`, `pendingUndo`, `pendingRedo` and `HISTORY_LIMIT` — pure, testable without a DOM, and
+  exported for hosts that want the same stack over their own state. `historyLabel` joins them in
+  `src/ui/labels.ts`.
+
+### Changed
+
+- A card's tools — colour, rename, properties and remove on a state, rename, properties and remove
+  on a transition — moved out of the card header into a **rail that floats above the card**. Four
+  hit targets sharing a 248 px line with the name left the name a couple of characters before it
+  ellipsised; the header is now the name alone. The rail is out of flow, so it costs no width, and
+  it appears on hover, while the card is selected — which is what a tap gives touch — and whenever
+  it holds focus, so it is still reachable by keyboard. Whatever is on screen can be clicked: the
+  rail bridges the gap between itself and the card so the pointer never crosses dead ground on the
+  way up, and it lingers for a moment after the pointer leaves rather than vanishing out from under
+  it. It stands down for the length of an inline
+  rename, whose editor carries its own save and cancel. The buttons keep their class names and the
+  rail is exposed as the `card-actions` shadow part.
+- Assigning `value` a **different** machine now clears the undo history with it: the document has
+  been replaced, and there is nothing sensible left for undo to put back. Assigning the machine
+  already in place — what a host echoing `state-machine-change` back does — leaves the history
+  alone, so undo survives the React-style round trip.
+- Keyboard shortcuts on the canvas (`Delete`, `F2`, `Enter`, and now the history pair) are ignored
+  while a dialog is open. A dialog is a modal of its own, so a key pressed inside it never reaches
+  the canvas behind it.
+
+### Fixed
+
+- An inline name edit now ends only where the user ends it. Losing focus used to save the pending
+  text, which meant a click on the cancel button — or anywhere else on the canvas — renamed behind
+  the user's back; the editor now stays open with whatever has been typed until Enter or the save
+  button commits it, or Escape or the cancel button discards it. Starting a rename elsewhere leaves
+  the first editor open instead of throwing it away, so several names can be in flight at once, and
+  reopening an editor that is already open just returns the caret to it rather than resetting the
+  text. Closing an editor also restores every part of the card it stood in for: the properties
+  button used to stay hidden after a cancelled rename, since only a commit re-render brought it
+  back.
+
 ## [0.3.0] - 2026-08-24
 
 ### Added

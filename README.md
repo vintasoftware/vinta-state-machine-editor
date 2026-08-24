@@ -86,16 +86,18 @@ verbatim out of a static directory, use the single-file build instead — see
 | Create a transition | Drag the round **→** handle onto another state (drop it on the same state for a self transition) |
 | Create a *creation* transition | Press **+ Creation** on an initial state's card — it appears next to **▶ Initial** only while the state is marked initial |
 | Add another creation transition | Drag the start bar's **→** handle onto a state |
-| Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
-| Edit properties | Press **⚙** on a state or transition card, or call `openProperties(ref)` |
+| Reach a card's tools | Hover the card or select it — the **✎ ⚙ ✕** rail (plus the colour swatch on a state) appears just above it, and stays put long enough to be clicked |
+| Rename | Tap the **✎** button in the card's rail (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
+| Edit properties | Press **⚙** in a state or transition card's rail, or call `openProperties(ref)` |
 | Reorder the edges leaving a state | Open a transition's **⚙** and use **↑** / **↓** under *Order* |
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
 | Turn a side effect off | Uncheck the box on its row in the dialog — it stays attached and configured |
 | Edit side effect parameters | Press **{ }** on a row in the dialog, then use the nested form or the JSON tab |
-| Colour a state | Press the round swatch in the card header and pick one of the six |
+| Colour a state | Press the round swatch in the card's rail and pick one of the six |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
-| Remove | Click **✕** on the card, or select it and press `Delete` |
+| Remove | Click **✕** in the card's rail, or select it and press `Delete` |
+| Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
 | Pan | Drag the background, scroll, or move two fingers together |
 | Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
 
@@ -479,13 +481,15 @@ offset to `{ x: 0, y: 0 }`.
 
 | Property | Type | Notes |
 | --- | --- | --- |
-| `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`. The current `selection` is kept if the selected id still names a state (or transition) in the new machine, so a host inspector panel survives writing edits back. |
+| `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`. The current `selection` is kept if the selected id still names a state (or transition) in the new machine, so a host inspector panel survives writing edits back. Assigning a *different* machine clears the undo history with it; assigning the one already in place — what a host echoing `state-machine-change` back does — leaves it alone. |
 | `sideEffectProvider` | `() => MaybePromise<SideEffectDefinition[]>` | Catalog used by the dialog. Called every time a dialog opens. |
 | `actionProvider` | `() => MaybePromise<ActionDefinition[]>` | Catalog the transition trigger is picked from. Without it the trigger is a free text field. |
 | `guardValidator` | `(expression) => MaybePromise<{ ok: true } \| { ok: false, errors }>` | Called on every guard edit; errors render inline. Absent means no validation. |
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
 | `selection` | `{ kind: 'state' \| 'transition', id } \| null` | Survives a `value` assignment that keeps the selected element; becomes `null` if that element is gone, and only that drop emits `state-machine-selection-change`. |
 | `viewport` | `{ x, y, scale }` | Pan/zoom state; assignable to restore a saved view. |
+| `canUndo` | `boolean` | Read-only. Whether there is a recorded step to take back. |
+| `canRedo` | `boolean` | Read-only. Whether an undone step is waiting to be put back. |
 
 ### Methods
 
@@ -493,7 +497,7 @@ offset to `{ x: 0, y: 0 }`.
 creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `zoomIn()`,
 `zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
 `openSideEffects(ref): Promise<boolean>`, `openProperties(ref): Promise<boolean>` where `ref` is
-`{ kind: 'state' | 'transition', id }`.
+`{ kind: 'state' | 'transition', id }`, `undo()`, `redo()`, `clearHistory()`.
 
 ### Events
 
@@ -516,6 +520,35 @@ Saving the properties dialog emits **one event per field that actually changed**
 one dialog arrive as three events, in field order — so a host can react granularly rather than
 diffing the whole machine. Fields left alone emit nothing.
 
+### Undo and redo
+
+The editor keeps its own history: the toolbar's **↶** / **↷**, `Ctrl`/`⌘` + `Z` and
+`Ctrl`/`⌘` + `Shift` + `Z` (plus `Ctrl` + `Y`, where Windows apps put redo), and the `undo()` /
+`redo()` methods all walk the same stack. `canUndo` and `canRedo` say whether there is anywhere
+to walk to, and the buttons name the step they would take — *Undo move state*, *Redo change
+transition guard* — from `describeChange`.
+
+One step is one thing the user did, not one event the host saw:
+
+- A drag is a single step. The transient frames it emits move the machine without recording
+  anything; the final, non-transient commit records the gesture as a whole.
+- One properties dialog save is a single step, however many fields it changed — it still emits one
+  `state-machine-change` per field.
+- Shortcuts are ignored inside text fields, while a dialog is open, and in read-only mode, where
+  both buttons are disabled.
+
+A step emits one `state-machine-change` of kind `replace`, with `transient: false` — the whole
+machine is swapped, so no narrower kind would be honest. Nothing else about a step is special: a
+host that persists on every change already handles it.
+
+The last 100 steps are kept. Since every helper in the model layer returns a new machine that
+shares everything it did not touch, a step costs one reference rather than a copy.
+
+Assigning `value` a different machine replaces the document and clears the history with it.
+Assigning the machine already in place does not, so the React-style round trip — take
+`event.detail.value`, store it, hand it back — leaves undo working. Hosts that own their own
+history (or that treat the current machine as a freshly loaded document) call `clearHistory()`.
+
 ### Pure helpers
 
 The model layer is exported and framework-free, so hosts can build undo stacks, validation or
@@ -525,8 +558,9 @@ server-side rendering on top of it: `addState`, `updateState`, `removeState`, `a
 `setTransitionTrigger`, `setTransitionGuard`, `setTransitionPermission`,
 `setTransitionDescription`, `setStateDescription`, `outgoingTransitions`, `creationTransitions`,
 `moveTransition`, `uniqueTransitionName`, `parseStateMachine`, `parseActionDefinitions`,
-`assertStateMachine`, plus the geometry helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`,
-…).
+`assertStateMachine`, the history helpers backing the editor's own stack (`createHistory`,
+`recordHistory`, `undoHistory`, `redoHistory`, `canUndo`, `canRedo`, `pendingUndo`, `pendingRedo`,
+`HISTORY_LIMIT`), plus the geometry helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`, …).
 
 ## Framework usage
 
@@ -597,9 +631,9 @@ path in place of the bare specifier. Everything else in this README applies unch
 | | `./register` (bundler) | `./bundled` (no bundler) |
 | --- | --- | --- |
 | Files to serve | your bundler's output | `bundled.js`, and nothing else |
-| Loaded up front | 92.4 kB → **25.5 kB gzipped** | 416.1 kB → **130.6 kB gzipped** |
+| Loaded up front | 99.2 kB → **27.7 kB gzipped** | 423.7 kB → **132.9 kB gzipped** |
 | Loaded on first **JSON** tab | 339.4 kB → 110.1 kB gzipped | — already there |
-| Total over the wire | 431.8 kB → 135.6 kB gzipped | 416.1 kB → 130.6 kB gzipped |
+| Total over the wire | 438.6 kB → 137.8 kB gzipped | 423.7 kB → 132.9 kB gzipped |
 
 Roughly the same bytes overall — the split column also carries the demo page's own code — and the
 difference is *when*. The bundler route keeps CodeMirror out of the initial
@@ -609,7 +643,7 @@ the sessions that never open a JSON tab.
 That is the deliberate trade. Keeping the split would have meant emitting a second file with a
 stable name and asking every host to copy it too — a step that is easy to miss, and whose failure
 mode is a runtime error in one tab of one dialog rather than a broken build. One file cannot be
-half-deployed. If the eager 131 kB matters more to you than that, use a bundler and the `./register`
+half-deployed. If the eager 133 kB matters more to you than that, use a bundler and the `./register`
 export, which is unchanged and still code-split.
 
 ## Styling
@@ -628,7 +662,7 @@ state-machine-editor {
 }
 ```
 
-Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `start-node`, `edge`, `chip`.
+Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `card-actions`, `start-node`, `edge`, `chip`.
 
 The canvas sets `touch-action: none`, so touch gestures reach the component instead of scrolling
 the page. Pinch is handled from raw pointer events (two fingers) and from `wheel` events with
@@ -636,8 +670,8 @@ the page. Pinch is handled from raw pointer events (two fingers) and from `wheel
 
 Under `@media (pointer: coarse)` every hit target grows — icon buttons and the link handle go from
 22 px to 32 px, chips, form fields and dialog rows gain padding, and `--sme-node-width` goes to
-288 px so the five grown controls in a state card's header do not squeeze its name away — so the
-editor stays usable with a fingertip.
+288 px so the three grown pills in a state card's roles row still fit on one line — so the editor
+stays usable with a fingertip.
 Every gesture has a tappable equivalent: renaming has its **✎** / **✓** / **✕** buttons, reordering
 side effects has `Alt` + arrows alongside the drag handle, and zoom has toolbar buttons.
 
