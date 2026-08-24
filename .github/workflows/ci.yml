@@ -17,7 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['20.11', '22', '24']
+        # jsdom needs >= 22.22, vite/rolldown >= 22.12; older Node cannot run the tooling.
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
 

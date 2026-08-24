@@ -248,6 +248,9 @@ side effects has `Alt` + arrows alongside the drag handle, and zoom has toolbar 
 
 ## Development
 
+Development needs Node 22.22 or newer (jsdom and rolldown both require it); the published package
+itself is browser-only and has no Node requirement.
+
 ```bash
 npm install
 npm run dev        # interactive demo at http://localhost:5173

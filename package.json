@@ -43,7 +43,14 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20.11"
+    "node": ">=18"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22.22.2",
+      "onFail": "error"
+    }
   },
   "scripts": {
     "dev": "vite",
