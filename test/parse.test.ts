@@ -119,3 +119,66 @@ describe('initial and final state lists', () => {
     expect(parseStateMachine({ ...VALID, finalStateIds: 's1' }).ok).toBe(false);
   });
 });
+
+describe('side effect parameters', () => {
+  it('defaults to an empty object', () => {
+    const result = parseStateMachine(VALID);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.states[0]?.onEnter.before[0]?.params).toEqual({});
+    }
+  });
+
+  it('keeps nested JSON parameters', () => {
+    const params = { to: 'user', retries: 3, tags: ['a', 'b'], meta: { deep: true, none: null } };
+    const result = parseStateMachine({
+      ...VALID,
+      states: [
+        {
+          ...VALID.states[0],
+          onEnter: { before: [{ id: 'e1', definitionId: 'd1', name: 'log', params }], after: [] },
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.states[0]?.onEnter.before[0]?.params).toEqual(params);
+    }
+  });
+
+  it('rejects parameters that are not a JSON object', () => {
+    const result = parseStateMachine({
+      ...VALID,
+      states: [
+        {
+          ...VALID.states[0],
+          onEnter: {
+            before: [{ id: 'e1', definitionId: 'd1', name: 'log', params: [1, 2] }],
+            after: [],
+          },
+          onLeave: { before: [], after: [] },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(' ')).toContain('must be a JSON object of parameters');
+    }
+  });
+
+  it('reads defaultParams from the catalog', () => {
+    const result = parseSideEffectDefinitions([
+      { id: 'a', name: 'alpha', defaultParams: { retries: 3 } },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value[0]?.defaultParams).toEqual({ retries: 3 });
+    }
+  });
+
+  it('rejects a malformed defaultParams', () => {
+    expect(parseSideEffectDefinitions([{ id: 'a', name: 'alpha', defaultParams: 5 }]).ok).toBe(
+      false,
+    );
+  });
+});

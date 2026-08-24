@@ -212,6 +212,17 @@ export const editorStyles: string = `
     white-space: nowrap;
   }
 
+  /* Marks a list where at least one side effect receives parameters. */
+  .chip[data-has-params]::after {
+    content: '{ }';
+    float: right;
+    margin-left: 6px;
+    font-size: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--sme-accent);
+    opacity: 0.9;
+  }
+
   .chip.is-filled {
     border-style: solid;
     border-color: transparent;
@@ -434,6 +445,10 @@ export const dialogStyles: string = `
 
   @media (pointer: coarse) {
     .row { padding: 11px 12px; gap: 12px; }
+    .row__params { padding: 7px 10px; font-size: 12px; }
+    .jf-key,
+    .jf-value,
+    .jf-type { padding: 7px; font-size: 13px; }
     .row__handle,
     .row__remove { width: 32px; height: 32px; font-size: 16px; }
     .button { padding: 11px 18px; }
@@ -453,6 +468,130 @@ export const dialogStyles: string = `
   .row__remove:hover { color: var(--sme-danger); background: var(--sme-surface); }
 
   .empty { margin: 0; font-size: 13px; color: var(--sme-text-muted); }
+
+  .row-item {
+    display: grid;
+    gap: 6px;
+    padding: 0;
+    background: var(--sme-surface-muted);
+    border: 1px solid var(--sme-border);
+    border-radius: 8px;
+  }
+
+  .row__params {
+    padding: 2px 7px;
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--sme-border);
+    border-radius: 999px;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+  }
+
+  .row__params.is-set {
+    border-color: transparent;
+    background: var(--sme-accent-soft);
+    color: var(--sme-text);
+  }
+
+  .row__params.is-open { border-color: var(--sme-accent); }
+  .row__params:hover { color: var(--sme-text); }
+
+  .params {
+    display: grid;
+    gap: 8px;
+    padding: 0 9px 10px;
+    border-top: 1px dashed var(--sme-border);
+    padding-top: 8px;
+  }
+
+  .params__modes { display: flex; gap: 4px; }
+
+  .params__mode {
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 999px;
+    border: 1px solid var(--sme-border);
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+  }
+
+  .params__mode[aria-selected='true'] {
+    border-color: transparent;
+    background: var(--sme-accent);
+    color: #fff;
+  }
+
+  .params__form { display: grid; gap: 4px; }
+
+  .jf-row { display: flex; align-items: center; gap: 4px; }
+
+  .jf-key,
+  .jf-value {
+    min-width: 0;
+    padding: 3px 6px;
+    font: inherit;
+    font-size: 12px;
+    color: inherit;
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 6px;
+  }
+
+  .jf-key { flex: 1 1 35%; }
+  .jf-value { flex: 1 1 45%; }
+  .jf-index { font-size: 11px; color: var(--sme-text-muted); min-width: 22px; }
+
+  .jf-type {
+    font: inherit;
+    font-size: 11px;
+    padding: 3px;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 6px;
+  }
+
+  .jf-summary,
+  .jf-null { flex: 1; font-size: 11px; color: var(--sme-text-muted); font-style: italic; }
+
+  .jf-remove {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    font-size: 11px;
+    color: var(--sme-text-muted);
+  }
+
+  .jf-remove:hover { color: var(--sme-danger); background: var(--sme-surface); }
+
+  .jf-add {
+    justify-self: start;
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 999px;
+    border: 1px dashed var(--sme-border);
+    color: var(--sme-text-muted);
+  }
+
+  .jf-add:hover { border-color: var(--sme-accent); color: var(--sme-text); }
+  .jf-empty { margin: 0; font-size: 12px; color: var(--sme-text-muted); }
+
+  .params__text {
+    width: 100%;
+    min-height: 108px;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: inherit;
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 8px;
+    resize: vertical;
+  }
+
+  .params__error { margin: 4px 0 0; font-size: 11px; color: var(--sme-danger); }
 
   .add { display: flex; gap: 8px; align-items: center; }
   .add select { flex: 1; min-width: 0; padding: 6px; border-radius: 8px; border: 1px solid var(--sme-border); background: var(--sme-surface); color: inherit; font: inherit; }

@@ -77,6 +77,7 @@ defineStateMachineEditor('order-flow-editor');
 | Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
+| Edit side effect parameters | Press **{ }** on a row in the dialog, then use the nested form or the JSON tab |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
 | Remove | Click **✕** on the card, or select it and press `Delete` |
 | Pan | Drag the background, scroll, or move two fingers together |
@@ -120,6 +121,7 @@ interface SideEffect {
   id: string; // id of this attachment
   definitionId: string; // id in the catalog
   name: string; // denormalized, so the graph renders without the catalog
+  params: JsonObject; // arbitrary JSON handed to the side effect when it runs
 }
 ```
 
@@ -131,6 +133,34 @@ Each state therefore owns four ordered lists (`enter · before`, `enter · after
 { kind: 'state', stateId: 'draft', trigger: 'enter' | 'leave', phase: 'before' | 'after' }
 { kind: 'transition', transitionId: 'pay', phase: 'before' | 'after' }
 ```
+
+### Side effect parameters
+
+Every attached side effect carries a `params` JSON object, editable two ways from the same panel:
+
+- **Form** — a nested editor over the actual JSON. Each entry exposes its key, its type
+  (`string`, `number`, `boolean`, `null`, `object`, `array`) and its value; objects and arrays
+  recurse into indented rows of their own.
+- **JSON** — the same value as text. It validates as you type, and refuses to switch back to the
+  form while it does not parse, so a half-finished edit is never silently dropped.
+
+The catalog can prefill them: a definition with `defaultParams` seeds the parameters of every side
+effect attached from it.
+
+```js
+editor.sideEffectProvider = async () => [
+  { id: 'charge-card', name: 'chargeCard', defaultParams: { capture: true, retries: 3 } },
+];
+```
+
+A chip on the canvas shows a small `{ }` marker when at least one side effect in its list has
+parameters — the marker is a CSS pseudo-element, so it never enters the chip's text. The count
+reaches assistive technology through the chip's `aria-label`, and hovering shows each side effect
+with its parameters inline.
+
+The helpers behind all of this are exported and pure, so hosts can reuse them: `setAtPath`,
+`removeAtPath`, `renameKeyAtPath`, `appendEntry`, `coerceTo`, `jsonTypeOf`, `parseParamsText`,
+`toJsonObject`, plus `setSideEffectParams` on the model.
 
 ### Initial and final states
 

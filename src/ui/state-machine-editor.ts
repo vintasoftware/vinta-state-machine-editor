@@ -65,7 +65,11 @@ import type {
 } from '../types.js';
 import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
 import { describeSideEffectList, shortHookLabel } from './labels.js';
-import { formatSideEffectSummary, formatSideEffectTitle } from './side-effect-summary.js';
+import {
+  countWithParams,
+  formatSideEffectSummary,
+  formatSideEffectTitle,
+} from './side-effect-summary.js';
 import { SideEffectsDialogElement } from './side-effects-dialog.js';
 import { editorStyles } from './styles.js';
 
@@ -809,9 +813,13 @@ export class StateMachineEditorElement extends HTMLElement {
     chip.classList.toggle('is-filled', effects.length > 0);
     chip.title = formatSideEffectTitle(effects);
     const labels = describeSideEffectList(this.#machine, ref);
+    // The `{ }` marker itself is drawn in CSS, so it stays out of textContent.
+    const withParams = countWithParams(effects);
+    chip.toggleAttribute('data-has-params', withParams > 0);
     chip.setAttribute(
       'aria-label',
-      `${labels.description} ${effects.length} side effect${effects.length === 1 ? '' : 's'}. Open list.`,
+      `${labels.description} ${effects.length} side effect${effects.length === 1 ? '' : 's'}` +
+        `${withParams > 0 ? `, ${withParams} with parameters` : ''}. Open list.`,
     );
     chip.setAttribute('data-count', String(effects.length));
   }

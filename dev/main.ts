@@ -11,6 +11,7 @@ import {
   createTransition,
   defineStateMachineEditor,
   describeChange,
+  type JsonObject,
   type SelectionChangeEvent,
   type SideEffectDefinition,
   type StateMachine,
@@ -21,14 +22,29 @@ import {
 defineStateMachineEditor();
 
 const CATALOG: readonly SideEffectDefinition[] = [
-  { id: 'send-confirmation', name: 'sendConfirmationEmail', description: 'Transactional email' },
-  { id: 'charge-card', name: 'chargeCard', description: 'Captures the payment' },
-  { id: 'reserve-stock', name: 'reserveStock' },
+  {
+    id: 'send-confirmation',
+    name: 'sendConfirmationEmail',
+    description: 'Transactional email',
+    defaultParams: { template: 'order-confirmation', locale: 'pt-BR' },
+  },
+  {
+    id: 'charge-card',
+    name: 'chargeCard',
+    description: 'Captures the payment',
+    defaultParams: { capture: true, retries: 3 },
+  },
+  { id: 'reserve-stock', name: 'reserveStock', defaultParams: { warehouse: 'default' } },
   { id: 'release-stock', name: 'releaseStock' },
   { id: 'notify-warehouse', name: 'notifyWarehouse' },
   { id: 'audit-log', name: 'writeAuditLog', description: 'Compliance trail' },
-  { id: 'refund', name: 'refundCustomer' },
-  { id: 'ping-webhook', name: 'pingWebhook', description: 'Fan-out to subscribers' },
+  { id: 'refund', name: 'refundCustomer', defaultParams: { reason: 'cancelled' } },
+  {
+    id: 'ping-webhook',
+    name: 'pingWebhook',
+    description: 'Fan-out to subscribers',
+    defaultParams: { url: 'https://example.com/hooks/orders', retries: { max: 5, backoff: 'exp' } },
+  },
 ];
 
 /**
@@ -40,12 +56,17 @@ async function fetchSideEffectCatalog(): Promise<readonly SideEffectDefinition[]
   return CATALOG;
 }
 
-function effect(definitionId: string, id: string): ReturnType<typeof createSideEffect> {
+function effect(
+  definitionId: string,
+  id: string,
+  params?: JsonObject,
+): ReturnType<typeof createSideEffect> {
   const definition = CATALOG.find((item) => item.id === definitionId);
   if (definition === undefined) {
     throw new Error(`Unknown demo side effect "${definitionId}".`);
   }
-  return createSideEffect(definition, id);
+  const created = createSideEffect(definition, id);
+  return params === undefined ? created : { ...created, params };
 }
 
 function exampleMachine(): StateMachine {
@@ -73,8 +94,21 @@ function exampleMachine(): StateMachine {
   const pay = {
     ...createTransition({ id: 'pay', name: 'pay', from: 'pending', to: 'paid' }),
     effects: {
-      before: [effect('charge-card', 'e-charge')],
-      after: [effect('audit-log', 'e-audit-2'), effect('ping-webhook', 'e-webhook')],
+      before: [
+        effect('charge-card', 'e-charge', {
+          capture: true,
+          retries: 3,
+          idempotencyKey: 'order-42',
+        }),
+      ],
+      after: [
+        effect('audit-log', 'e-audit-2'),
+        effect('ping-webhook', 'e-webhook', {
+          url: 'https://example.com/hooks/orders',
+          headers: { 'x-source': 'state-machine' },
+          retries: { max: 5, backoff: 'exp' },
+        }),
+      ],
     },
   };
   const cancel = {

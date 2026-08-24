@@ -106,9 +106,9 @@ describe('rendering', () => {
         ...transition,
         effects: {
           before: [
-            { id: 'e1', definitionId: 'a', name: 'sendEmail' },
-            { id: 'e2', definitionId: 'b', name: 'chargeCard' },
-            { id: 'e3', definitionId: 'c', name: 'writeAuditLog' },
+            { id: 'e1', definitionId: 'a', name: 'sendEmail', params: {} },
+            { id: 'e2', definitionId: 'b', name: 'chargeCard', params: {} },
+            { id: 'e3', definitionId: 'c', name: 'writeAuditLog', params: {} },
           ],
           after: [],
         },
@@ -595,6 +595,76 @@ describe('initial and final states', () => {
 
     initialToggle.click();
     expect(editor.value.initialStateIds).toEqual(['draft']);
+  });
+});
+
+describe('parameter hints on the canvas', () => {
+  function machineWithParams(): ReturnType<typeof sampleMachine> {
+    const base = sampleMachine();
+    return {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        effects: {
+          before: [
+            { id: 'e1', definitionId: 'a', name: 'chargeCard', params: { amount: 10 } },
+            { id: 'e2', definitionId: 'b', name: 'writeAuditLog', params: {} },
+          ],
+          after: [{ id: 'e3', definitionId: 'c', name: 'pingWebhook', params: {} }],
+        },
+      })),
+    };
+  }
+
+  it('marks chips whose list has parameters', () => {
+    const editor = mountEditor();
+    editor.value = machineWithParams();
+
+    const chips = queryAll(shadowOf(editor), '.edge-card .chip');
+    expect(chips[0]?.hasAttribute('data-has-params')).toBe(true);
+    expect(chips[1]?.hasAttribute('data-has-params')).toBe(false);
+  });
+
+  it('keeps the collapsed label free of the marker', () => {
+    const editor = mountEditor();
+    editor.value = machineWithParams();
+    // The `{ }` hint is a CSS pseudo-element, so the label reads the same.
+    expect(queryAll(shadowOf(editor), '.edge-card .chip')[0]?.textContent).toBe(
+      'chargeCard and 1 more',
+    );
+  });
+
+  it('spells the hint out for screen readers and in the tooltip', () => {
+    const editor = mountEditor();
+    editor.value = machineWithParams();
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.getAttribute('aria-label')).toContain('1 with parameters');
+    expect(chip?.title).toBe('1. chargeCard {"amount":10}\n2. writeAuditLog');
+  });
+
+  it('updates the hint after the dialog saves parameters', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.sideEffectProvider = () => [
+      { id: 'charge', name: 'chargeCard', defaultParams: { amount: 5 } },
+    ];
+
+    queryAll(shadowOf(editor), '.edge-card .chip')[0]?.click();
+    await flush();
+    const dialog = openedDialog(editor);
+    const select = dialog.querySelector('select');
+    if (!(select instanceof HTMLSelectElement)) {
+      throw new Error('missing select');
+    }
+    select.value = 'charge';
+    queryButton(dialog, '.add .button').click();
+    queryButton(dialog, '.button--primary').click();
+    await flush();
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.hasAttribute('data-has-params')).toBe(true);
+    expect(chip?.textContent).toBe('chargeCard');
   });
 });
 

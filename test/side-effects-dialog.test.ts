@@ -195,3 +195,302 @@ describe('side effects dialog', () => {
     expect(queryButton(shadowOf(dialog), '.row__remove').disabled).toBe(true);
   });
 });
+
+describe('side effect parameters', () => {
+  function openWithParams(dialog: SideEffectsDialogElement): void {
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        createSideEffect({ id: 'send-email', name: 'sendEmail' }, 'e1'),
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e2'),
+          params: { amount: 10, currency: 'BRL' },
+        },
+      ],
+    });
+  }
+
+  function paramsToggles(dialog: SideEffectsDialogElement): readonly HTMLElement[] {
+    return queryAll(shadowOf(dialog), '.row__params');
+  }
+
+  it('shows how many parameters each side effect carries', async () => {
+    const dialog = mountDialog();
+    openWithParams(dialog);
+    await flush();
+
+    const toggles = paramsToggles(dialog);
+    expect(toggles[0]?.textContent).toBe('{ }');
+    expect(toggles[0]?.classList.contains('is-set')).toBe(false);
+    expect(toggles[1]?.textContent).toBe('{ } 2');
+    expect(toggles[1]?.classList.contains('is-set')).toBe(true);
+    expect(toggles[1]?.getAttribute('aria-label')).toBe('Edit parameters of chargeCard, 2 set');
+  });
+
+  it('opens one parameter editor at a time', async () => {
+    const dialog = mountDialog();
+    openWithParams(dialog);
+    await flush();
+
+    paramsToggles(dialog)[0]?.click();
+    expect(shadowOf(dialog).querySelectorAll('.params')).toHaveLength(1);
+    expect(paramsToggles(dialog)[0]?.getAttribute('aria-expanded')).toBe('true');
+
+    paramsToggles(dialog)[1]?.click();
+    expect(shadowOf(dialog).querySelectorAll('.params')).toHaveLength(1);
+    expect(paramsToggles(dialog)[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(paramsToggles(dialog)[1]?.getAttribute('aria-expanded')).toBe('true');
+
+    paramsToggles(dialog)[1]?.click();
+    expect(shadowOf(dialog).querySelectorAll('.params')).toHaveLength(0);
+  });
+
+  it('renders one form row per parameter, with its type', async () => {
+    const dialog = mountDialog();
+    openWithParams(dialog);
+    await flush();
+    paramsToggles(dialog)[1]?.click();
+
+    const shadow = shadowOf(dialog);
+    const keys = queryAll(shadow, '.jf-key').map((input) =>
+      input instanceof HTMLInputElement ? input.value : '',
+    );
+    expect(keys).toEqual(['amount', 'currency']);
+    const types = queryAll(shadow, '.jf-type').map((select) =>
+      select instanceof HTMLSelectElement ? select.value : '',
+    );
+    expect(types).toEqual(['number', 'string']);
+  });
+
+  it('edits a value through the form and keeps it on save', async () => {
+    const dialog = mountDialog();
+    const result = dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { amount: 10 },
+        },
+      ],
+    });
+    await flush();
+    queryButton(shadowOf(dialog), '.row__params').click();
+
+    const value = shadowOf(dialog).querySelector('.jf-value');
+    if (!(value instanceof HTMLInputElement)) {
+      throw new Error('missing value input');
+    }
+    value.value = '42';
+    value.dispatchEvent(new Event('change', { bubbles: true }));
+
+    queryButton(shadowOf(dialog), '.button--primary').click();
+    const saved = await result;
+    expect(saved?.[0]?.params).toEqual({ amount: 42 });
+  });
+
+  it('adds, renames, retypes and removes fields', async () => {
+    const dialog = mountDialog();
+    const result = dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1')],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+
+    queryButton(shadow, '.jf-add').click();
+    expect(dialog.effects[0]?.params).toEqual({ key: '' });
+
+    const key = shadow.querySelector('.jf-key');
+    if (!(key instanceof HTMLInputElement)) {
+      throw new Error('missing key input');
+    }
+    key.value = 'retries';
+    key.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(dialog.effects[0]?.params).toEqual({ retries: '' });
+
+    const type = shadow.querySelector('.jf-type');
+    if (!(type instanceof HTMLSelectElement)) {
+      throw new Error('missing type select');
+    }
+    type.value = 'number';
+    type.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(dialog.effects[0]?.params).toEqual({ retries: 0 });
+
+    // The badge tracks the count while the editor is open.
+    expect(queryButton(shadow, '.row__params').textContent).toBe('{ } 1');
+
+    queryButton(shadow, '.jf-remove').click();
+    expect(dialog.effects[0]?.params).toEqual({});
+
+    queryButton(shadow, '.button--primary').click();
+    const saved = await result;
+    expect(saved?.[0]?.params).toEqual({});
+  });
+
+  it('nests objects and arrays', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { meta: { locale: 'pt-BR' }, tags: ['a'] },
+        },
+      ],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+
+    // Parent rows summarise, children render their own row underneath.
+    expect(queryAll(shadow, '.jf-summary').map((s) => s.textContent)).toEqual([
+      '1 field',
+      '1 item',
+    ]);
+    expect(queryAll(shadow, '.jf-index').map((s) => s.textContent)).toEqual(['0:']);
+    const keys = queryAll(shadow, '.jf-key').map((input) =>
+      input instanceof HTMLInputElement ? input.value : '',
+    );
+    expect(keys).toEqual(['meta', 'locale', 'tags']);
+  });
+
+  it('edits the same parameters as raw JSON', async () => {
+    const dialog = mountDialog();
+    const result = dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { amount: 10 },
+        },
+      ],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+    queryAll(shadow, '.params__mode')[1]?.click();
+
+    const textarea = shadow.querySelector('.params__text');
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      throw new Error('missing textarea');
+    }
+    expect(textarea.value).toBe('{\n  "amount": 10\n}');
+
+    textarea.value = '{"amount": 99, "note": "manual"}';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(queryOne(shadow, '.params__error').textContent).toBe('');
+
+    queryButton(shadow, '.button--primary').click();
+    const saved = await result;
+    expect(saved?.[0]?.params).toEqual({ amount: 99, note: 'manual' });
+  });
+
+  it('reports invalid JSON and keeps the last good value', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { amount: 10 },
+        },
+      ],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+    queryAll(shadow, '.params__mode')[1]?.click();
+
+    const textarea = shadow.querySelector('.params__text');
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      throw new Error('missing textarea');
+    }
+    textarea.value = '{"amount": }';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(queryOne(shadow, '.params__error').textContent?.length).toBeGreaterThan(0);
+    expect(dialog.effects[0]?.params).toEqual({ amount: 10 });
+
+    // Switching back to the form is refused while the text does not parse.
+    queryAll(shadow, '.params__mode')[0]?.click();
+    expect(queryOne(shadow, '.params__json').hidden).toBe(false);
+  });
+
+  it('carries edits from the JSON tab back into the form', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1')],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+    queryAll(shadow, '.params__mode')[1]?.click();
+
+    const textarea = shadow.querySelector('.params__text');
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      throw new Error('missing textarea');
+    }
+    textarea.value = '{"to": "user", "retries": 2}';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    queryAll(shadow, '.params__mode')[0]?.click();
+
+    const keys = queryAll(shadow, '.jf-key').map((input) =>
+      input instanceof HTMLInputElement ? input.value : '',
+    );
+    expect(keys).toEqual(['to', 'retries']);
+  });
+
+  it('prefills parameters from the catalog defaults', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [],
+      provider: () => [{ id: 'charge', name: 'chargeCard', defaultParams: { currency: 'BRL' } }],
+    });
+    await flush();
+
+    const shadow = shadowOf(dialog);
+    const select = shadow.querySelector('select');
+    if (!(select instanceof HTMLSelectElement)) {
+      throw new Error('missing select');
+    }
+    select.value = 'charge';
+    queryButton(shadow, '.add .button').click();
+
+    expect(dialog.effects[0]?.params).toEqual({ currency: 'BRL' });
+    expect(queryButton(shadow, '.row__params').textContent).toBe('{ } 1');
+  });
+
+  it('is read-only when the dialog is', async () => {
+    const dialog = mountDialog();
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      readOnly: true,
+      effects: [
+        {
+          ...createSideEffect({ id: 'charge', name: 'chargeCard' }, 'e1'),
+          params: { amount: 10 },
+        },
+      ],
+    });
+    await flush();
+    const shadow = shadowOf(dialog);
+    queryButton(shadow, '.row__params').click();
+
+    expect(shadow.querySelector('.jf-add')).toBeNull();
+    expect(shadow.querySelector('.jf-remove')).toBeNull();
+    const value = shadow.querySelector('.jf-value');
+    expect(value instanceof HTMLInputElement && value.disabled).toBe(true);
+  });
+});

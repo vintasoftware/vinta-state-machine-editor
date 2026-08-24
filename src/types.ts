@@ -7,6 +7,13 @@
 
 export type MaybePromise<T> = T | Promise<T>;
 
+/** Any value that survives a JSON round trip. */
+export type JsonValue = string | number | boolean | null | JsonArray | JsonObject;
+export type JsonArray = readonly JsonValue[];
+export interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
+
 export interface Point {
   readonly x: number;
   readonly y: number;
@@ -29,6 +36,8 @@ export interface SideEffectDefinition {
   readonly id: string;
   readonly name: string;
   readonly description?: string | undefined;
+  /** Parameters to prefill when this side effect is attached. */
+  readonly defaultParams?: JsonObject | undefined;
 }
 
 /** A side effect actually attached to a state or a transition. */
@@ -39,6 +48,8 @@ export interface SideEffect {
   readonly definitionId: string;
   /** Display name, denormalized so the graph renders without the catalog. */
   readonly name: string;
+  /** Arbitrary JSON handed to the side effect when it runs. */
+  readonly params: JsonObject;
 }
 
 /** Whether the side effects run before or after the thing they are attached to. */

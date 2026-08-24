@@ -1,8 +1,10 @@
 import { moveItem } from '../model/array.js';
+import { countParams, formatJson, hasParams, parseParamsText } from '../model/json.js';
 import { createSideEffect } from '../model/machine.js';
 import { parseSideEffectDefinitions } from '../model/parse.js';
-import type { SideEffect, SideEffectDefinition, SideEffectProvider } from '../types.js';
+import type { JsonObject, SideEffect, SideEffectDefinition, SideEffectProvider } from '../types.js';
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
+import { JsonFormEditor } from './json-form.js';
 import { ReorderController } from './reorder.js';
 import { dialogStyles } from './styles.js';
 
@@ -15,12 +17,20 @@ export interface SideEffectsDialogOptions {
 }
 
 type DialogResolver = (result: readonly SideEffect[] | null) => void;
+type ParamsMode = 'form' | 'json';
 
 const DEFAULT_ADD_PLACEHOLDER = 'Select a side effect…';
 
+/** Short label for the parameters toggle on a row. */
+export function formatParamsBadge(params: JsonObject): string {
+  const count = countParams(params);
+  return count === 0 ? '{ }' : `{ } ${count}`;
+}
+
 /**
  * Modal listing every side effect of a list, in order. Supports adding from the
- * injected catalog, removing, and reordering by drag & drop or keyboard.
+ * injected catalog, removing, reordering by drag & drop or keyboard, and editing
+ * each side effect's JSON parameters as a nested form or as raw JSON.
  */
 export class SideEffectsDialogElement extends HTMLElement {
   static readonly tagName = 'state-machine-side-effects-dialog';
@@ -44,6 +54,9 @@ export class SideEffectsDialogElement extends HTMLElement {
   #resolve: DialogResolver | undefined;
   #readOnly = false;
   #previouslyFocused: Element | null = null;
+  /** Id of the side effect whose parameters are open, if any. */
+  #expandedId: string | undefined;
+  #paramsMode: ParamsMode = 'form';
 
   constructor() {
     super();
@@ -94,7 +107,7 @@ export class SideEffectsDialogElement extends HTMLElement {
 
     this.#reorder = new ReorderController({
       list: this.#list,
-      rowSelector: '.row',
+      rowSelector: '.row-item',
       handleSelector: '.row__handle',
       onReorder: (from, to) => {
         this.#draft = moveItem(this.#draft, from, to);
@@ -123,6 +136,8 @@ export class SideEffectsDialogElement extends HTMLElement {
     this.#previouslyFocused = this.ownerDocument.activeElement;
     this.#draft = [...options.effects];
     this.#readOnly = options.readOnly === true;
+    this.#expandedId = undefined;
+    this.#paramsMode = 'form';
     this.#title.textContent = options.title;
     this.#subtitle.textContent = options.description;
     this.#addButton.disabled = true;
@@ -205,11 +220,13 @@ export class SideEffectsDialogElement extends HTMLElement {
     this.#empty.hidden = this.#draft.length > 0;
 
     this.#draft.forEach((effect, index) => {
-      const row = createElement('li', {
-        className: 'row',
+      const item = createElement('li', {
+        className: 'row-item',
         parent: this.#list,
         attrs: { 'data-index': String(index), 'data-effect-id': effect.id },
       });
+      const row = createElement('div', { className: 'row', parent: item });
+
       const handle = createButton({
         className: 'row__handle',
         parent: row,
@@ -226,6 +243,26 @@ export class SideEffectsDialogElement extends HTMLElement {
       createElement('span', { className: 'row__order', parent: row, text: `${index + 1}` });
       createElement('span', { className: 'row__name', parent: row, text: effect.name });
 
+      const expanded = this.#expandedId === effect.id;
+      const params = createButton({
+        className: 'row__params',
+        parent: row,
+        text: formatParamsBadge(effect.params),
+        attrs: {
+          'aria-expanded': expanded ? 'true' : 'false',
+          'aria-label': `${expanded ? 'Hide' : 'Edit'} parameters of ${effect.name}, ${countParams(effect.params)} set`,
+          title: 'JSON parameters',
+          'data-params-for': effect.id,
+        },
+      });
+      params.classList.toggle('is-set', hasParams(effect.params));
+      params.classList.toggle('is-open', expanded);
+      params.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.#expandedId = expanded ? undefined : effect.id;
+        this.#renderList();
+      });
+
       const remove = createButton({
         className: 'row__remove',
         parent: row,
@@ -235,13 +272,108 @@ export class SideEffectsDialogElement extends HTMLElement {
       remove.disabled = this.#readOnly;
       remove.addEventListener('click', () => {
         this.#draft = this.#draft.filter((item) => item.id !== effect.id);
+        if (this.#expandedId === effect.id) {
+          this.#expandedId = undefined;
+        }
         this.#renderList();
       });
+
+      if (expanded) {
+        this.#renderParamsPanel(item, effect);
+      }
 
       if (focusIndex === index) {
         handle.focus();
       }
     });
+  }
+
+  /** The parameters editor: a nested form, or the same value as raw JSON text. */
+  #renderParamsPanel(item: HTMLElement, effect: SideEffect): void {
+    const panel = createElement('div', { className: 'params', parent: item });
+
+    const modes = createElement('div', {
+      className: 'params__modes',
+      parent: panel,
+      attrs: { role: 'tablist', 'aria-label': `Parameter editor for ${effect.name}` },
+    });
+    const form = createElement('div', { className: 'params__form', parent: panel });
+    const json = createElement('div', { className: 'params__json', parent: panel });
+    const textarea = createElement('textarea', {
+      className: 'params__text',
+      parent: json,
+      attrs: { spellcheck: 'false', 'aria-label': `Parameters of ${effect.name} as JSON` },
+    });
+    const error = createElement('p', { className: 'params__error', parent: json });
+
+    const editor = new JsonFormEditor({
+      container: form,
+      onChange: (value) => this.#updateParams(effect.id, value),
+    });
+
+    const showMode = (mode: ParamsMode): void => {
+      this.#paramsMode = mode;
+      form.hidden = mode !== 'form';
+      json.hidden = mode !== 'json';
+      for (const tab of modes.children) {
+        tab.setAttribute(
+          'aria-selected',
+          tab.getAttribute('data-mode') === mode ? 'true' : 'false',
+        );
+      }
+      const current = this.#draft.find((item) => item.id === effect.id)?.params ?? {};
+      if (mode === 'form') {
+        editor.setValue(current, this.#readOnly);
+      } else {
+        textarea.value = formatJson(current);
+        error.textContent = '';
+      }
+    };
+
+    for (const mode of ['form', 'json'] as const) {
+      const tab = createButton({
+        className: 'params__mode',
+        parent: modes,
+        text: mode === 'form' ? 'Form' : 'JSON',
+        attrs: { role: 'tab', 'data-mode': mode, 'aria-selected': 'false' },
+      });
+      tab.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (mode === 'form' && this.#paramsMode === 'json') {
+          // Refuse to leave the text tab while it does not parse, so the edit is not lost.
+          const parsed = parseParamsText(textarea.value);
+          if (!parsed.ok) {
+            error.textContent = parsed.error;
+            return;
+          }
+          this.#updateParams(effect.id, parsed.value);
+        }
+        showMode(mode);
+      });
+    }
+
+    textarea.readOnly = this.#readOnly;
+    textarea.addEventListener('input', () => {
+      const parsed = parseParamsText(textarea.value);
+      error.textContent = parsed.ok ? '' : parsed.error;
+      if (parsed.ok) {
+        this.#updateParams(effect.id, parsed.value);
+      }
+    });
+
+    showMode(this.#paramsMode);
+  }
+
+  /** Writes new parameters into the draft without re-rendering the open editor. */
+  #updateParams(effectId: string, params: JsonObject): void {
+    this.#draft = this.#draft.map((effect) =>
+      effect.id === effectId ? { ...effect, params } : effect,
+    );
+    const badge = this.#list.querySelector(`[data-params-for="${effectId}"]`);
+    if (isHtmlElement(badge)) {
+      badge.textContent = formatParamsBadge(params);
+      badge.classList.toggle('is-set', hasParams(params));
+    }
   }
 
   #move(from: number, to: number): void {

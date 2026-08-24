@@ -1,4 +1,5 @@
 import type {
+  JsonObject,
   Point,
   SideEffect,
   SideEffectDefinition,
@@ -8,6 +9,7 @@ import type {
   Transition,
 } from '../types.js';
 import { StateMachineError } from './errors.js';
+import { toJsonObject } from './json.js';
 
 export type ParseResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -67,15 +69,28 @@ function parsePoint(value: unknown, path: string, issues: Issues): Point {
   return { x: readNumber(value, 'x', path, issues), y: readNumber(value, 'y', path, issues) };
 }
 
+function parseParams(value: unknown, path: string, issues: Issues): JsonObject {
+  if (value === undefined) {
+    return {};
+  }
+  const params = toJsonObject(value);
+  if (params === undefined) {
+    issues.push(`${path} must be a JSON object of parameters.`);
+    return {};
+  }
+  return params;
+}
+
 function parseSideEffect(value: unknown, path: string, issues: Issues): SideEffect {
   if (!isRecord(value)) {
     issues.push(`${path} must be an object.`);
-    return { id: '', definitionId: '', name: '' };
+    return { id: '', definitionId: '', name: '', params: {} };
   }
   return {
     id: readString(value, 'id', path, issues),
     definitionId: readString(value, 'definitionId', path, issues),
     name: readString(value, 'name', path, issues),
+    params: parseParams(value['params'], `${path}.params`, issues),
   };
 }
 
@@ -254,10 +269,16 @@ export function parseSideEffectDefinitions(
       return { id: '', name: '' };
     }
     const description = readOptionalString(item, 'description');
+    const defaults = item['defaultParams'];
+    const defaultParams = defaults === undefined ? undefined : toJsonObject(defaults);
+    if (defaults !== undefined && defaultParams === undefined) {
+      issues.push(`${path}.defaultParams must be a JSON object.`);
+    }
     const definition: SideEffectDefinition = {
       id: readString(item, 'id', path, issues),
       name: readString(item, 'name', path, issues),
       description,
+      defaultParams,
     };
     return definition;
   });

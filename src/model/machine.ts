@@ -1,4 +1,5 @@
 import type {
+  JsonObject,
   MachineChange,
   Point,
   SideEffect,
@@ -13,6 +14,7 @@ import type {
 import { insertItem, moveItem } from './array.js';
 import { StateMachineError } from './errors.js';
 import { createId } from './id.js';
+import { emptyParams } from './json.js';
 
 type SideEffectListUpdater = (effects: readonly SideEffect[]) => readonly SideEffect[];
 
@@ -60,6 +62,7 @@ export function createSideEffect(definition: SideEffectDefinition, id?: string):
     id: id ?? createId('effect'),
     definitionId: definition.id,
     name: definition.name,
+    params: definition.defaultParams ?? emptyParams(),
   };
 }
 
@@ -305,6 +308,21 @@ export function removeSideEffect(
       throw new StateMachineError(`Unknown side effect "${effectId}".`);
     }
     return next;
+  });
+}
+
+/** Replaces the JSON parameters of one attached side effect. */
+export function setSideEffectParams(
+  machine: StateMachine,
+  ref: SideEffectListRef,
+  effectId: string,
+  params: JsonObject,
+): StateMachine {
+  return updateSideEffects(machine, ref, (effects) => {
+    if (!effects.some((effect) => effect.id === effectId)) {
+      throw new StateMachineError(`Unknown side effect "${effectId}".`);
+    }
+    return effects.map((effect) => (effect.id === effectId ? { ...effect, params } : effect));
   });
 }
 

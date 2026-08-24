@@ -35,6 +35,28 @@ export {
 export { insertItem, moveItem } from './model/array.js';
 export { StateMachineError } from './model/errors.js';
 export { createId } from './model/id.js';
+export type { JsonPath, JsonTextResult, JsonType } from './model/json.js';
+export {
+  appendEntry,
+  coerceTo,
+  countParams,
+  defaultValueFor,
+  emptyParams,
+  formatJson,
+  formatJsonInline,
+  getAtPath,
+  hasParams,
+  isJsonArray,
+  isJsonObject,
+  JSON_TYPES,
+  jsonTypeOf,
+  parseParamsText,
+  removeAtPath,
+  renameKeyAtPath,
+  setAtPath,
+  toJsonObject,
+  toJsonValue,
+} from './model/json.js';
 export {
   addSideEffect,
   addState,
@@ -56,6 +78,7 @@ export {
   removeTransition,
   setFinalStates,
   setInitialStates,
+  setSideEffectParams,
   setSideEffects,
   siblingTransitions,
   toggleFinalState,
@@ -72,15 +95,19 @@ export {
 } from './model/parse.js';
 export type * from './types.js';
 export { SIDE_EFFECT_PHASES, STATE_ROLES, STATE_TRIGGERS } from './types.js';
+export type { JsonFormOptions } from './ui/json-form.js';
+export { JsonFormEditor } from './ui/json-form.js';
 export { describeSideEffectList, shortHookLabel } from './ui/labels.js';
 export { computeDropIndex } from './ui/reorder.js';
 export {
+  countWithParams,
   EMPTY_SIDE_EFFECTS_LABEL,
   formatSideEffectSummary,
   formatSideEffectTitle,
+  listHasParams,
 } from './ui/side-effect-summary.js';
 export type { SideEffectsDialogOptions } from './ui/side-effects-dialog.js';
-export { SideEffectsDialogElement } from './ui/side-effects-dialog.js';
+export { formatParamsBadge, SideEffectsDialogElement } from './ui/side-effects-dialog.js';
 export { StateMachineEditorElement } from './ui/state-machine-editor.js';
 
 let dialogRegistered = false;
