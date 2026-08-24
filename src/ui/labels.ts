@@ -26,10 +26,10 @@ export function describeSideEffectList(
   };
 }
 
-/** Short label used by the chips inside a node/edge card. */
+/** Short label used by the chips inside a node/edge card, phase first. */
 export function shortHookLabel(ref: SideEffectListRef): string {
   if (ref.kind === 'state') {
-    return `${ref.trigger} · ${ref.phase}`;
+    return `${ref.phase} · ${ref.trigger}`;
   }
   return ref.phase;
 }

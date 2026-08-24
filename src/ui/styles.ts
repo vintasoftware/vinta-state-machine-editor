@@ -213,6 +213,7 @@ export const editorStyles: string = `
 
   .chip {
     display: block;
+    position: relative;
     width: 100%;
     text-align: left;
     font-size: 12px;
@@ -226,11 +227,19 @@ export const editorStyles: string = `
     white-space: nowrap;
   }
 
-  /* Marks a list where at least one side effect receives parameters. */
+  /*
+   * Marks a list where at least one side effect receives parameters. It is taken
+   * out of flow: as a float it could not share a line with a label that already
+   * fills the chip, so it dropped onto a second line and grew the card.
+   */
+  .chip[data-has-params] { padding-right: 24px; }
+
   .chip[data-has-params]::after {
     content: '{ }';
-    float: right;
-    margin-left: 6px;
+    position: absolute;
+    top: 50%;
+    right: 7px;
+    transform: translateY(-50%);
     font-size: 10px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--sme-accent);

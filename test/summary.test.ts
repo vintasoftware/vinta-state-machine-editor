@@ -57,7 +57,7 @@ describe('labels', () => {
 
   it('builds short chip labels', () => {
     expect(shortHookLabel({ kind: 'state', stateId: 'a', trigger: 'enter', phase: 'before' })).toBe(
-      'enter · before',
+      'before · enter',
     );
     expect(shortHookLabel({ kind: 'transition', transitionId: 'a', phase: 'after' })).toBe('after');
   });

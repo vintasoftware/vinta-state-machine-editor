@@ -82,14 +82,14 @@ describe('rendering', () => {
     editor.value = sampleMachine();
     const shadow = shadowOf(editor);
     expect(queryAll(shadow, '.node .hook__label').map((label) => label.textContent)).toEqual([
-      'enter · before',
-      'enter · after',
-      'leave · before',
-      'leave · after',
-      'enter · before',
-      'enter · after',
-      'leave · before',
-      'leave · after',
+      'before · enter',
+      'after · enter',
+      'before · leave',
+      'after · leave',
+      'before · enter',
+      'after · enter',
+      'before · leave',
+      'after · leave',
     ]);
     expect(queryAll(shadow, '.edge-card .hook__label').map((label) => label.textContent)).toEqual([
       'before',
