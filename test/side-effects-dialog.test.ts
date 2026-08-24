@@ -50,6 +50,21 @@ afterEach(() => {
 });
 
 describe('side effects dialog', () => {
+  it('keeps a long name readable when it has to be truncated', async () => {
+    const dialog = mountDialog();
+    const name = 'sendOrderConfirmationEmailToCustomerServiceAndAlsoToBilling';
+    void dialog.open({
+      title: 'Side effects',
+      description: 'test',
+      effects: [createSideEffect({ id: 'send-email', name }, 'e1')],
+    });
+    await flush();
+
+    // The row truncates with an ellipsis in CSS, so the full name lives in the
+    // tooltip. Layout itself is verified in a browser; jsdom has none.
+    expect(queryOne(shadowOf(dialog), '.row__name').title).toBe(name);
+  });
+
   it('lists the current side effects in execution order', async () => {
     const dialog = mountDialog();
     void dialog.open({ title: 'Side effects', description: 'test', effects: draftEffects() });

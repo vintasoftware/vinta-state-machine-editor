@@ -441,12 +441,13 @@ export const dialogStyles: string = `
   .title { margin: 0; font-size: 16px; }
   .subtitle { margin: 2px 0 0; font-size: 12px; color: var(--sme-text-muted); }
 
-  .list { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
+  .list { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; min-width: 0; }
 
   .row {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     padding: 7px 9px;
     background: var(--sme-surface-muted);
     border: 1px solid var(--sme-border);
@@ -455,7 +456,7 @@ export const dialogStyles: string = `
 
   .list.is-reordering .row { transition: transform 120ms ease; }
 
-  .row__handle { cursor: grab; color: var(--sme-text-muted); touch-action: none; }
+  .row__handle { flex: none; cursor: grab; color: var(--sme-text-muted); touch-action: none; }
 
   @media (pointer: coarse) {
     .row { padding: 11px 12px; gap: 12px; }
@@ -469,10 +470,29 @@ export const dialogStyles: string = `
     .button { padding: 11px 18px; }
     .add select { padding: 10px; }
   }
-  .row__order { font-size: 11px; color: var(--sme-text-muted); font-variant-numeric: tabular-nums; }
-  .row__name { flex: 1; font-size: 13px; }
+  .row__order {
+    flex: none;
+    font-size: 11px;
+    color: var(--sme-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * min-width lets the name shrink past its own text. Without it a long name
+   * refuses to give ground, squeezing the badge until its label wraps and the
+   * whole row grows a second line.
+   */
+  .row__name {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .row__remove {
+    flex: none;
     color: var(--sme-text-muted);
     font-size: 13px;
     width: 22px;
@@ -488,12 +508,17 @@ export const dialogStyles: string = `
     display: grid;
     gap: 6px;
     padding: 0;
+    /* Grid items default to min-width: auto, which would let a long name push
+       the whole row past the dialog and take the remove button with it. */
+    min-width: 0;
     background: var(--sme-surface-muted);
     border: 1px solid var(--sme-border);
     border-radius: 8px;
   }
 
   .row__params {
+    flex: none;
+    white-space: nowrap;
     padding: 2px 7px;
     font-size: 11px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

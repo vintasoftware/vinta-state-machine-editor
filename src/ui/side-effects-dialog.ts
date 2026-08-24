@@ -251,7 +251,13 @@ export class SideEffectsDialogElement extends HTMLElement {
       handle.addEventListener('keydown', this.#onHandleKeyDown);
 
       createElement('span', { className: 'row__order', parent: row, text: `${index + 1}` });
-      createElement('span', { className: 'row__name', parent: row, text: effect.name });
+      createElement('span', {
+        className: 'row__name',
+        parent: row,
+        text: effect.name,
+        // The name truncates when it runs out of room, so keep it readable on hover.
+        attrs: { title: effect.name },
+      });
 
       const expanded = this.#expandedId === effect.id;
       const params = createButton({
