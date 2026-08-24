@@ -128,6 +128,17 @@ export const editorStyles: string = `
   }
 
   .node.is-selected { border-color: var(--sme-accent); box-shadow: 0 0 0 2px var(--sme-accent-soft), var(--sme-shadow); }
+
+  /* Final states get the double outline UML uses for an end state. */
+  .node.is-final {
+    outline: 2px solid var(--sme-border);
+    outline-offset: 3px;
+  }
+
+  .node.is-final.is-selected { outline-color: var(--sme-accent); }
+
+  .start-marker__dot { fill: var(--sme-text); }
+  .start-marker__line { stroke: var(--sme-text); stroke-width: 1.75; }
   .node.is-link-target { border-color: var(--sme-accent); }
 
   .node__header {
@@ -227,6 +238,38 @@ export const editorStyles: string = `
   .node__remove:hover,
   .edge-card__remove:hover { color: var(--sme-danger); }
 
+  .node__roles {
+    display: flex;
+    gap: 6px;
+    padding: 0 10px 10px;
+  }
+
+  .node__role {
+    flex: 1;
+    padding: 3px 6px;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    border: 1px solid var(--sme-border);
+    border-radius: 999px;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .node__role:hover:not(:disabled) { border-color: var(--sme-accent); color: var(--sme-text); }
+
+  .node__role.is-on {
+    border-color: transparent;
+    background: var(--sme-accent-soft);
+    color: var(--sme-text);
+    font-weight: 600;
+  }
+
+  .node__role:disabled { cursor: default; opacity: 0.75; }
+  .node__role:disabled:not(.is-on) { opacity: 0.4; }
+
   .node__link {
     position: absolute;
     top: 8px;
@@ -315,6 +358,7 @@ export const editorStyles: string = `
    */
   @media (pointer: coarse) {
     .icon-button { width: 32px; height: 32px; font-size: 15px; }
+    .node__role { padding: 7px 8px; font-size: 12px; }
     .node__header { padding: 10px; gap: 10px; }
     .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }
     .chip { padding: 8px 10px; font-size: 13px; }

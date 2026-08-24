@@ -77,6 +77,7 @@ defineStateMachineEditor('order-flow-editor');
 | Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
+| Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
 | Remove | Click **✕** on the card, or select it and press `Delete` |
 | Pan | Drag the background, scroll, or move two fingers together |
 | Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
@@ -89,6 +90,8 @@ Everything is plain JSON and deeply readonly — the component never mutates the
 interface StateMachine {
   states: StateNode[];
   transitions: Transition[];
+  initialStateIds: string[]; // states the machine can start in
+  finalStateIds: string[]; // states that end the machine
 }
 
 interface StateNode {
@@ -128,6 +131,24 @@ Each state therefore owns four ordered lists (`enter · before`, `enter · after
 { kind: 'state', stateId: 'draft', trigger: 'enter' | 'leave', phase: 'before' | 'after' }
 { kind: 'transition', transitionId: 'pay', phase: 'before' | 'after' }
 ```
+
+### Initial and final states
+
+Both are machine-level lists of state ids, so a machine can have several entry points, several end
+states, and a state that is both. Marking is editable per state with the **▶ Initial** / **◉ Final**
+toggles on each card; initial states get an entry arrow drawn into their left border and final
+states a double outline, following the usual UML shorthand.
+
+The lists are validated: an id must name a state that exists, and duplicates are rejected. Deleting
+a state removes it from both lists.
+
+```js
+editor.toggleInitialState('draft');
+editor.setFinalStates(['paid', 'cancelled']);
+editor.value.initialStateIds; // ['draft']
+```
+
+Changes arrive as `initial-states-change` / `final-states-change`.
 
 ### Laying out transitions
 

@@ -21,7 +21,7 @@ export function emptyHooks(): SideEffectHooks {
 }
 
 export function createEmptyMachine(): StateMachine {
-  return { states: [], transitions: [] };
+  return { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
 }
 
 export function createState(options: {
@@ -111,7 +111,7 @@ export function updateState(
   };
 }
 
-/** Removes a state along with every transition touching it. */
+/** Removes a state along with every transition touching it, and any role it held. */
 export function removeState(machine: StateMachine, stateId: string): StateMachine {
   requireState(machine, stateId);
   return {
@@ -119,7 +119,59 @@ export function removeState(machine: StateMachine, stateId: string): StateMachin
     transitions: machine.transitions.filter(
       (transition) => transition.from !== stateId && transition.to !== stateId,
     ),
+    initialStateIds: machine.initialStateIds.filter((id) => id !== stateId),
+    finalStateIds: machine.finalStateIds.filter((id) => id !== stateId),
   };
+}
+
+export function isInitialState(machine: StateMachine, stateId: string): boolean {
+  return machine.initialStateIds.includes(stateId);
+}
+
+export function isFinalState(machine: StateMachine, stateId: string): boolean {
+  return machine.finalStateIds.includes(stateId);
+}
+
+function uniqueKnownStates(machine: StateMachine, stateIds: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  for (const stateId of stateIds) {
+    requireState(machine, stateId);
+    seen.add(stateId);
+  }
+  // Keep the caller's order, minus duplicates.
+  return stateIds.filter(
+    (stateId, index) => stateIds.indexOf(stateId) === index && seen.has(stateId),
+  );
+}
+
+/** Replaces the list of states the machine may start in. */
+export function setInitialStates(machine: StateMachine, stateIds: readonly string[]): StateMachine {
+  return { ...machine, initialStateIds: uniqueKnownStates(machine, stateIds) };
+}
+
+/** Replaces the list of states that end the machine. */
+export function setFinalStates(machine: StateMachine, stateIds: readonly string[]): StateMachine {
+  return { ...machine, finalStateIds: uniqueKnownStates(machine, stateIds) };
+}
+
+export function toggleInitialState(machine: StateMachine, stateId: string): StateMachine {
+  requireState(machine, stateId);
+  return setInitialStates(
+    machine,
+    isInitialState(machine, stateId)
+      ? machine.initialStateIds.filter((id) => id !== stateId)
+      : [...machine.initialStateIds, stateId],
+  );
+}
+
+export function toggleFinalState(machine: StateMachine, stateId: string): StateMachine {
+  requireState(machine, stateId);
+  return setFinalStates(
+    machine,
+    isFinalState(machine, stateId)
+      ? machine.finalStateIds.filter((id) => id !== stateId)
+      : [...machine.finalStateIds, stateId],
+  );
 }
 
 export function addTransition(machine: StateMachine, transition: Transition): StateMachine {
@@ -298,6 +350,10 @@ export function describeChange(change: MachineChange): string {
       return 'Move transition';
     case 'side-effects-change':
       return 'Change side effects';
+    case 'initial-states-change':
+      return 'Change initial states';
+    case 'final-states-change':
+      return 'Change final states';
     case 'replace':
       return 'Replace machine';
   }

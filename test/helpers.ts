@@ -14,6 +14,8 @@ export function sampleMachine(): StateMachine {
   return {
     states: [draft, paid],
     transitions: [createTransition({ id: 'pay', name: 'pay', from: 'draft', to: 'paid' })],
+    initialStateIds: ['draft'],
+    finalStateIds: ['paid'],
   };
 }
 

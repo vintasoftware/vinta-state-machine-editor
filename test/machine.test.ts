@@ -10,12 +10,18 @@ import {
   createState,
   createTransition,
   getSideEffects,
+  isFinalState,
+  isInitialState,
   moveSideEffect,
   removeSideEffect,
   removeState,
   removeTransition,
+  setFinalStates,
+  setInitialStates,
   setSideEffects,
   siblingTransitions,
+  toggleFinalState,
+  toggleInitialState,
   updateState,
   updateTransition,
 } from '../src/model/machine.js';
@@ -34,6 +40,8 @@ function machineWithTwoStates(): StateMachine {
       createState({ id: 's2', name: 'Two', position: { x: 100, y: 0 } }),
     ],
     transitions: [createTransition({ id: 't1', name: 'go', from: 's1', to: 's2' })],
+    initialStateIds: [],
+    finalStateIds: [],
   };
 }
 
@@ -234,5 +242,65 @@ describe('side effects', () => {
     expect(() =>
       getSideEffects(machine, { kind: 'transition', transitionId: 'ghost', phase: 'after' }),
     ).toThrow(StateMachineError);
+  });
+});
+
+describe('initial and final states', () => {
+  it('starts with no roles assigned', () => {
+    const machine = createEmptyMachine();
+    expect(machine.initialStateIds).toEqual([]);
+    expect(machine.finalStateIds).toEqual([]);
+  });
+
+  it('toggles a state in and out of each list', () => {
+    let machine = machineWithTwoStates();
+    machine = toggleInitialState(machine, 's1');
+    expect(isInitialState(machine, 's1')).toBe(true);
+    expect(isFinalState(machine, 's1')).toBe(false);
+
+    machine = toggleFinalState(machine, 's2');
+    expect(machine.finalStateIds).toEqual(['s2']);
+
+    machine = toggleInitialState(machine, 's1');
+    expect(machine.initialStateIds).toEqual([]);
+  });
+
+  it('lets a state be both initial and final', () => {
+    let machine = machineWithTwoStates();
+    machine = toggleInitialState(machine, 's1');
+    machine = toggleFinalState(machine, 's1');
+    expect(isInitialState(machine, 's1')).toBe(true);
+    expect(isFinalState(machine, 's1')).toBe(true);
+  });
+
+  it('supports several initial states, keeping the given order', () => {
+    const machine = setInitialStates(machineWithTwoStates(), ['s2', 's1']);
+    expect(machine.initialStateIds).toEqual(['s2', 's1']);
+  });
+
+  it('drops duplicates', () => {
+    const machine = setFinalStates(machineWithTwoStates(), ['s1', 's1', 's2']);
+    expect(machine.finalStateIds).toEqual(['s1', 's2']);
+  });
+
+  it('rejects unknown states', () => {
+    expect(() => setInitialStates(machineWithTwoStates(), ['ghost'])).toThrow(StateMachineError);
+    expect(() => toggleFinalState(machineWithTwoStates(), 'ghost')).toThrow(StateMachineError);
+  });
+
+  it('forgets a removed state', () => {
+    let machine = machineWithTwoStates();
+    machine = toggleInitialState(machine, 's1');
+    machine = toggleFinalState(machine, 's1');
+    machine = removeState(machine, 's1');
+    expect(machine.initialStateIds).toEqual([]);
+    expect(machine.finalStateIds).toEqual([]);
+  });
+
+  it('leaves the previous machine untouched', () => {
+    const machine = machineWithTwoStates();
+    const next = toggleInitialState(machine, 's1');
+    expect(machine.initialStateIds).toEqual([]);
+    expect(next.initialStateIds).toEqual(['s1']);
   });
 });

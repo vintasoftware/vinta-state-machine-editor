@@ -160,6 +160,33 @@ function checkUniqueIds(ids: readonly string[], label: string, issues: Issues): 
   }
 }
 
+/** Reads a list of state ids, checking each one points at a state that exists. */
+function parseStateIdList(
+  source: Record<string, unknown>,
+  key: string,
+  knownStateIds: ReadonlySet<string>,
+  issues: Issues,
+): readonly string[] {
+  const raw = readArray(source, key, 'machine', issues);
+  const stateIds: string[] = [];
+  raw.forEach((value, index) => {
+    if (typeof value !== 'string') {
+      issues.push(`machine.${key}[${index}] must be a state id.`);
+      return;
+    }
+    if (!knownStateIds.has(value)) {
+      issues.push(`machine.${key} refers to unknown state "${value}".`);
+      return;
+    }
+    if (stateIds.includes(value)) {
+      issues.push(`machine.${key} lists "${value}" more than once.`);
+      return;
+    }
+    stateIds.push(value);
+  });
+  return stateIds;
+}
+
 /** Validates untrusted input (e.g. parsed JSON) into a {@link StateMachine}. */
 export function parseStateMachine(input: unknown): ParseResult<StateMachine> {
   const issues: Issues = [];
@@ -186,6 +213,8 @@ export function parseStateMachine(input: unknown): ParseResult<StateMachine> {
   );
 
   const stateIds = new Set(states.map((state) => state.id));
+  const initialStateIds = parseStateIdList(input, 'initialStateIds', stateIds, issues);
+  const finalStateIds = parseStateIdList(input, 'finalStateIds', stateIds, issues);
   for (const transition of transitions) {
     if (!stateIds.has(transition.from)) {
       issues.push(`Transition "${transition.id}" points from unknown state "${transition.from}".`);
@@ -198,7 +227,7 @@ export function parseStateMachine(input: unknown): ParseResult<StateMachine> {
   if (issues.length > 0) {
     return { ok: false, errors: issues };
   }
-  return { ok: true, value: { states, transitions } };
+  return { ok: true, value: { states, transitions, initialStateIds, finalStateIds } };
 }
 
 /** Same as {@link parseStateMachine} but throws a {@link StateMachineError} on invalid input. */

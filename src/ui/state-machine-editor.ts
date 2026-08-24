@@ -35,10 +35,16 @@ import {
   findState,
   findTransition,
   getSideEffects,
+  isFinalState,
+  isInitialState,
   removeState,
   removeTransition,
+  setFinalStates,
+  setInitialStates,
   setSideEffects,
   siblingTransitions,
+  toggleFinalState,
+  toggleInitialState,
   updateState,
   updateTransition,
 } from '../model/machine.js';
@@ -53,6 +59,7 @@ import type {
   SideEffectProvider,
   StateMachine,
   StateNode,
+  StateRole,
   StateTrigger,
   Transition,
 } from '../types.js';
@@ -70,6 +77,9 @@ const ADD_SIDE_EFFECT_LABEL = '+ Add side effect';
 /** Dropping a transition card this close to its edge snaps it back to automatic placement. */
 const LABEL_SNAP_DISTANCE = 16;
 const FALLBACK_LABEL_SPACING = 160;
+/** How far the start arrow reaches left of an initial state, and how far down it sits. */
+const START_MARKER_REACH = 42;
+const START_MARKER_Y = 20;
 
 type HookKey = `${StateTrigger}:${SideEffectPhase}`;
 
@@ -82,6 +92,9 @@ const HOOK_KEYS: readonly HookKey[] = [
 
 interface StateView {
   readonly root: HTMLElement;
+  /** Entry arrow drawn to the left of a state the machine can start in. */
+  readonly startMarker: SVGGElement;
+  readonly roleButtons: ReadonlyMap<StateRole, HTMLButtonElement>;
   readonly header: HTMLElement;
   readonly name: HTMLElement;
   readonly renameButton: HTMLButtonElement;
@@ -366,6 +379,26 @@ export class StateMachineEditorElement extends HTMLElement {
     return transition;
   }
 
+  /** Marks (or unmarks) a state as one the machine can start in. */
+  toggleInitialState(stateId: string): void {
+    this.#commit(toggleInitialState(this.#machine, stateId), { kind: 'initial-states-change' });
+  }
+
+  /** Marks (or unmarks) a state as one that ends the machine. */
+  toggleFinalState(stateId: string): void {
+    this.#commit(toggleFinalState(this.#machine, stateId), { kind: 'final-states-change' });
+  }
+
+  /** Replaces the whole list of initial states. */
+  setInitialStates(stateIds: readonly string[]): void {
+    this.#commit(setInitialStates(this.#machine, stateIds), { kind: 'initial-states-change' });
+  }
+
+  /** Replaces the whole list of final states. */
+  setFinalStates(stateIds: readonly string[]): void {
+    this.#commit(setFinalStates(this.#machine, stateIds), { kind: 'final-states-change' });
+  }
+
   /** Starts inline editing of the selected state or transition name. */
   renameSelection(): void {
     const selection = this.#selection;
@@ -591,6 +624,7 @@ export class StateMachineEditorElement extends HTMLElement {
     for (const [id, view] of this.#stateViews) {
       if (!alive.has(id)) {
         view.root.remove();
+        view.startMarker.remove();
         this.#stateViews.delete(id);
       }
     }
@@ -629,6 +663,33 @@ export class StateMachineEditorElement extends HTMLElement {
       });
       chips.set(key, chip);
     }
+    const roles = createElement('div', { className: 'node__roles', parent: root });
+    const roleButtons = new Map<StateRole, HTMLButtonElement>();
+    for (const role of ['initial', 'final'] as const) {
+      const button = createButton({
+        className: `node__role node__role--${role}`,
+        parent: roles,
+        text: role === 'initial' ? '▶ Initial' : '◉ Final',
+        attrs: { 'aria-pressed': 'false' },
+      });
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.#toggleRole(stateId, role);
+      });
+      roleButtons.set(role, button);
+    }
+
+    const startMarker = createSvgElement('g', {
+      className: 'start-marker',
+      parent: this.#edgeLayer,
+    });
+    createSvgElement('circle', { className: 'start-marker__dot', parent: startMarker });
+    createSvgElement('line', {
+      className: 'start-marker__line',
+      parent: startMarker,
+      attrs: { 'marker-end': 'url(#sme-arrow)' },
+    });
+
     const linkHandle = createButton({
       className: 'node__link',
       parent: root,
@@ -652,7 +713,17 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     linkHandle.addEventListener('pointerdown', (event) => this.#onLinkPointerDown(event, stateId));
 
-    return { root, header, name, renameButton, removeButton, linkHandle, chips };
+    return {
+      root,
+      header,
+      name,
+      renameButton,
+      removeButton,
+      linkHandle,
+      chips,
+      startMarker,
+      roleButtons,
+    };
   }
 
   #updateStateView(view: StateView, state: StateNode): void {
@@ -675,6 +746,60 @@ export class StateMachineEditorElement extends HTMLElement {
         this.#updateChip(chip, hookRef(state.id, key));
       }
     }
+    this.#updateStateRoles(view, state);
+  }
+
+  #updateStateRoles(view: StateView, state: StateNode): void {
+    const initial = isInitialState(this.#machine, state.id);
+    const final = isFinalState(this.#machine, state.id);
+
+    view.root.classList.toggle('is-initial', initial);
+    view.root.classList.toggle('is-final', final);
+
+    for (const [role, button] of view.roleButtons) {
+      const on = role === 'initial' ? initial : final;
+      button.classList.toggle('is-on', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+      button.disabled = this.#readOnly;
+      const verb = on ? 'Unmark' : 'Mark';
+      button.setAttribute(
+        'aria-label',
+        `${verb} “${state.name}” as ${role === 'initial' ? 'an initial' : 'a final'} state`,
+      );
+    }
+
+    // A short arrow into the left border: the usual way of drawing a start state.
+    view.startMarker.style.display = initial ? '' : 'none';
+    if (!initial) {
+      return;
+    }
+    const rect = this.#rectFor(state);
+    const y = rect.y + START_MARKER_Y;
+    const dot = view.startMarker.firstElementChild;
+    const line = view.startMarker.lastElementChild;
+    if (dot !== null) {
+      dot.setAttribute('cx', String(rect.x - START_MARKER_REACH));
+      dot.setAttribute('cy', String(y));
+      dot.setAttribute('r', '6');
+    }
+    if (line !== null) {
+      line.setAttribute('x1', String(rect.x - START_MARKER_REACH + 6));
+      line.setAttribute('y1', String(y));
+      line.setAttribute('x2', String(rect.x - 3));
+      line.setAttribute('y2', String(y));
+    }
+  }
+
+  #toggleRole(stateId: string, role: StateRole): void {
+    if (this.#readOnly) {
+      return;
+    }
+    this.#commit(
+      role === 'initial'
+        ? toggleInitialState(this.#machine, stateId)
+        : toggleFinalState(this.#machine, stateId),
+      { kind: role === 'initial' ? 'initial-states-change' : 'final-states-change' },
+    );
   }
 
   #updateChip(chip: HTMLButtonElement, ref: SideEffectListRef): void {

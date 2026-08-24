@@ -124,7 +124,7 @@ describe('rendering', () => {
   it('removes views when the machine shrinks', () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
-    editor.value = { states: [], transitions: [] };
+    editor.value = { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
     expect(queryAll(shadowOf(editor), '.node')).toHaveLength(0);
     expect(queryAll(shadowOf(editor), '.edge-card')).toHaveLength(0);
     expect(queryOne(shadowOf(editor), '.empty-state').hidden).toBe(false);
@@ -134,6 +134,8 @@ describe('rendering', () => {
     const editor = mountEditor();
     expect(() => {
       editor.value = {
+        initialStateIds: [],
+        finalStateIds: [],
         states: [],
         transitions: [
           {
@@ -481,6 +483,118 @@ describe('viewport', () => {
     const before = editor.viewport;
     editor.zoomToFit();
     expect(editor.viewport).toBe(before);
+  });
+});
+
+describe('initial and final states', () => {
+  it('marks initial states with an entry arrow and final states with a double outline', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine(); // draft is initial, paid is final
+
+    const shadow = shadowOf(editor);
+    const nodes = queryAll(shadow, '.node');
+    expect(nodes[0]?.classList.contains('is-initial')).toBe(true);
+    expect(nodes[0]?.classList.contains('is-final')).toBe(false);
+    expect(nodes[1]?.classList.contains('is-final')).toBe(true);
+
+    const markers = queryAll(shadow, '.node').map(
+      (_, index) => shadow.querySelectorAll('.start-marker')[index],
+    );
+    expect(markers[0] instanceof SVGElement && markers[0].style.display).toBe('');
+    expect(markers[1] instanceof SVGElement && markers[1].style.display).toBe('none');
+  });
+
+  it('draws the entry arrow just left of the state', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    const dot = querySvg(shadowOf(editor), '.start-marker__dot');
+    const line = querySvg(shadowOf(editor), '.start-marker__line');
+    // draft sits at x = 0, so the arrow reaches into negative space and stops at its border.
+    expect(Number(dot.getAttribute('cx'))).toBeLessThan(0);
+    expect(Number(line.getAttribute('x2'))).toBeCloseTo(-3, 5);
+    expect(Number(line.getAttribute('x1'))).toBeLessThan(Number(line.getAttribute('x2')));
+  });
+
+  it('toggles both roles from the card, and reports each change', () => {
+    const editor = mountEditor();
+    editor.value = { ...sampleMachine(), initialStateIds: [], finalStateIds: [] };
+    const recorded = changes(editor);
+    const shadow = shadowOf(editor);
+
+    queryAll(shadow, '.node__role--initial')[0]?.click();
+    expect(editor.value.initialStateIds).toEqual(['draft']);
+
+    queryAll(shadow, '.node__role--final')[0]?.click();
+    expect(editor.value.finalStateIds).toEqual(['draft']);
+
+    // Both roles at once is legal, and each has its own change event.
+    expect(recorded).toEqual([{ kind: 'initial-states-change' }, { kind: 'final-states-change' }]);
+
+    queryAll(shadow, '.node__role--initial')[0]?.click();
+    expect(editor.value.initialStateIds).toEqual([]);
+  });
+
+  it('reflects the current roles in the toggles, for assistive tech too', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+
+    const initialToggle = queryAll(shadow, '.node__role--initial')[0];
+    const finalToggle = queryAll(shadow, '.node__role--final')[0];
+    expect(initialToggle?.getAttribute('aria-pressed')).toBe('true');
+    expect(initialToggle?.classList.contains('is-on')).toBe(true);
+    expect(initialToggle?.getAttribute('aria-label')).toBe('Unmark “Draft” as an initial state');
+    expect(finalToggle?.getAttribute('aria-pressed')).toBe('false');
+    expect(finalToggle?.getAttribute('aria-label')).toBe('Mark “Draft” as a final state');
+  });
+
+  it('supports several initial and final states', () => {
+    const editor = mountEditor();
+    editor.value = { ...sampleMachine(), initialStateIds: [], finalStateIds: [] };
+
+    editor.setInitialStates(['draft', 'paid']);
+    editor.setFinalStates(['paid']);
+
+    const shadow = shadowOf(editor);
+    expect(queryAll(shadow, '.node.is-initial')).toHaveLength(2);
+    expect(queryAll(shadow, '.node.is-final')).toHaveLength(1);
+    expect(queryAll(shadow, '.node')[1]?.classList.contains('is-initial')).toBe(true);
+  });
+
+  it('toggles roles through the public API', () => {
+    const editor = mountEditor();
+    editor.value = { ...sampleMachine(), initialStateIds: [], finalStateIds: [] };
+    editor.toggleInitialState('paid');
+    editor.toggleFinalState('paid');
+    expect(editor.value.initialStateIds).toEqual(['paid']);
+    expect(editor.value.finalStateIds).toEqual(['paid']);
+  });
+
+  it('drops the marks when the state is deleted', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__remove')[0]?.click();
+
+    expect(editor.value.initialStateIds).toEqual([]);
+    expect(editor.value.finalStateIds).toEqual(['paid']);
+    // One card left, so one (hidden) marker element remains.
+    expect(shadowOf(editor).querySelectorAll('.start-marker')).toHaveLength(1);
+  });
+
+  it('shows but disables the toggles in read-only mode', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.readOnly = true;
+
+    const shadow = shadowOf(editor);
+    const initialToggle = queryButton(shadow, '.node__role--initial');
+    expect(initialToggle.hidden).toBe(false);
+    expect(initialToggle.disabled).toBe(true);
+    expect(initialToggle.classList.contains('is-on')).toBe(true);
+
+    initialToggle.click();
+    expect(editor.value.initialStateIds).toEqual(['draft']);
   });
 });
 

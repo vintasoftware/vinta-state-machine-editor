@@ -91,6 +91,8 @@ function exampleMachine(): StateMachine {
   return {
     states: [draft, pending, paid, cancelled],
     transitions: [submit, pay, cancel, refund],
+    initialStateIds: ['draft'],
+    finalStateIds: ['paid', 'cancelled'],
   };
 }
 
@@ -170,7 +172,7 @@ requireElement('#reset', isHtml).addEventListener('click', () => {
 });
 
 requireElement('#clear', isHtml).addEventListener('click', () => {
-  editor.value = { states: [], transitions: [] };
+  editor.value = { states: [], transitions: [], initialStateIds: [], finalStateIds: [] };
   renderJson();
 });
 

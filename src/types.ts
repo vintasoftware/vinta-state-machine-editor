@@ -82,7 +82,16 @@ export interface Transition {
 export interface StateMachine {
   readonly states: readonly StateNode[];
   readonly transitions: readonly Transition[];
+  /** Ids of the states the machine can start in. */
+  readonly initialStateIds: readonly string[];
+  /** Ids of the states that end the machine. A state may be both initial and final. */
+  readonly finalStateIds: readonly string[];
 }
+
+/** How a state participates in the machine's lifecycle. */
+export type StateRole = 'initial' | 'final';
+
+export const STATE_ROLES: readonly StateRole[] = ['initial', 'final'];
 
 /** Which side of a state a side effect list belongs to. */
 export type StateTrigger = 'enter' | 'leave';
@@ -125,4 +134,6 @@ export type MachineChange =
   | { readonly kind: 'transition-rename'; readonly transitionId: string }
   | { readonly kind: 'transition-move'; readonly transitionId: string }
   | { readonly kind: 'side-effects-change'; readonly ref: SideEffectListRef }
+  | { readonly kind: 'initial-states-change' }
+  | { readonly kind: 'final-states-change' }
   | { readonly kind: 'replace' };

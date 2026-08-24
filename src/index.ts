@@ -48,12 +48,18 @@ export {
   findState,
   findTransition,
   getSideEffects,
+  isFinalState,
+  isInitialState,
   moveSideEffect,
   removeSideEffect,
   removeState,
   removeTransition,
+  setFinalStates,
+  setInitialStates,
   setSideEffects,
   siblingTransitions,
+  toggleFinalState,
+  toggleInitialState,
   updateSideEffects,
   updateState,
   updateTransition,
@@ -65,7 +71,7 @@ export {
   parseStateMachine,
 } from './model/parse.js';
 export type * from './types.js';
-export { SIDE_EFFECT_PHASES, STATE_TRIGGERS } from './types.js';
+export { SIDE_EFFECT_PHASES, STATE_ROLES, STATE_TRIGGERS } from './types.js';
 export { describeSideEffectList, shortHookLabel } from './ui/labels.js';
 export { computeDropIndex } from './ui/reorder.js';
 export {

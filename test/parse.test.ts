@@ -85,3 +85,37 @@ describe('parseSideEffectDefinitions', () => {
     expect(parseSideEffectDefinitions([{ id: 'a' }]).ok).toBe(false);
   });
 });
+
+describe('initial and final state lists', () => {
+  it('defaults to empty lists', () => {
+    const result = parseStateMachine({ states: [], transitions: [] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.initialStateIds).toEqual([]);
+      expect(result.value.finalStateIds).toEqual([]);
+    }
+  });
+
+  it('keeps valid lists', () => {
+    const result = parseStateMachine({ ...VALID, initialStateIds: ['s1'], finalStateIds: ['s1'] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.initialStateIds).toEqual(['s1']);
+      expect(result.value.finalStateIds).toEqual(['s1']);
+    }
+  });
+
+  it('rejects unknown ids, duplicates and non-strings', () => {
+    const result = parseStateMachine({ ...VALID, initialStateIds: ['ghost', 's1', 's1', 7] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain('machine.initialStateIds refers to unknown state "ghost".');
+      expect(result.errors).toContain('machine.initialStateIds lists "s1" more than once.');
+      expect(result.errors).toContain('machine.initialStateIds[3] must be a state id.');
+    }
+  });
+
+  it('rejects a list that is not an array', () => {
+    expect(parseStateMachine({ ...VALID, finalStateIds: 's1' }).ok).toBe(false);
+  });
+});
