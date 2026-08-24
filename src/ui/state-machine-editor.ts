@@ -31,6 +31,7 @@ import {
   createState,
   createTransition,
   findState,
+  findTransition,
   getSideEffects,
   removeState,
   removeTransition,
@@ -78,6 +79,7 @@ interface StateView {
   readonly root: HTMLElement;
   readonly header: HTMLElement;
   readonly name: HTMLElement;
+  readonly renameButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
   readonly linkHandle: HTMLButtonElement;
   readonly chips: ReadonlyMap<HookKey, HTMLButtonElement>;
@@ -87,6 +89,7 @@ interface TransitionView {
   readonly path: SVGPathElement;
   readonly card: HTMLElement;
   readonly name: HTMLElement;
+  readonly renameButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
   readonly chips: ReadonlyMap<SideEffectPhase, HTMLButtonElement>;
 }
@@ -167,6 +170,8 @@ export class StateMachineEditorElement extends HTMLElement {
   #trackingPointers = false;
   #dialog: SideEffectsDialogElement | undefined;
   #renameCleanup: (() => void) | undefined;
+  /** Id of the state or transition whose name is currently being edited. */
+  #renamingId: string | undefined;
 
   constructor() {
     super();
@@ -348,6 +353,19 @@ export class StateMachineEditorElement extends HTMLElement {
       transitionId: transition.id,
     });
     return transition;
+  }
+
+  /** Starts inline editing of the selected state or transition name. */
+  renameSelection(): void {
+    const selection = this.#selection;
+    if (selection === null) {
+      return;
+    }
+    if (selection.kind === 'state') {
+      this.#renameState(selection.id);
+      return;
+    }
+    this.#renameTransition(selection.id);
   }
 
   zoomIn(): void {
@@ -575,8 +593,14 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const header = createElement('div', { className: 'node__header', parent: root });
     const name = createElement('span', { className: 'node__name', parent: header });
+    const renameButton = createButton({
+      className: 'icon-button node__rename',
+      parent: header,
+      text: '✎',
+      attrs: { 'aria-label': 'Rename state', title: 'Rename (F2)' },
+    });
     const removeButton = createButton({
-      className: 'icon-button',
+      className: 'icon-button node__remove',
       parent: header,
       text: '✕',
       attrs: { 'aria-label': 'Remove state' },
@@ -607,13 +631,17 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     header.addEventListener('pointerdown', (event) => this.#onNodePointerDown(event, stateId));
     name.addEventListener('dblclick', () => this.#renameState(stateId));
+    renameButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#renameState(stateId);
+    });
     removeButton.addEventListener('click', (event) => {
       event.stopPropagation();
       this.#commit(removeState(this.#machine, stateId), { kind: 'state-remove', stateId });
     });
     linkHandle.addEventListener('pointerdown', (event) => this.#onLinkPointerDown(event, stateId));
 
-    return { root, header, name, removeButton, linkHandle, chips };
+    return { root, header, name, renameButton, removeButton, linkHandle, chips };
   }
 
   #updateStateView(view: StateView, state: StateNode): void {
@@ -624,7 +652,10 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#selection?.kind === 'state' && this.#selection.id === state.id,
     );
     view.name.textContent = state.name;
-    view.removeButton.hidden = this.#readOnly;
+    const editing = this.#renamingId === state.id;
+    view.name.hidden = editing;
+    view.renameButton.hidden = this.#readOnly || editing;
+    view.removeButton.hidden = this.#readOnly || editing;
     view.linkHandle.hidden = this.#readOnly;
     view.header.style.cursor = this.#readOnly ? 'default' : 'grab';
     for (const key of HOOK_KEYS) {
@@ -680,8 +711,14 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     const header = createElement('div', { className: 'edge-card__header', parent: card });
     const name = createElement('span', { className: 'edge-card__name', parent: header });
+    const renameButton = createButton({
+      className: 'icon-button edge-card__rename',
+      parent: header,
+      text: '✎',
+      attrs: { 'aria-label': 'Rename transition', title: 'Rename (F2)' },
+    });
     const removeButton = createButton({
-      className: 'icon-button',
+      className: 'icon-button edge-card__remove',
       parent: header,
       text: '✕',
       attrs: { 'aria-label': 'Remove transition' },
@@ -704,6 +741,10 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#setSelection({ kind: 'transition', id: transitionId });
     });
     name.addEventListener('dblclick', () => this.#renameTransition(transitionId));
+    renameButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#renameTransition(transitionId);
+    });
     removeButton.addEventListener('click', (event) => {
       event.stopPropagation();
       this.#commit(removeTransition(this.#machine, transitionId), {
@@ -712,7 +753,7 @@ export class StateMachineEditorElement extends HTMLElement {
       });
     });
 
-    return { path, card, name, removeButton, chips };
+    return { path, card, name, renameButton, removeButton, chips };
   }
 
   #updateTransitionView(view: TransitionView, transition: Transition): void {
@@ -724,7 +765,10 @@ export class StateMachineEditorElement extends HTMLElement {
     view.card.style.left = `${geometry.label.x}px`;
     view.card.style.top = `${geometry.label.y}px`;
     view.name.textContent = transition.name;
-    view.removeButton.hidden = this.#readOnly;
+    const editing = this.#renamingId === transition.id;
+    view.name.hidden = editing;
+    view.renameButton.hidden = this.#readOnly || editing;
+    view.removeButton.hidden = this.#readOnly || editing;
     for (const phase of ['before', 'after'] as const) {
       const chip = view.chips.get(phase);
       if (chip !== undefined) {
@@ -1030,11 +1074,16 @@ export class StateMachineEditorElement extends HTMLElement {
     if (this.#readOnly || isInteractiveTarget(event.target)) {
       return;
     }
-    if (event.key !== 'Delete' && event.key !== 'Backspace') {
-      return;
-    }
     const selection = this.#selection;
     if (selection === null) {
+      return;
+    }
+    if (event.key === 'F2' || event.key === 'Enter') {
+      event.preventDefault();
+      this.renameSelection();
+      return;
+    }
+    if (event.key !== 'Delete' && event.key !== 'Backspace') {
       return;
     }
     event.preventDefault();
@@ -1060,34 +1109,78 @@ export class StateMachineEditorElement extends HTMLElement {
     if (state === undefined || view === undefined || this.#readOnly) {
       return;
     }
-    this.#startRename(view.name, state.name, (name) => {
-      this.#commit(updateState(this.#machine, stateId, { name }), {
-        kind: 'state-rename',
-        stateId,
-      });
+    this.#startRename({
+      id: stateId,
+      label: view.name,
+      current: state.name,
+      ariaLabel: 'State name',
+      controls: [view.renameButton, view.removeButton],
+      commit: (name) => {
+        this.#commit(updateState(this.#machine, stateId, { name }), {
+          kind: 'state-rename',
+          stateId,
+        });
+      },
     });
   }
 
   #renameTransition(transitionId: string): void {
     const view = this.#transitionViews.get(transitionId);
-    const transition = this.#machine.transitions.find((item) => item.id === transitionId);
+    const transition = findTransition(this.#machine, transitionId);
     if (transition === undefined || view === undefined || this.#readOnly) {
       return;
     }
-    this.#startRename(view.name, transition.name, (name) => {
-      this.#commit(updateTransition(this.#machine, transitionId, { name }), {
-        kind: 'transition-rename',
-        transitionId,
-      });
+    this.#startRename({
+      id: transitionId,
+      label: view.name,
+      current: transition.name,
+      ariaLabel: 'Transition name',
+      controls: [view.renameButton, view.removeButton],
+      commit: (name) => {
+        this.#commit(updateTransition(this.#machine, transitionId, { name }), {
+          kind: 'transition-rename',
+          transitionId,
+        });
+      },
     });
   }
 
-  #startRename(label: HTMLElement, current: string, commit: (name: string) => void): void {
+  /**
+   * Swaps the name for an input plus save/cancel buttons. The buttons exist so the
+   * gesture works on touch, where there is no Enter key in reach and no Escape at all.
+   */
+  #startRename(options: {
+    readonly id: string;
+    readonly label: HTMLElement;
+    readonly current: string;
+    readonly ariaLabel: string;
+    readonly controls: readonly HTMLElement[];
+    readonly commit: (name: string) => void;
+  }): void {
     this.#renameCleanup?.();
+    this.#renamingId = options.id;
+
+    const editor = createElement('span', { className: 'name-edit' });
     const input = createElement('input', { className: 'name-input' });
-    input.value = current;
-    label.hidden = true;
-    label.after(input);
+    input.value = options.current;
+    input.setAttribute('aria-label', options.ariaLabel);
+    const save = createButton({
+      className: 'icon-button icon-button--confirm',
+      text: '✓',
+      attrs: { 'aria-label': 'Save name', title: 'Save (Enter)' },
+    });
+    const cancel = createButton({
+      className: 'icon-button icon-button--cancel',
+      text: '✕',
+      attrs: { 'aria-label': 'Cancel renaming', title: 'Cancel (Escape)' },
+    });
+    editor.append(input, save, cancel);
+
+    options.label.hidden = true;
+    for (const control of options.controls) {
+      control.hidden = true;
+    }
+    options.label.after(editor);
     input.focus();
     input.select();
 
@@ -1098,16 +1191,20 @@ export class StateMachineEditorElement extends HTMLElement {
       }
       finished = true;
       this.#renameCleanup = undefined;
-      input.remove();
-      label.hidden = false;
+      this.#renamingId = undefined;
+      editor.remove();
+      options.label.hidden = false;
+      for (const control of options.controls) {
+        control.hidden = this.#readOnly;
+      }
     };
     this.#renameCleanup = cleanup;
 
     const confirm = (): void => {
       const name = input.value.trim();
       cleanup();
-      if (name.length > 0 && name !== current) {
-        commit(name);
+      if (name.length > 0 && name !== options.current) {
+        options.commit(name);
       }
     };
 
@@ -1124,5 +1221,22 @@ export class StateMachineEditorElement extends HTMLElement {
     input.addEventListener('blur', confirm);
     input.addEventListener('pointerdown', (event) => event.stopPropagation());
     input.addEventListener('dblclick', (event) => event.stopPropagation());
+
+    for (const button of [save, cancel]) {
+      // Keep focus in the input so the blur handler does not commit before the
+      // click lands — which would make Cancel save instead of discarding.
+      button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
+    save.addEventListener('click', (event) => {
+      event.stopPropagation();
+      confirm();
+    });
+    cancel.addEventListener('click', (event) => {
+      event.stopPropagation();
+      cleanup();
+    });
   }
 }

@@ -218,6 +218,147 @@ describe('editing', () => {
     expect(shadowOf(editor).querySelector('.name-input')).toBeNull();
   });
 
+  it('renames a state from the rename button, which touch users can tap', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    const input = shadowOf(editor).querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    expect(shadowOf(editor).activeElement).toBe(input);
+    input.value = 'Submitted';
+    fireKey(input, 'Enter');
+
+    expect(editor.value.states[0]?.name).toBe('Submitted');
+  });
+
+  it('renames a transition from its rename button', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryOne(shadowOf(editor), '.edge-card__rename').click();
+
+    const input = shadowOf(editor).querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    input.value = 'settle';
+    fireKey(input, 'Enter');
+
+    expect(editor.value.transitions[0]?.name).toBe('settle');
+  });
+
+  it('renames the selection with F2 and with Enter', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    firePointer(queryOne(shadowOf(editor), '.node'), 'pointerdown');
+    fireKey(editor, 'F2');
+    const first = shadowOf(editor).querySelector('.name-input');
+    if (!(first instanceof HTMLInputElement)) {
+      throw new Error('F2 did not open the rename input');
+    }
+    first.value = 'Renamed by F2';
+    fireKey(first, 'Enter');
+    expect(editor.value.states[0]?.name).toBe('Renamed by F2');
+
+    fireKey(editor, 'Enter');
+    expect(shadowOf(editor).querySelector('.name-input')).not.toBeNull();
+  });
+
+  it('does not rename when nothing is selected', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    fireKey(editor, 'F2');
+    expect(shadowOf(editor).querySelector('.name-input')).toBeNull();
+  });
+
+  it('exposes renameSelection() for host toolbars', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.renameSelection();
+    expect(shadowOf(editor).querySelector('.name-input')).toBeNull();
+
+    editor.selection = { kind: 'transition', id: 'pay' };
+    editor.renameSelection();
+    const input = shadowOf(editor).querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    expect(input.value).toBe('pay');
+  });
+
+  it('saves the new name from the save button', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    const shadow = shadowOf(editor);
+    const input = shadow.querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    // While editing, the rename and remove buttons give way to save and cancel.
+    expect(queryButton(shadow, '.node__rename').hidden).toBe(true);
+    expect(queryButton(shadow, '.node__remove').hidden).toBe(true);
+
+    input.value = 'Submitted';
+    queryButton(shadow, '.icon-button--confirm').click();
+
+    expect(editor.value.states[0]?.name).toBe('Submitted');
+    expect(shadow.querySelector('.name-input')).toBeNull();
+    expect(queryButton(shadow, '.node__rename').hidden).toBe(false);
+  });
+
+  it('discards the edit from the cancel button', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryOne(shadowOf(editor), '.edge-card__rename').click();
+
+    const shadow = shadowOf(editor);
+    const input = shadow.querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+    input.value = 'ignored';
+    queryButton(shadow, '.icon-button--cancel').click();
+
+    expect(editor.value.transitions[0]?.name).toBe('pay');
+    expect(shadow.querySelector('.name-input')).toBeNull();
+    expect(queryOne(shadow, '.edge-card__name').hidden).toBe(false);
+  });
+
+  it('keeps focus in the input when the buttons are pressed', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    const shadow = shadowOf(editor);
+    const save = queryButton(shadow, '.icon-button--confirm');
+    const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true });
+    save.dispatchEvent(event);
+
+    // Blocking the default keeps the caret in the field, so blur cannot commit
+    // an edit the user is about to cancel.
+    expect(event.defaultPrevented).toBe(true);
+    expect(shadow.activeElement?.className).toBe('name-input');
+  });
+
+  it('survives a re-render while the name is being edited', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+
+    // Any committed change re-renders every card.
+    editor.addState({ name: 'Elsewhere', position: { x: 900, y: 900 } });
+
+    const shadow = shadowOf(editor);
+    expect(shadow.querySelector('.name-input')).not.toBeNull();
+    expect(queryButton(shadow, '.node__rename').hidden).toBe(true);
+    expect(queryOne(shadow, '.node .node__name').hidden).toBe(true);
+  });
+
   it('cancels an inline rename with Escape', () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
@@ -236,7 +377,7 @@ describe('editing', () => {
   it('removes a state and its transitions from the card button', () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
-    queryAll(shadowOf(editor), '.node .icon-button')[0]?.click();
+    queryAll(shadowOf(editor), '.node__remove')[0]?.click();
 
     expect(editor.value.states).toHaveLength(1);
     expect(editor.value.transitions).toHaveLength(0);
@@ -625,5 +766,8 @@ describe('read-only mode', () => {
     firePointer(queryOne(shadowOf(editor), '.node'), 'pointerdown');
     fireKey(editor, 'Delete');
     expect(editor.value.states).toHaveLength(2);
+
+    fireKey(editor, 'F2');
+    expect(shadowOf(editor).querySelector('.name-input')).toBeNull();
   });
 });

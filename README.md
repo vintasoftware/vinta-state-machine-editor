@@ -73,7 +73,7 @@ defineStateMachineEditor('order-flow-editor');
 | Create a state | **Add state** in the toolbar, or `editor.addState()` |
 | Move a state | Drag its header |
 | Create a transition | Drag the round **→** handle onto another state (drop it on the same state for a self transition) |
-| Rename | Double-click a state or transition name (`Enter` commits, `Escape` cancels) |
+| Rename | Tap the **✎** button beside the name (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
 | Remove | Click **✕** on the card, or select it and press `Delete` |
@@ -141,8 +141,9 @@ Each state therefore owns four ordered lists (`enter · before`, `enter · after
 
 ### Methods
 
-`addState({ name?, position? })`, `addTransition(from, to, name?)`, `zoomIn()`, `zoomOut()`,
-`setZoom(scale)`, `zoomToFit(padding?)`, `openSideEffects(ref): Promise<boolean>`.
+`addState({ name?, position? })`, `addTransition(from, to, name?)`, `renameSelection()`,
+`zoomIn()`, `zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
+`openSideEffects(ref): Promise<boolean>`.
 
 ### Events
 
@@ -205,6 +206,11 @@ Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `edge`, `chi
 The canvas sets `touch-action: none`, so touch gestures reach the component instead of scrolling
 the page. Pinch is handled from raw pointer events (two fingers) and from `wheel` events with
 `ctrlKey`, which is how every browser reports a trackpad pinch.
+
+Under `@media (pointer: coarse)` every hit target grows — icon buttons and the link handle go from
+22 px to 32 px, chips and dialog rows gain padding — so the editor stays usable with a fingertip.
+Every gesture has a tappable equivalent: renaming has its **✎** / **✓** / **✕** buttons, reordering
+side effects has `Alt` + arrows alongside the drag handle, and zoom has toolbar buttons.
 
 ## Development
 

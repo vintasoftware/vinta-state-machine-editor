@@ -150,6 +150,17 @@ export const editorStyles: string = `
     white-space: nowrap;
   }
 
+  .name-edit {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .icon-button--confirm { color: var(--sme-accent); }
+  .icon-button--confirm:hover { color: var(--sme-accent); }
+
   .name-input {
     flex: 1;
     min-width: 0;
@@ -212,7 +223,9 @@ export const editorStyles: string = `
     line-height: 1;
   }
 
-  .icon-button:hover { background: var(--sme-surface-muted); color: var(--sme-danger); }
+  .icon-button:hover { background: var(--sme-surface-muted); color: var(--sme-text); }
+  .node__remove:hover,
+  .edge-card__remove:hover { color: var(--sme-danger); }
 
   .node__link {
     position: absolute;
@@ -293,6 +306,20 @@ export const editorStyles: string = `
   .toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
   .toolbar__zoom { min-width: 56px; font-variant-numeric: tabular-nums; }
 
+  /*
+   * Touch and pen: grow every hit target. 22px icons are comfortable with a
+   * mouse and far too small for a fingertip.
+   */
+  @media (pointer: coarse) {
+    .icon-button { width: 32px; height: 32px; font-size: 15px; }
+    .node__header { padding: 10px; gap: 10px; }
+    .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }
+    .chip { padding: 8px 10px; font-size: 13px; }
+    .hook { grid-template-columns: 84px 1fr; gap: 10px; }
+    .toolbar button { min-width: 40px; height: 40px; }
+    .edge-card { width: 210px; }
+  }
+
   .empty-state {
     position: absolute;
     inset: 0;
@@ -357,6 +384,14 @@ export const dialogStyles: string = `
   .list.is-reordering .row { transition: transform 120ms ease; }
 
   .row__handle { cursor: grab; color: var(--sme-text-muted); touch-action: none; }
+
+  @media (pointer: coarse) {
+    .row { padding: 11px 12px; gap: 12px; }
+    .row__handle,
+    .row__remove { width: 32px; height: 32px; font-size: 16px; }
+    .button { padding: 11px 18px; }
+    .add select { padding: 10px; }
+  }
   .row__order { font-size: 11px; color: var(--sme-text-muted); font-variant-numeric: tabular-nums; }
   .row__name { flex: 1; font-size: 13px; }
 
