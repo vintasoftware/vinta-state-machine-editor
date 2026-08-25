@@ -625,6 +625,10 @@ export const editorStyles: string = `
     top: 12px;
     left: 12px;
     display: flex;
+    /* Nine controls outgrow a phone; wrapping keeps them all reachable rather
+       than running the last of them off the edge of the canvas. */
+    flex-wrap: wrap;
+    max-width: calc(100% - 24px);
     gap: 6px;
     padding: 6px;
     background: var(--sme-surface);

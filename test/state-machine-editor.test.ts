@@ -2760,3 +2760,294 @@ describe('undo and redo', () => {
     expect(editor.value.states).toHaveLength(3);
   });
 });
+
+describe('copy and paste', () => {
+  it('copies the selected state and pastes it clear of the original', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+
+    expect(editor.copySelection()).toBe(true);
+    const pasted = editor.paste();
+
+    expect(pasted?.kind).toBe('state');
+    expect(editor.value.states).toHaveLength(3);
+    const copy = editor.value.states[2];
+    expect(copy?.name).toBe('Draft copy');
+    expect(copy?.id).not.toBe('draft');
+    // Clear of the card it came from, which sits at the origin.
+    expect(
+      rectsOverlap(
+        { x: 0, y: 0, width: 248, height: 152 },
+        { x: copy?.position.x ?? 0, y: copy?.position.y ?? 0, width: 248, height: 152 },
+      ),
+    ).toBe(false);
+  });
+
+  it('selects what it pasted', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.copySelection();
+    const selections = selectionsOf(editor);
+
+    const pasted = editor.paste();
+
+    expect(editor.selection).toEqual(pasted);
+    expect(selections).toEqual([pasted]);
+  });
+
+  it('carries a state’s colour, description, data and side effects across', () => {
+    const editor = mountEditor();
+    const machine = sampleMachine();
+    const draft = machine.states[0];
+    if (draft === undefined) {
+      throw new Error('missing state');
+    }
+    editor.value = {
+      ...machine,
+      states: [
+        {
+          ...draft,
+          color: 'warning',
+          description: 'Waiting on the customer.',
+          data: { owner: 'billing' },
+          onEnter: { before: [sideEffect('effect-1', 'sendEmail')], after: [] },
+        },
+        ...machine.states.slice(1),
+      ],
+    };
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.copySelection();
+    editor.paste();
+
+    const copy = editor.value.states[2];
+    expect(copy?.color).toBe('warning');
+    expect(copy?.description).toBe('Waiting on the customer.');
+    expect(copy?.data).toEqual({ owner: 'billing' });
+    expect(copy?.onEnter.before[0]?.name).toBe('sendEmail');
+    expect(copy?.onEnter.before[0]?.id).not.toBe('effect-1');
+  });
+
+  it('leaves the initial and final roles behind', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.copySelection();
+    editor.paste();
+
+    // A pasted card becoming a second entry point would change what the machine
+    // does, so the roles stay with the state that holds them.
+    expect(editor.value.initialStateIds).toEqual(['draft']);
+    expect(editor.value.finalStateIds).toEqual(['paid']);
+  });
+
+  it('copies a transition between the same two states', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'transition', id: 'pay' };
+    editor.copySelection();
+
+    const pasted = editor.paste();
+
+    expect(pasted?.kind).toBe('transition');
+    expect(editor.value.transitions).toHaveLength(2);
+    const copy = editor.value.transitions[1];
+    expect(copy).toMatchObject({ from: 'draft', to: 'paid', name: 'pay copy' });
+    expect(copy?.id).not.toBe('pay');
+    expect(queryAll(shadowOf(editor), '.edge-card')).toHaveLength(2);
+  });
+
+  it('numbers a copy of a copy rather than stacking the suffix', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.copySelection();
+
+    editor.paste();
+    editor.paste();
+    editor.copySelection();
+    editor.paste();
+
+    expect(editor.value.states.map((state) => state.name)).toEqual([
+      'Draft',
+      'Paid',
+      'Draft copy',
+      'Draft copy 2',
+      'Draft copy 3',
+    ]);
+  });
+
+  it('reports a paste as one add, and takes it back in one step', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.copySelection();
+    const recorded = changes(editor);
+
+    editor.paste();
+    expect(recorded.map((change) => change.kind)).toEqual(['state-add']);
+
+    editor.undo();
+    expect(editor.value.states).toHaveLength(2);
+  });
+
+  it('records nothing for the copy itself', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    const recorded = changes(editor);
+
+    editor.copySelection();
+
+    expect(recorded).toEqual([]);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('refuses to copy nothing, or an element that is gone', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    expect(editor.copySelection()).toBe(false);
+    expect(editor.copy({ kind: 'state', id: 'ghost' })).toBe(false);
+    expect(editor.clipboard).toBeNull();
+    expect(editor.paste()).toBeNull();
+  });
+
+  it('refuses a transition whose endpoints have since been removed', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.copy({ kind: 'transition', id: 'pay' });
+    expect(editor.clipboard?.kind).toBe('transition');
+
+    queryAll(shadowOf(editor), '.node__remove')[1]?.click();
+
+    expect(editor.paste()).toBeNull();
+    expect(queryButton(shadowOf(editor), '.toolbar__paste').disabled).toBe(true);
+  });
+
+  it('survives the machine being replaced, so a state crosses documents', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.copy({ kind: 'state', id: 'draft' });
+
+    editor.value = {
+      states: [],
+      transitions: [],
+      initialStateIds: [],
+      finalStateIds: [],
+      data: {},
+    };
+    editor.paste();
+
+    expect(editor.value.states).toHaveLength(1);
+    expect(editor.value.states[0]?.name).toBe('Draft copy');
+  });
+
+  it('copies and pastes from the keyboard', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+
+    fireKey(editor, 'c', { metaKey: true });
+    expect(editor.clipboard?.kind).toBe('state');
+
+    fireKey(editor, 'v', { metaKey: true });
+    expect(editor.value.states).toHaveLength(3);
+
+    fireKey(editor, 'v', { ctrlKey: true });
+    expect(editor.value.states).toHaveLength(4);
+  });
+
+  it('leaves the key to the browser when there is nothing to do with it', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    const copy = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'c',
+      metaKey: true,
+    });
+    editor.dispatchEvent(copy);
+    expect(copy.defaultPrevented).toBe(false);
+
+    editor.selection = { kind: 'state', id: 'draft' };
+    const copied = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'c',
+      metaKey: true,
+    });
+    editor.dispatchEvent(copied);
+    expect(copied.defaultPrevented).toBe(true);
+  });
+
+  it('leaves the shortcuts alone inside a text field', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    queryAll(shadowOf(editor), '.node__rename')[0]?.click();
+    const input = shadowOf(editor).querySelector('.name-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('missing rename input');
+    }
+
+    fireKey(input, 'c', { metaKey: true });
+    fireKey(input, 'v', { metaKey: true });
+
+    expect(editor.clipboard).toBeNull();
+    expect(editor.value.states).toHaveLength(2);
+  });
+
+  it('names the buttons after what they hold', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const shadow = shadowOf(editor);
+    const copyButton = queryButton(shadow, '.toolbar__copy');
+    const pasteButton = queryButton(shadow, '.toolbar__paste');
+
+    expect(copyButton.disabled).toBe(true);
+    expect(pasteButton.disabled).toBe(true);
+    expect(copyButton.getAttribute('aria-label')).toBe('Copy');
+
+    editor.selection = { kind: 'transition', id: 'pay' };
+    expect(copyButton.disabled).toBe(false);
+    expect(copyButton.getAttribute('aria-label')).toBe('Copy transition');
+
+    copyButton.click();
+    expect(pasteButton.disabled).toBe(false);
+    expect(pasteButton.getAttribute('aria-label')).toBe('Paste transition');
+
+    pasteButton.click();
+    expect(editor.value.transitions).toHaveLength(2);
+  });
+
+  it('copies read-only but does not paste', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.selection = { kind: 'state', id: 'draft' };
+    editor.readOnly = true;
+
+    fireKey(editor, 'c', { metaKey: true });
+    expect(editor.clipboard?.kind).toBe('state');
+    expect(queryButton(shadowOf(editor), '.toolbar__copy').disabled).toBe(false);
+
+    fireKey(editor, 'v', { metaKey: true });
+    expect(editor.value.states).toHaveLength(2);
+    expect(queryButton(shadowOf(editor), '.toolbar__paste').disabled).toBe(true);
+  });
+
+  it('takes an entry handed over from another editor', () => {
+    const source = mountEditor();
+    source.value = sampleMachine();
+    source.copy({ kind: 'state', id: 'paid' });
+
+    const target = mountEditor();
+    target.value = sampleMachine();
+    target.clipboard = source.clipboard;
+    target.paste();
+
+    expect(target.value.states.map((state) => state.name)).toEqual(['Draft', 'Paid', 'Paid copy']);
+  });
+});

@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Copy and paste** for a state or a transition, from the toolbar's new **Copy** / **Paste**
+  buttons, from `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V`, and from the new `copySelection()`,
+  `copy(ref)` and `paste()` methods. `paste()` returns the `{ kind, id }` of what it made, or `null`
+  when there was nothing to paste. Both buttons are named after what they hold — *Copy transition*,
+  *Paste state*.
+
+  The clipboard is the editor's own buffer rather than the system one, exposed as the assignable
+  `clipboard` property so a copy can move between two editors on the page or be seeded from storage.
+  It holds the element itself rather than a copy of it — the model is deeply readonly, so an entry
+  cannot drift once taken — and the copying proper happens on paste, the only moment that knows what
+  to call the result and where to put it.
+
+  A paste makes a genuinely new element: fresh ids for it and for every side effect attached to it
+  (the attachment id names *that* attachment, not the catalog definition behind it, which the copy
+  still points at), a name marked as a copy and made unique — `Draft copy`, then `Draft copy 2`,
+  with a suffix already there replaced rather than stacked — and everything else carried across,
+  the host's own `data` included. A pasted state lands a step off the original and then clear of
+  every card already on the canvas; a pasted transition keeps both endpoints and has its card placed
+  the way a new edge's is.
+
+  A copied state does **not** bring the initial/final roles along: those lists belong to the machine
+  rather than to the card, and a paste should not quietly give the machine a second entry point.
+
+  A paste is one `state-add` or `transition-add` and one undo step; copying changes nothing and
+  records nothing. Copy works in read-only mode, where the paste that would put it back does not,
+  and pasting a transition whose endpoints have since been removed is refused rather than guessed at.
+- `src/model/clipboard.ts`: `copyElement`, `canPaste`, `duplicateState`, `duplicateTransition` and
+  `copyName` — pure, testable without a DOM, and exported. `uniqueName` and `uniqueStateName` join
+  `uniqueTransitionName` in `src/model/machine.ts`.
+
 - **Undo and redo**, from the toolbar's new **↶** / **↷** buttons, from `Ctrl`/`⌘` + `Z` and
   `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too, where Windows apps put it), and from the new
   `undo()` / `redo()` methods. `canUndo` and `canRedo` report whether there is a step to take, and
@@ -48,9 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   been replaced, and there is nothing sensible left for undo to put back. Assigning the machine
   already in place — what a host echoing `state-machine-change` back does — leaves the history
   alone, so undo survives the React-style round trip.
-- Keyboard shortcuts on the canvas (`Delete`, `F2`, `Enter`, and now the history pair) are ignored
-  while a dialog is open. A dialog is a modal of its own, so a key pressed inside it never reaches
-  the canvas behind it.
+- Keyboard shortcuts on the canvas (`Delete`, `F2`, `Enter`, and now the history and clipboard
+  pairs) are ignored while a dialog is open. A dialog is a modal of its own, so a key pressed inside
+  it never reaches the canvas behind it.
+- The toolbar wraps rather than running off the edge of the canvas. It carries nine controls now,
+  which is more than a phone's width holds.
 
 ### Fixed
 

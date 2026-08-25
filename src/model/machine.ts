@@ -368,13 +368,8 @@ export function moveTransition(
   return { ...machine, transitions };
 }
 
-/**
- * A transition name not yet used anywhere in the machine. Creation edges are
- * namespaced version-wide rather than per source state, so the check spans the
- * whole machine instead of just the siblings.
- */
-export function uniqueTransitionName(machine: StateMachine, base: string): string {
-  const taken = new Set(machine.transitions.map((transition) => transition.name));
+/** `base`, or `base 2`, `base 3`… — the first spelling `taken` does not hold. */
+export function uniqueName(base: string, taken: ReadonlySet<string>): string {
   if (!taken.has(base)) {
     return base;
   }
@@ -383,6 +378,24 @@ export function uniqueTransitionName(machine: StateMachine, base: string): strin
     suffix += 1;
   }
   return `${base} ${suffix}`;
+}
+
+/**
+ * A transition name not yet used anywhere in the machine. Creation edges are
+ * namespaced version-wide rather than per source state, so the check spans the
+ * whole machine instead of just the siblings.
+ */
+export function uniqueTransitionName(machine: StateMachine, base: string): string {
+  return uniqueName(base, new Set(machine.transitions.map((transition) => transition.name)));
+}
+
+/**
+ * A state name not yet used in the machine. Nothing enforces unique state
+ * names — two states may legitimately share one — but a copy that reads
+ * exactly like its original tells the user nothing about which is which.
+ */
+export function uniqueStateName(machine: StateMachine, base: string): string {
+  return uniqueName(base, new Set(machine.states.map((state) => state.name)));
 }
 
 function readPhase(hooks: SideEffectHooks, phase: SideEffectPhase): readonly SideEffect[] {

@@ -30,6 +30,14 @@ import {
   zoomTo,
 } from '../geometry/viewport.js';
 import {
+  type ClipboardEntry,
+  canPaste,
+  copyElement,
+  copyName,
+  duplicateState,
+  duplicateTransition,
+} from '../model/clipboard.js';
+import {
   canRedo,
   canUndo,
   createHistory,
@@ -68,6 +76,7 @@ import {
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
+  uniqueStateName,
   uniqueTransitionName,
   updateState,
   updateTransition,
@@ -142,6 +151,8 @@ const FALLBACK_LABEL_HEIGHT = 72;
 const PLACEMENT_RINGS = 6;
 /** Base name for a creation transition; made unique across the whole machine. */
 const CREATION_NAME = 'create';
+/** How far a pasted state starts out from the one it was copied from. */
+const PASTE_OFFSET = 24;
 
 const EMPTY_GEOMETRY: EdgeGeometry = {
   path: '',
@@ -280,18 +291,32 @@ function historyShortcut(event: KeyboardEvent): HistoryCommand | undefined {
   return key === 'y' && !event.shiftKey ? 'redo' : undefined;
 }
 
+type ClipboardCommand = 'copy' | 'paste';
+
+/** Which clipboard command a key press asks for, if any. */
+function clipboardShortcut(event: KeyboardEvent): ClipboardCommand | undefined {
+  if (event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) {
+    return undefined;
+  }
+  const key = event.key.toLowerCase();
+  if (key === 'c') {
+    return 'copy';
+  }
+  return key === 'v' ? 'paste' : undefined;
+}
+
 /** Apple keyboards spell the modifiers with symbols, so the hints differ. */
 function isApplePlatform(): boolean {
   const agent = globalThis.navigator?.userAgent;
   return agent !== undefined && /Mac|iPhone|iPad|iPod/.test(agent);
 }
 
-/** What to print in a control's tooltip for a history command. */
-function historyHint(command: HistoryCommand): string {
+/** How to print a shortcut in a control's tooltip, for this keyboard. */
+function shortcutHint(key: string, shift = false): string {
   if (isApplePlatform()) {
-    return command === 'undo' ? '\u2318Z' : '\u21e7\u2318Z';
+    return `${shift ? '\u21e7' : ''}\u2318${key}`;
   }
-  return command === 'undo' ? 'Ctrl+Z' : 'Ctrl+Shift+Z';
+  return `Ctrl+${shift ? 'Shift+' : ''}${key}`;
 }
 
 function containsPoint(rect: Rect, point: Point): boolean {
@@ -322,6 +347,8 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #addStateButton: HTMLButtonElement;
   readonly #undoButton: HTMLButtonElement;
   readonly #redoButton: HTMLButtonElement;
+  readonly #copyButton: HTMLButtonElement;
+  readonly #pasteButton: HTMLButtonElement;
   readonly #stateViews = new Map<string, StateView>();
   readonly #transitionViews = new Map<string, TransitionView>();
 
@@ -335,6 +362,8 @@ export class StateMachineEditorElement extends HTMLElement {
   #historyBase: StateMachine = this.#machine;
   /** Set while several commits are being folded into one step. */
   #batch: { readonly base: StateMachine; readonly change: MachineChange | undefined } | undefined;
+  /** The element last copied, kept per editor rather than per page. */
+  #clipboard: ClipboardEntry | null = null;
   #viewport: Viewport = createViewport();
   #selection: Selection = null;
   #provider: SideEffectProvider | undefined;
@@ -429,6 +458,16 @@ export class StateMachineEditorElement extends HTMLElement {
       text: '↷',
       attrs: { 'aria-label': 'Redo' },
     });
+    this.#copyButton = createButton({
+      className: 'toolbar__copy',
+      parent: toolbar,
+      text: 'Copy',
+    });
+    this.#pasteButton = createButton({
+      className: 'toolbar__paste',
+      parent: toolbar,
+      text: 'Paste',
+    });
     const zoomOut = createButton({
       parent: toolbar,
       text: '−',
@@ -455,6 +494,12 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     this.#redoButton.addEventListener('click', () => {
       this.redo();
+    });
+    this.#copyButton.addEventListener('click', () => {
+      this.copySelection();
+    });
+    this.#pasteButton.addEventListener('click', () => {
+      this.paste();
     });
     zoomOut.addEventListener('click', () => this.zoomOut());
     zoomIn.addEventListener('click', () => this.zoomIn());
@@ -686,6 +731,59 @@ export class StateMachineEditorElement extends HTMLElement {
       return;
     }
     this.#renameTransition(selection.id);
+  }
+
+  /**
+   * The element on the clipboard, if any. It is the editor's own buffer, not
+   * the system one, and it is per element: assign it to move a copy between two
+   * editors on the page, or to seed one from storage.
+   */
+  get clipboard(): ClipboardEntry | null {
+    return this.#clipboard;
+  }
+
+  set clipboard(entry: ClipboardEntry | null) {
+    this.#clipboard = entry;
+    this.#render();
+  }
+
+  /** Copies the selected element. Returns `false` when nothing is selected. */
+  copySelection(): boolean {
+    const selection = this.#selection;
+    return selection !== null && this.copy(selection);
+  }
+
+  /** Copies one element. Returns `false` when it is not in the machine. */
+  copy(ref: ElementRef): boolean {
+    const entry = copyElement(this.#machine, ref);
+    if (entry === undefined) {
+      return false;
+    }
+    this.clipboard = entry;
+    return true;
+  }
+
+  /**
+   * Puts a copy of the clipboard into the machine and selects it, as one
+   * undoable step. Returns what was pasted, or `null` when the clipboard is
+   * empty or holds a transition whose endpoints are no longer there.
+   *
+   * The copy is a new element: fresh ids for it and for every side effect
+   * attached to it, a name marked as a copy and made unique, and — for a state
+   * — a position clear of everything already on the canvas. A copied state does
+   * not bring the initial/final roles along; those belong to the machine rather
+   * than to the card, and a second entry point is not something a paste should
+   * introduce quietly.
+   */
+  paste(): ElementRef | null {
+    const entry = this.#clipboard;
+    if (entry === null || !canPaste(this.#machine, entry)) {
+      return null;
+    }
+    const ref =
+      entry.kind === 'state' ? this.#pasteState(entry.state) : this.#pasteEdge(entry.transition);
+    this.#setSelection(ref);
+    return ref;
   }
 
   /** Whether there is a recorded step to take back. */
@@ -1338,6 +1436,49 @@ export class StateMachineEditorElement extends HTMLElement {
     });
   }
 
+  /** Adds a copy of `state` and reports where it landed. */
+  #pasteState(state: StateNode): ElementRef {
+    const copy = duplicateState(state, {
+      name: uniqueStateName(this.#machine, copyName(state.name)),
+      position: this.#pastePosition(state.position),
+    });
+    this.#commit(addState(this.#machine, copy), { kind: 'state-add', stateId: copy.id });
+    return { kind: 'state', id: copy.id };
+  }
+
+  /**
+   * Where a pasted card goes: a step off the original, then clear of whatever
+   * that lands on — which is usually the original itself.
+   */
+  #pastePosition(origin: Point): Point {
+    const size = this.#nodeSize();
+    const center = {
+      x: origin.x + PASTE_OFFSET + size.width / 2,
+      y: origin.y + PASTE_OFFSET + size.height / 2,
+    };
+    const spot = findFreeLabelSpot(center, size, this.#occupiedRects(), PLACEMENT_RINGS);
+    return { x: Math.round(spot.x - size.width / 2), y: Math.round(spot.y - size.height / 2) };
+  }
+
+  /** Adds a copy of `transition` between the same two states. */
+  #pasteEdge(transition: Transition): ElementRef {
+    const draft = duplicateTransition(transition, {
+      name: uniqueTransitionName(this.#machine, copyName(transition.name)),
+      labelOffset: { x: 0, y: 0 },
+    });
+    // Placed against a machine that already holds it, exactly as a brand new
+    // edge is, so its own siblings and the original's card are in the way.
+    const copy: Transition = {
+      ...draft,
+      labelOffset: this.#freeLabelOffset(addTransition(this.#machine, draft), draft),
+    };
+    this.#commit(addTransition(this.#machine, copy), {
+      kind: 'transition-add',
+      transitionId: copy.id,
+    });
+    return { kind: 'transition', id: copy.id };
+  }
+
   #stateAt(point: Point): StateNode | undefined {
     for (let index = this.#machine.states.length - 1; index >= 0; index -= 1) {
       const state = this.#machine.states[index];
@@ -1358,6 +1499,27 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#emptyState.hidden = this.#machine.states.length > 0;
     this.#addStateButton.disabled = this.#readOnly;
     this.#renderHistoryButtons();
+    this.#renderClipboardButtons();
+  }
+
+  /**
+   * Keeps the copy/paste pair named after what they hold. Copying takes nothing
+   * away, so it stays available read-only; the paste that would put it back
+   * does not.
+   */
+  #renderClipboardButtons(): void {
+    const selection = this.#selection;
+    const entry = this.#clipboard;
+    this.#copyButton.disabled = selection === null;
+    this.#copyButton.setAttribute(
+      'aria-label',
+      selection === null ? 'Copy' : `Copy ${selection.kind}`,
+    );
+    this.#copyButton.title = `${selection === null ? 'Copy' : `Copy ${selection.kind}`} (${shortcutHint('C')})`;
+    const pasteLabel = entry === null ? 'Paste' : `Paste ${entry.kind}`;
+    this.#pasteButton.disabled = this.#readOnly || !canPaste(this.#machine, entry);
+    this.#pasteButton.setAttribute('aria-label', pasteLabel);
+    this.#pasteButton.title = `${pasteLabel} (${shortcutHint('V')})`;
   }
 
   /** Keeps the undo/redo pair disabled and named after what they would do. */
@@ -1370,7 +1532,7 @@ export class StateMachineEditorElement extends HTMLElement {
       const label = historyLabel(command === 'undo' ? 'Undo' : 'Redo', change);
       button.disabled = this.#readOnly || change === undefined;
       button.setAttribute('aria-label', label);
-      button.title = `${label} (${historyHint(command)})`;
+      button.title = `${label} (${shortcutHint('Z', command === 'redo')})`;
     }
   }
 
@@ -2355,29 +2517,73 @@ export class StateMachineEditorElement extends HTMLElement {
   };
 
   #onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.#drag?.kind === 'link') {
-      this.#endDrag();
-      return;
-    }
-    if (event.key === 'Escape' && this.#paletteFor !== undefined) {
-      this.#closePalette();
+    if (this.#handleEscape(event)) {
       return;
     }
     // A dialog is a modal of its own: while one is open every key belongs to it,
     // ⌘Z included, and nothing here should reach the canvas behind it.
-    if (this.#readOnly || isInteractiveTarget(event.target) || this.#dialogOpen()) {
+    if (isInteractiveTarget(event.target) || this.#dialogOpen()) {
       return;
     }
-    const command = historyShortcut(event);
-    if (command !== undefined) {
+    if (this.#handleClipboardKey(event) || this.#readOnly) {
+      return;
+    }
+    if (this.#handleHistoryKey(event)) {
+      return;
+    }
+    this.#handleSelectionKey(event);
+  };
+
+  /** Escape backs out of the gesture in progress, if there is one. */
+  #handleEscape(event: KeyboardEvent): boolean {
+    if (event.key !== 'Escape') {
+      return false;
+    }
+    if (this.#drag?.kind === 'link') {
+      this.#endDrag();
+      return true;
+    }
+    if (this.#paletteFor !== undefined) {
+      this.#closePalette();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Copying takes nothing away, so it works read-only too — unlike the paste
+   * that would put it back. Either way the key is consumed: nothing else here
+   * wants it, and the browser keeps it when there was nothing to do with it.
+   */
+  #handleClipboardKey(event: KeyboardEvent): boolean {
+    const command = clipboardShortcut(event);
+    if (command === undefined) {
+      return false;
+    }
+    const done =
+      command === 'copy' ? this.copySelection() : !this.#readOnly && this.paste() !== null;
+    if (done) {
       event.preventDefault();
-      if (command === 'undo') {
-        this.undo();
-      } else {
-        this.redo();
-      }
-      return;
     }
+    return true;
+  }
+
+  #handleHistoryKey(event: KeyboardEvent): boolean {
+    const command = historyShortcut(event);
+    if (command === undefined) {
+      return false;
+    }
+    event.preventDefault();
+    if (command === 'undo') {
+      this.undo();
+    } else {
+      this.redo();
+    }
+    return true;
+  }
+
+  /** Rename and remove, both of which need something to act on. */
+  #handleSelectionKey(event: KeyboardEvent): void {
     const selection = this.#selection;
     if (selection === null) {
       return;
@@ -2403,7 +2609,7 @@ export class StateMachineEditorElement extends HTMLElement {
       kind: 'transition-remove',
       transitionId: selection.id,
     });
-  };
+  }
 
   // -- inline renaming ------------------------------------------------------
 

@@ -98,6 +98,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
 | Remove | Click **✕** in the card's rail, or select it and press `Delete` |
 | Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
+| Copy / paste | Select a state or transition, then toolbar **Copy** / **Paste**, or `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V` |
 | Pan | Drag the background, scroll, or move two fingers together |
 | Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
 
@@ -488,6 +489,7 @@ offset to `{ x: 0, y: 0 }`.
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
 | `selection` | `{ kind: 'state' \| 'transition', id } \| null` | Survives a `value` assignment that keeps the selected element; becomes `null` if that element is gone, and only that drop emits `state-machine-selection-change`. |
 | `viewport` | `{ x, y, scale }` | Pan/zoom state; assignable to restore a saved view. |
+| `clipboard` | `{ kind: 'state', state } \| { kind: 'transition', transition } \| null` | The editor's own copy buffer, not the system one. Assignable, so a copy can move between two editors on the page or be seeded from storage. |
 | `canUndo` | `boolean` | Read-only. Whether there is a recorded step to take back. |
 | `canRedo` | `boolean` | Read-only. Whether an undone step is waiting to be put back. |
 
@@ -497,7 +499,8 @@ offset to `{ x: 0, y: 0 }`.
 creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `zoomIn()`,
 `zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
 `openSideEffects(ref): Promise<boolean>`, `openProperties(ref): Promise<boolean>` where `ref` is
-`{ kind: 'state' | 'transition', id }`, `undo()`, `redo()`, `clearHistory()`.
+`{ kind: 'state' | 'transition', id }`, `undo()`, `redo()`, `clearHistory()`,
+`copySelection()`, `copy(ref)`, `paste()`.
 
 ### Events
 
@@ -519,6 +522,40 @@ them into a label for an undo stack.
 Saving the properties dialog emits **one event per field that actually changed** — three edits in
 one dialog arrive as three events, in field order — so a host can react granularly rather than
 diffing the whole machine. Fields left alone emit nothing.
+
+### Copy and paste
+
+Select a state or a transition and copy it with the toolbar's **Copy** or `Ctrl`/`⌘` + `C`; paste
+with **Paste** or `Ctrl`/`⌘` + `V`. `copySelection()`, `copy(ref)` and `paste()` do the same from
+code — `paste()` returns the `{ kind, id }` of what it made, or `null` when there was nothing to
+paste.
+
+The clipboard is the editor's own buffer, exposed as the assignable `clipboard` property. It holds
+the element itself rather than a copy of it — everything in the model is deeply readonly, so an
+entry cannot drift once taken — and the copying proper happens on paste, which is the only moment
+that knows what to call the result and where to put it. Since it is a property, a host can hand one
+editor's clipboard to another, or restore one from storage. It is *not* the system clipboard:
+copying here does not overwrite what the user copied elsewhere, and pasting does not read it.
+
+What a paste makes is a new element:
+
+- Fresh ids, for the element and for every side effect attached to it. The attachment ids name
+  *that* attachment rather than the catalog definition behind it, which the copy still points at.
+- A name marked as a copy and made unique — `Draft` → `Draft copy` → `Draft copy 2`. A suffix
+  already there is replaced rather than stacked.
+- Everything else: colour, description, side effects, guard, trigger, required permission, and the
+  host's own `data`.
+- For a state, a position a step off the original and then clear of every card already on the
+  canvas; for a transition, the same two endpoints and a card placed the way a new edge's is.
+
+A copied state does **not** bring the initial/final roles along. Those lists belong to the machine
+rather than to the card, and a paste should not quietly give the machine a second entry point.
+Copying a state does not copy the transitions touching it either — the selection is one element.
+
+A paste is one `state-add` or `transition-add`, and one undo step. Copying changes nothing, so it
+records nothing. Copy works in read-only mode, where the paste that would put it back does not.
+Pasting a transition needs both of its endpoints to still exist, so the button is disabled — and
+`paste()` returns `null` — when the machine no longer has them.
 
 ### Undo and redo
 
@@ -558,7 +595,9 @@ server-side rendering on top of it: `addState`, `updateState`, `removeState`, `a
 `setTransitionTrigger`, `setTransitionGuard`, `setTransitionPermission`,
 `setTransitionDescription`, `setStateDescription`, `outgoingTransitions`, `creationTransitions`,
 `moveTransition`, `uniqueTransitionName`, `parseStateMachine`, `parseActionDefinitions`,
-`assertStateMachine`, the history helpers backing the editor's own stack (`createHistory`,
+`assertStateMachine`, `uniqueName`, `uniqueStateName`, the clipboard helpers (`copyElement`,
+`canPaste`, `duplicateState`, `duplicateTransition`, `copyName`), the history helpers backing the
+editor's own stack (`createHistory`,
 `recordHistory`, `undoHistory`, `redoHistory`, `canUndo`, `canRedo`, `pendingUndo`, `pendingRedo`,
 `HISTORY_LIMIT`), plus the geometry helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`, …).
 
@@ -631,9 +670,9 @@ path in place of the bare specifier. Everything else in this README applies unch
 | | `./register` (bundler) | `./bundled` (no bundler) |
 | --- | --- | --- |
 | Files to serve | your bundler's output | `bundled.js`, and nothing else |
-| Loaded up front | 99.2 kB → **27.7 kB gzipped** | 423.7 kB → **132.9 kB gzipped** |
+| Loaded up front | 105.7 kB → **29.6 kB gzipped** | 430.0 kB → **134.7 kB gzipped** |
 | Loaded on first **JSON** tab | 339.4 kB → 110.1 kB gzipped | — already there |
-| Total over the wire | 438.6 kB → 137.8 kB gzipped | 423.7 kB → 132.9 kB gzipped |
+| Total over the wire | 445.1 kB → 139.7 kB gzipped | 430.0 kB → 134.7 kB gzipped |
 
 Roughly the same bytes overall — the split column also carries the demo page's own code — and the
 difference is *when*. The bundler route keeps CodeMirror out of the initial
@@ -643,7 +682,7 @@ the sessions that never open a JSON tab.
 That is the deliberate trade. Keeping the split would have meant emitting a second file with a
 stable name and asking every host to copy it too — a step that is easy to miss, and whose failure
 mode is a runtime error in one tab of one dialog rather than a broken build. One file cannot be
-half-deployed. If the eager 133 kB matters more to you than that, use a bundler and the `./register`
+half-deployed. If the eager 135 kB matters more to you than that, use a bundler and the `./register`
 export, which is unchanged and still code-split.
 
 ## Styling

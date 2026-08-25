@@ -37,6 +37,14 @@ export {
   zoomTo,
 } from './geometry/viewport.js';
 export { insertItem, moveItem } from './model/array.js';
+export type { ClipboardEntry } from './model/clipboard.js';
+export {
+  canPaste,
+  copyElement,
+  copyName,
+  duplicateState,
+  duplicateTransition,
+} from './model/clipboard.js';
 export { StateMachineError } from './model/errors.js';
 export type { History, HistoryEntry, HistoryStep } from './model/history.js';
 export {
@@ -110,6 +118,8 @@ export {
   siblingTransitions,
   toggleFinalState,
   toggleInitialState,
+  uniqueName,
+  uniqueStateName,
   uniqueTransitionName,
   updateSideEffects,
   updateState,
