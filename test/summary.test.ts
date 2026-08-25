@@ -10,6 +10,7 @@ import { computeDropIndex } from '../src/ui/reorder.js';
 import {
   countDisabled,
   EMPTY_SIDE_EFFECTS_LABEL,
+  formatSideEffectHead,
   formatSideEffectSummary,
   formatSideEffectTitle,
 } from '../src/ui/side-effect-summary.js';
@@ -38,6 +39,16 @@ describe('side effect summary', () => {
   it('shows the first name and how many are hidden', () => {
     expect(formatSideEffectSummary(effects.slice(0, 2))).toBe('sendEmail and 1 more');
     expect(formatSideEffectSummary(effects)).toBe('sendEmail and 2 more');
+  });
+
+  it('shows the first name alone, for a chip that carries its count beside it', () => {
+    expect(formatSideEffectHead([])).toBe(EMPTY_SIDE_EFFECTS_LABEL);
+    expect(formatSideEffectHead([], '+ Add')).toBe('+ Add');
+    expect(formatSideEffectHead(effects.slice(0, 1))).toBe('sendEmail');
+    expect(formatSideEffectHead(effects)).toBe('sendEmail');
+    expect(formatSideEffectHead([sideEffect('e', 'sendEmail', { enabled: false })])).toBe(
+      'sendEmail (off)',
+    );
   });
 
   it('lists everything in the tooltip', () => {

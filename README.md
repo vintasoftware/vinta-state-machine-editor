@@ -7,7 +7,7 @@ pan/zoom canvas — including the ordered side effects that run around states an
 - **One runtime dependency.** The graph itself is hand-written — Shadow DOM, HTML nodes and SVG
   edges, no canvas bitmap; [CodeMirror 6](https://codemirror.net) backs the JSON parameters editor.
 - Strict TypeScript: no `any`, no type assertions, no non-null assertions — enforced by lint **and** a test that scans `src/`.
-- Side effects are ordered lists; the UI collapses them to `"sendEmail and 2 more"` and opens a dialog for the full list.
+- Side effects are ordered lists; a chip on the canvas shows the first name with a count badge for the rest, and opens a dialog for the full list.
 - Transitions carry a trigger, a guard and a required permission — all opaque, all the host's to define.
 - Everything the component does not model rides along in a host-owned `data` blob it never reads.
 
@@ -212,6 +212,25 @@ The helpers behind all of this are exported and pure, so hosts can reuse them: `
 `removeAtPath`, `renameKeyAtPath`, `appendEntry`, `coerceTo`, `jsonTypeOf`, `parseParamsText`,
 `toJsonObject`, plus `setSideEffectParams` on the model.
 
+### What a chip shows
+
+A chip is one line as wide as the card allows, so it shows the **first** side effect's name and
+lets a list longer than that speak through two markers, both CSS pseudo-elements outside that line:
+
+- A **count badge** floating on the chip's leading edge, in the gutter beside the hook's label,
+  whenever the list holds more than one — `3` means three attached, the shown name included. A
+  written *“and 2 more”* was the first thing the elision took, which is exactly the part saying the
+  list is longer than it looks; floating the number costs the name no width at all. One side effect
+  gets no badge, since its name is the whole story.
+- The `{ }` marker on the trailing edge when at least one side effect in the list carries
+  parameters.
+
+Neither enters the chip's text, and the numbers reach assistive technology through the chip's
+`aria-label` (`… 3 side effects, 2 with parameters. Open list.`). Hovering shows the whole list,
+numbered, with parameters inline. For hosts rendering their own summary in prose, where there is
+room for the sentence, `formatSideEffectSummary` still returns `"sendEmail and 2 more"`;
+`formatSideEffectHead` is what the chips use.
+
 ### Turning a side effect off
 
 Each attachment carries an `enabled` flag and a `description`, editable from the checkbox and
@@ -220,9 +239,9 @@ and keeps its parameters — it simply does not run. That is the point: switchin
 the same edit as detaching it, and flipping it back must not lose what it was configured with.
 
 A disabled row renders muted and struck through in the dialog. On the canvas the chip **counts it
-and marks it** rather than hiding it: the count stays the number of attachments, the collapsed
-label reads `sendEmail (off)` when the one it shows is disabled, and the tooltip marks every
-disabled entry with `— disabled`. Excluding them would make the chip disagree with the dialog
+and marks it** rather than hiding it: the count badge stays the number of attachments, the label
+reads `sendEmail (off)` when the one it shows is disabled, and the tooltip marks every disabled
+entry with `— disabled`. Excluding them would make the chip disagree with the dialog
 that still lists them, and a list that quietly shrinks is the harder bug to notice.
 
 A `SideEffectDefinition` from the catalog has no say over `enabled`: new attachments are always
@@ -670,9 +689,9 @@ path in place of the bare specifier. Everything else in this README applies unch
 | | `./register` (bundler) | `./bundled` (no bundler) |
 | --- | --- | --- |
 | Files to serve | your bundler's output | `bundled.js`, and nothing else |
-| Loaded up front | 105.7 kB → **29.6 kB gzipped** | 430.0 kB → **134.7 kB gzipped** |
+| Loaded up front | 107.2 kB → **30.1 kB gzipped** | 431.4 kB → **135.2 kB gzipped** |
 | Loaded on first **JSON** tab | 339.4 kB → 110.1 kB gzipped | — already there |
-| Total over the wire | 445.1 kB → 139.7 kB gzipped | 430.0 kB → 134.7 kB gzipped |
+| Total over the wire | 446.6 kB → 140.2 kB gzipped | 431.4 kB → 135.2 kB gzipped |
 
 Roughly the same bytes overall — the split column also carries the demo page's own code — and the
 difference is *when*. The bundler route keeps CodeMirror out of the initial

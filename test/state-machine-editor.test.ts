@@ -9,7 +9,14 @@ import {
   StateMachineError,
 } from '../src/index.js';
 import { createTransition, getSideEffects } from '../src/model/machine.js';
-import type { GuardValidation, MachineChange, Point, Rect, Selection } from '../src/types.js';
+import type {
+  GuardValidation,
+  JsonObject,
+  MachineChange,
+  Point,
+  Rect,
+  Selection,
+} from '../src/types.js';
 import {
   ACTIONS,
   CATALOG,
@@ -160,9 +167,13 @@ describe('rendering', () => {
     };
 
     const chips = queryAll(shadowOf(editor), '.edge-card .chip');
-    expect(chips[0]?.textContent).toBe('sendEmail and 2 more');
+    // How many follow the first is the count badge's job, drawn from data-count.
+    expect(chips[0]?.textContent).toBe('sendEmail');
+    expect(chips[0]?.getAttribute('data-count')).toBe('3');
+    expect(chips[0]?.hasAttribute('data-many')).toBe(true);
     expect(chips[0]?.title).toBe('1. sendEmail\n2. chargeCard\n3. writeAuditLog');
     expect(chips[1]?.textContent).toBe('+ Add side effect');
+    expect(chips[1]?.hasAttribute('data-many')).toBe(false);
   });
 
   it('removes views when the machine shrinks', () => {
@@ -830,9 +841,7 @@ describe('parameter hints on the canvas', () => {
     const editor = mountEditor();
     editor.value = machineWithParams();
     // The `{ }` hint is a CSS pseudo-element, so the label reads the same.
-    expect(queryAll(shadowOf(editor), '.edge-card .chip')[0]?.textContent).toBe(
-      'chargeCard and 1 more',
-    );
+    expect(queryAll(shadowOf(editor), '.edge-card .chip')[0]?.textContent).toBe('chargeCard');
   });
 
   it('spells the hint out for screen readers and in the tooltip', () => {
@@ -1347,9 +1356,7 @@ describe('side effects dialog integration', () => {
         ref: { kind: 'transition', transitionId: 'pay', phase: 'before' },
       },
     ]);
-    expect(queryAll(shadowOf(editor), '.edge-card .chip')[0]?.textContent).toBe(
-      'sendEmail and 1 more',
-    );
+    expect(queryAll(shadowOf(editor), '.edge-card .chip')[0]?.textContent).toBe('sendEmail');
     expect(shadowOf(editor).querySelector('state-machine-side-effects-dialog')).toBeNull();
   });
 
@@ -2081,8 +2088,9 @@ describe('disabled side effects on the canvas', () => {
     };
 
     const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
-    expect(chip?.textContent).toBe('sendEmail (off) and 1 more');
+    expect(chip?.textContent).toBe('sendEmail (off)');
     expect(chip?.getAttribute('data-count')).toBe('2');
+    expect(chip?.hasAttribute('data-many')).toBe(true);
     expect(chip?.title).toBe('1. sendEmail — disabled\n2. chargeCard');
   });
 });
@@ -3049,5 +3057,114 @@ describe('copy and paste', () => {
     target.paste();
 
     expect(target.value.states.map((state) => state.name)).toEqual(['Draft', 'Paid', 'Paid copy']);
+  });
+});
+
+describe('the side effect count on a chip', () => {
+  /** The sample machine with `count` side effects on the transition's before list. */
+  function machineWithHook(count: number, patch: { readonly params?: JsonObject } = {}) {
+    const base = sampleMachine();
+    return {
+      ...base,
+      transitions: base.transitions.map((transition) => ({
+        ...transition,
+        effects: {
+          before: Array.from({ length: count }, (_unused, index) =>
+            sideEffect(`e${index}`, `effect${index}`, patch),
+          ),
+          after: [],
+        },
+      })),
+    };
+  }
+
+  it('marks a list holding more than one, and says how many', () => {
+    const editor = mountEditor();
+    editor.value = machineWithHook(3);
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.hasAttribute('data-many')).toBe(true);
+    expect(chip?.getAttribute('data-count')).toBe('3');
+    // The badge is a CSS pseudo-element fed by data-count, so the label — which
+    // the chip's width elides — stays the first side effect's name alone.
+    expect(chip?.textContent).toBe('effect0');
+  });
+
+  it('keeps the name in a child, so the chip itself does not clip the badge', () => {
+    const editor = mountEditor();
+    editor.value = machineWithHook(3);
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    // The elision belongs to the label; the badge hangs off the chip's edge,
+    // outside the box, which a chip that clipped its own overflow would cut off.
+    expect(chip?.children).toHaveLength(1);
+    expect(queryOne(shadowOf(editor), '.edge-card .chip__label').textContent).toBe('effect0');
+  });
+
+  it('leaves a single side effect unmarked, since its name is the whole story', () => {
+    const editor = mountEditor();
+    editor.value = machineWithHook(1);
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.hasAttribute('data-many')).toBe(false);
+    expect(chip?.getAttribute('data-count')).toBe('1');
+    expect(chip?.textContent).toBe('effect0');
+  });
+
+  it('leaves an empty list unmarked', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.hasAttribute('data-many')).toBe(false);
+    expect(chip?.getAttribute('data-count')).toBe('0');
+  });
+
+  it('follows the list as it grows and shrinks', () => {
+    const editor = mountEditor();
+    editor.value = machineWithHook(2);
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.hasAttribute('data-many')).toBe(true);
+
+    editor.value = machineWithHook(1);
+    expect(queryAll(shadowOf(editor), '.edge-card .chip')[0]?.hasAttribute('data-many')).toBe(
+      false,
+    );
+  });
+
+  it('shows on a state hook as well as a transition one', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    const draft = base.states[0];
+    if (draft === undefined) {
+      throw new Error('missing state');
+    }
+    editor.value = {
+      ...base,
+      states: [
+        {
+          ...draft,
+          onEnter: {
+            before: [sideEffect('e1', 'sendEmail'), sideEffect('e2', 'chargeCard')],
+            after: [],
+          },
+        },
+        ...base.states.slice(1),
+      ],
+    };
+
+    const chip = queryAll(shadowOf(editor), '.node .chip')[0];
+    expect(chip?.hasAttribute('data-many')).toBe(true);
+    expect(chip?.getAttribute('data-count')).toBe('2');
+  });
+
+  it('sits alongside the parameters marker rather than replacing it', () => {
+    const editor = mountEditor();
+    editor.value = machineWithHook(2, { params: { to: 'customer' } });
+
+    const chip = queryAll(shadowOf(editor), '.edge-card .chip')[0];
+    expect(chip?.hasAttribute('data-many')).toBe(true);
+    expect(chip?.hasAttribute('data-has-params')).toBe(true);
+    expect(chip?.getAttribute('aria-label')).toContain('2 side effects, 2 with parameters');
   });
 });

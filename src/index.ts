@@ -168,6 +168,7 @@ export {
   countWithParams,
   DISABLED_MARKER,
   EMPTY_SIDE_EFFECTS_LABEL,
+  formatSideEffectHead,
   formatSideEffectSummary,
   formatSideEffectTitle,
   listHasParams,

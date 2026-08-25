@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A paste is one `state-add` or `transition-add` and one undo step; copying changes nothing and
   records nothing. Copy works in read-only mode, where the paste that would put it back does not,
   and pasting a transition whose endpoints have since been removed is refused rather than guessed at.
+- A **count badge** on a side effect chip that holds more than one, floating on the chip's leading
+  edge in the gutter beside the hook's label. A chip is one line as wide as the card allows, and the
+  written *“and 2 more”* it used to end with was the first thing the elision took — exactly the part
+  saying the list is longer than it looks. Floating the number puts it where nothing can push it
+  off, and costs the name no width: the chip now shows the first side effect's name alone, with the
+  full width to show it in. One side effect gets no badge, since its name is the whole story.
+
+  Like the `{ }` parameters marker it sits beside, the badge is a CSS pseudo-element fed by the
+  chip's `data-count`, so it never enters the chip's text; both numbers already reach assistive
+  technology through the chip's `aria-label`.
 - `src/model/clipboard.ts`: `copyElement`, `canPaste`, `duplicateState`, `duplicateTransition` and
   `copyName` — pure, testable without a DOM, and exported. `uniqueName` and `uniqueStateName` join
   `uniqueTransitionName` in `src/model/machine.ts`.
@@ -78,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   been replaced, and there is nothing sensible left for undo to put back. Assigning the machine
   already in place — what a host echoing `state-machine-change` back does — leaves the history
   alone, so undo survives the React-style round trip.
+- A chip's label moved into a `.chip__label` child, and the chip itself no longer clips its own
+  overflow — the elision belongs to the name, and the badge hanging off the leading edge would have
+  been cut off by it. `formatSideEffectHead` joins `formatSideEffectSummary` in
+  `src/ui/side-effect-summary.ts`: the chips show the head, and the *“and 2 more”* summary stays
+  exported unchanged for hosts rendering their own, in prose, where there is room for the sentence.
 - Keyboard shortcuts on the canvas (`Delete`, `F2`, `Enter`, and now the history and clipboard
   pairs) are ignored while a dialog is open. A dialog is a modal of its own, so a key pressed inside
   it never reaches the canvas behind it.

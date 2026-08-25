@@ -7,13 +7,14 @@ export const EMPTY_SIDE_EFFECTS_LABEL = 'No side effects';
 export const DISABLED_MARKER = '(off)';
 
 /**
- * Collapsed label for a side effect list: only the first one is shown, plus a
- * counter for the remaining ones, e.g. `"sendEmail and 2 more"`.
+ * The first side effect's name, marked when it is switched off — what the
+ * canvas chips show, with how many follow it left to the count badge beside
+ * them.
  *
- * A disabled side effect is *marked*, never dropped: the count is how many are
- * attached, and hiding one would make the chip disagree with the dialog.
+ * A disabled side effect is *marked*, never dropped: hiding one would make the
+ * chip disagree with the dialog.
  */
-export function formatSideEffectSummary(
+export function formatSideEffectHead(
   effects: readonly SideEffect[],
   emptyLabel: string = EMPTY_SIDE_EFFECTS_LABEL,
 ): string {
@@ -21,8 +22,23 @@ export function formatSideEffectSummary(
   if (first === undefined) {
     return emptyLabel;
   }
-  const head = first.enabled ? first.name : `${first.name} ${DISABLED_MARKER}`;
-  if (effects.length === 1) {
+  return first.enabled ? first.name : `${first.name} ${DISABLED_MARKER}`;
+}
+
+/**
+ * Collapsed label for a side effect list: the first one, plus a counter for the
+ * remaining ones, e.g. `"sendEmail and 2 more"`.
+ *
+ * For hosts rendering their own summary in prose, where there is room for the
+ * whole sentence. The chips on the canvas have a fixed width that elides it, so
+ * they pair {@link formatSideEffectHead} with a count badge instead.
+ */
+export function formatSideEffectSummary(
+  effects: readonly SideEffect[],
+  emptyLabel: string = EMPTY_SIDE_EFFECTS_LABEL,
+): string {
+  const head = formatSideEffectHead(effects, emptyLabel);
+  if (effects.length <= 1) {
     return head;
   }
   return `${head} and ${effects.length - 1} more`;

@@ -296,9 +296,18 @@ export const editorStyles: string = `
   }
 
   .chip {
-    display: block;
+    display: flex;
+    align-items: center;
     position: relative;
     width: 100%;
+    /*
+     * The chip is a grid item, and a grid item's automatic minimum size is its
+     * min-content width — the whole unwrapped name — which pushes the column,
+     * and the card with it, wider than the card is allowed to be. Clipping used
+     * to resolve that minimum to zero for free; now that the badge needs the
+     * chip not to clip, the zero has to be asked for.
+     */
+    min-width: 0;
     text-align: left;
     font-size: 12px;
     padding: 4px 8px;
@@ -306,6 +315,15 @@ export const editorStyles: string = `
     border: 1px dashed var(--sme-border);
     color: var(--sme-text-muted);
     background: var(--sme-surface-muted);
+  }
+
+  /*
+   * The elision lives on the label rather than on the chip, so the chip itself
+   * does not clip: the count badge hangs off its leading edge, outside the box.
+   */
+  .chip__label {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -328,6 +346,37 @@ export const editorStyles: string = `
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--sme-accent);
     opacity: 0.9;
+  }
+
+  /*
+   * How many side effects the list holds, once it holds more than one. A written
+   * count is the first thing the chip's single line elides — exactly the part
+   * saying the list is longer than it looks — so it floats on the chip's leading
+   * edge instead, in the gutter next to the hook's own label, where it costs the
+   * name no room at all. One side effect gets no badge: its name is the whole
+   * story already.
+   */
+  .chip[data-many]::before {
+    content: attr(data-count);
+    position: absolute;
+    top: 50%;
+    /* A hair inside the border: the hook's own label sits 8px away, and the
+       badge should not crowd it on the state cards, where that label is long. */
+    left: 1px;
+    transform: translate(-50%, -50%);
+    box-sizing: border-box;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+    box-shadow: inset 0 0 0 1px var(--sme-border);
   }
 
   .chip.is-filled {

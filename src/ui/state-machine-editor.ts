@@ -115,7 +115,7 @@ import type { OrderContext, PropertiesDraft } from './properties-dialog.js';
 import { PropertiesDialogElement } from './properties-dialog.js';
 import {
   countWithParams,
-  formatSideEffectSummary,
+  formatSideEffectHead,
   formatSideEffectTitle,
 } from './side-effect-summary.js';
 import { SideEffectsDialogElement } from './side-effects-dialog.js';
@@ -171,6 +171,16 @@ const HOOK_KEYS: readonly HookKey[] = [
   'leave:after',
 ];
 
+/**
+ * A hook chip. The label lives in a child of its own so the button itself does
+ * not have to clip: the ellipsis belongs to the name, and the count badge hangs
+ * off the chip's leading edge, outside it.
+ */
+interface ChipView {
+  readonly button: HTMLButtonElement;
+  readonly label: HTMLElement;
+}
+
 interface StateView {
   readonly root: HTMLElement;
   /** Colour bar across the top of the card. */
@@ -191,7 +201,7 @@ interface StateView {
   readonly linkHandle: HTMLButtonElement;
   /** Creates a creation transition into this state; only shown while it is initial. */
   readonly creationButton: HTMLButtonElement;
-  readonly chips: ReadonlyMap<HookKey, HTMLButtonElement>;
+  readonly chips: ReadonlyMap<HookKey, ChipView>;
 }
 
 interface TransitionView {
@@ -207,7 +217,7 @@ interface TransitionView {
   readonly meta: HTMLElement;
   readonly trigger: HTMLElement;
   readonly guard: HTMLElement;
-  readonly chips: ReadonlyMap<SideEffectPhase, HTMLButtonElement>;
+  readonly chips: ReadonlyMap<SideEffectPhase, ChipView>;
 }
 
 /** The UML initial pseudostate every creation transition originates from. */
@@ -317,6 +327,12 @@ function shortcutHint(key: string, shift = false): string {
     return `${shift ? '\u21e7' : ''}\u2318${key}`;
   }
   return `Ctrl+${shift ? 'Shift+' : ''}${key}`;
+}
+
+/** A hook chip and the label inside it, appended to `parent`. */
+function createChip(parent: ParentNode): ChipView {
+  const button = createButton({ className: 'chip', parent, attrs: { part: 'chip' } });
+  return { button, label: createElement('span', { className: 'chip__label', parent: button }) };
 }
 
 function containsPoint(rect: Rect, point: Point): boolean {
@@ -1672,13 +1688,13 @@ export class StateMachineEditorElement extends HTMLElement {
       attrs: { 'aria-label': 'Remove state' },
     });
     const hooks = createElement('div', { className: 'hooks', parent: root });
-    const chips = new Map<HookKey, HTMLButtonElement>();
+    const chips = new Map<HookKey, ChipView>();
     for (const key of HOOK_KEYS) {
       const ref = hookRef(stateId, key);
       const row = createElement('div', { className: 'hook', parent: hooks });
       createElement('span', { className: 'hook__label', parent: row, text: shortHookLabel(ref) });
-      const chip = createButton({ className: 'chip', parent: row, attrs: { part: 'chip' } });
-      chip.addEventListener('click', (event) => {
+      const chip = createChip(row);
+      chip.button.addEventListener('click', (event) => {
         event.stopPropagation();
         void this.openSideEffects(hookRef(stateId, key));
       });
@@ -1931,22 +1947,25 @@ export class StateMachineEditorElement extends HTMLElement {
     );
   }
 
-  #updateChip(chip: HTMLButtonElement, ref: SideEffectListRef): void {
+  #updateChip(chip: ChipView, ref: SideEffectListRef): void {
     const effects = getSideEffects(this.#machine, ref);
     const emptyLabel = this.#readOnly ? 'No side effects' : ADD_SIDE_EFFECT_LABEL;
-    chip.textContent = formatSideEffectSummary(effects, emptyLabel);
-    chip.classList.toggle('is-filled', effects.length > 0);
-    chip.title = formatSideEffectTitle(effects);
+    const button = chip.button;
+    chip.label.textContent = formatSideEffectHead(effects, emptyLabel);
+    button.classList.toggle('is-filled', effects.length > 0);
+    button.title = formatSideEffectTitle(effects);
     const labels = describeSideEffectList(this.#machine, ref);
-    // The `{ }` marker itself is drawn in CSS, so it stays out of textContent.
+    // Both markers are drawn in CSS, outside the line the name is elided on, so
+    // neither takes room from it.
     const withParams = countWithParams(effects);
-    chip.toggleAttribute('data-has-params', withParams > 0);
-    chip.setAttribute(
+    button.toggleAttribute('data-has-params', withParams > 0);
+    button.setAttribute(
       'aria-label',
       `${labels.description} ${effects.length} side effect${effects.length === 1 ? '' : 's'}` +
         `${withParams > 0 ? `, ${withParams} with parameters` : ''}. Open list.`,
     );
-    chip.setAttribute('data-count', String(effects.length));
+    button.setAttribute('data-count', String(effects.length));
+    button.toggleAttribute('data-many', effects.length > 1);
   }
 
   #renderTransitions(): void {
@@ -2020,12 +2039,12 @@ export class StateMachineEditorElement extends HTMLElement {
     const trigger = createElement('span', { className: 'edge-card__trigger', parent: meta });
     const guard = createElement('span', { className: 'edge-card__guard', parent: meta });
     const hooks = createElement('div', { className: 'hooks', parent: card });
-    const chips = new Map<SideEffectPhase, HTMLButtonElement>();
+    const chips = new Map<SideEffectPhase, ChipView>();
     for (const phase of ['before', 'after'] as const) {
       const row = createElement('div', { className: 'hook', parent: hooks });
       createElement('span', { className: 'hook__label', parent: row, text: phase });
-      const chip = createButton({ className: 'chip', parent: row, attrs: { part: 'chip' } });
-      chip.addEventListener('click', (event) => {
+      const chip = createChip(row);
+      chip.button.addEventListener('click', (event) => {
         event.stopPropagation();
         void this.openSideEffects({ kind: 'transition', transitionId, phase });
       });
