@@ -287,6 +287,22 @@ requireElement('#reset', isHtml).addEventListener('click', () => {
   renderJson();
 });
 
+// What a graph authored outside this editor looks like: every card on the
+// origin. Assigning it is enough — the editor lays it out before it draws it.
+requireElement('#unpositioned', isHtml).addEventListener('click', () => {
+  const example = exampleMachine();
+  editor.value = {
+    ...example,
+    states: example.states.map((state) => ({ ...state, position: { x: 0, y: 0 } })),
+    transitions: example.transitions.map((transition) => ({
+      ...transition,
+      labelOffset: { x: 0, y: 0 },
+    })),
+  };
+  renderJson();
+  editor.zoomToFit();
+});
+
 requireElement('#clear', isHtml).addEventListener('click', () => {
   editor.value = {
     states: [],

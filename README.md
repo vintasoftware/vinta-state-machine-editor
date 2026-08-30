@@ -99,6 +99,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Remove | Click **✕** in the card's rail, or select it and press `Delete` |
 | Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
 | Copy / paste | Select a state or transition, then toolbar **Copy** / **Paste**, or `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V` |
+| Organize the layout | **Organize** in the toolbar, or `editor.organize()` — the button also fits the view afterwards |
 | Pan | Drag the background, scroll, or move two fingers together |
 | Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
 
@@ -118,7 +119,7 @@ interface StateMachine {
 interface StateNode {
   id: string;
   name: string;
-  position: { x: number; y: number }; // world coordinates, unaffected by zoom
+  position: { x: number; y: number }; // world coordinates; omit it and the editor lays the graph out
   onEnter: SideEffectHooks; // around entering the state
   onLeave: SideEffectHooks; // around leaving the state
   color: StateColor; // 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
@@ -495,13 +496,60 @@ through the card (`bendEdgeThrough` solves the Bézier control point for it), so
 never floats away from its own line. Dropping the card within 16 px of the automatic spot resets the
 offset to `{ x: 0, y: 0 }`.
 
+### Organizing the layout
+
+**Organize** in the toolbar arranges every card into a readable graph: columns from left to right,
+one per step away from where a record enters the machine, with the states inside a column ordered
+so the edges between them cross as little as possible. It is the layered (Sugiyama) shape, minus
+the parts a canvas this size does not need.
+
+- **Where a column starts.** Column 0 holds the states a record can enter at: the ones a
+  [creation transition](#creation-transitions) targets, or — with none — the ones listed in
+  `initialStateIds`, or — with neither — the ones nothing transitions into. A machine that is one
+  closed cycle has none of those, and starts from its first state rather than not being laid out.
+- **Which column the rest land in.** How many transitions away from the nearest entry point they
+  are. That is a breadth-first distance, not a longest path: a cycle is normal in a state machine,
+  and a longest path is only defined on a graph without one. Self transitions and creation edges
+  take no part — a self loop says nothing about which column its state belongs in, and the start
+  bar is placed rather than laid out.
+- **Which row.** A handful of barycentre sweeps, the classic crossing-reduction heuristic: each
+  column is put in the order of the neighbours it has in the column beside it, down and then back
+  up. Columns are centred on the tallest one, so a graph that widens and narrows again reads as a
+  spine rather than as a staircase. Sub-graphs that share no transition are laid out separately and
+  stacked, so an island never lands in the middle of the graph it has nothing to do with.
+- **The transition cards** go back to automatic placement and are then nudged off each other, the
+  same search a new transition's card goes through. A card the user dragged is deliberately not
+  kept: its offset is relative to an edge that has just been redrawn somewhere else entirely, so
+  keeping it would scatter the very cards this is meant to tidy.
+
+Columns are spread by a whole transition card's width plus a margin, both measured from the DOM
+rather than assumed, so the cards that sit between two columns have room to be read.
+
+It runs **by itself** when a machine is assigned whose states all sit on the origin — a graph
+authored anywhere but this editor: a backend that never stored coordinates, a fixture written by
+hand. A missing `position` parses as `{ x: 0, y: 0 }`, so both spellings arrive as the same thing
+and neither renders as a pile of cards on top of each other.
+
+That automatic pass is the one time assigning `value` emits `state-machine-change`. The positions
+are the editor's own work rather than the host's, and without the event they would be recomputed on
+every load and never stored. It carries `{ kind: 'layout' }` and is not an undo step — the state
+before it is the pile it just took apart, which is not somewhere to go back to. A host that echoes
+the value back gets no second pass, since the cards are no longer on the origin.
+
+```js
+editor.organize(); // false when the machine is empty, read-only, or already laid out this way
+layoutPositions(machine, { nodeSize, labelSize }); // the same arrangement, as a Map of id → point
+organizeMachine(machine, { nodeSize, labelSize }); // …applied, returning the machine when nothing moved
+isUnpositioned(machine); // what the automatic pass tests for
+```
+
 ## Element API
 
 ### Properties
 
 | Property | Type | Notes |
 | --- | --- | --- |
-| `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`. The current `selection` is kept if the selected id still names a state (or transition) in the new machine, so a host inspector panel survives writing edits back. Assigning a *different* machine clears the undo history with it; assigning the one already in place — what a host echoing `state-machine-change` back does — leaves it alone. |
+| `value` | `StateMachine` | Setting it validates the input (throws `StateMachineError`) and re-renders. Setting it does **not** emit `state-machine-change`, except for the one `layout` change a machine with no positions is [organized](#organizing-the-layout) with. The current `selection` is kept if the selected id still names a state (or transition) in the new machine, so a host inspector panel survives writing edits back. Assigning a *different* machine clears the undo history with it; assigning the one already in place — what a host echoing `state-machine-change` back does — leaves it alone. |
 | `sideEffectProvider` | `() => MaybePromise<SideEffectDefinition[]>` | Catalog used by the dialog. Called every time a dialog opens. |
 | `actionProvider` | `() => MaybePromise<ActionDefinition[]>` | Catalog the transition trigger is picked from. Without it the trigger is a free text field. |
 | `guardValidator` | `(expression) => MaybePromise<{ ok: true } \| { ok: false, errors }>` | Called on every guard edit; errors render inline. Absent means no validation. |
@@ -519,7 +567,7 @@ creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `
 `zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
 `openSideEffects(ref): Promise<boolean>`, `openProperties(ref): Promise<boolean>` where `ref` is
 `{ kind: 'state' | 'transition', id }`, `undo()`, `redo()`, `clearHistory()`,
-`copySelection()`, `copy(ref)`, `paste()`.
+`copySelection()`, `copy(ref)`, `paste()`, `organize()`.
 
 ### Events
 
@@ -533,7 +581,7 @@ Both bubble and are `composed`, so they cross shadow boundaries.
 `change.kind` is one of `state-add`, `state-remove`, `state-rename`, `state-move`, `state-color`,
 `transition-add`, `transition-remove`, `transition-rename`, `transition-move`,
 `transition-trigger`, `transition-guard`, `transition-permission`, `transition-reorder`,
-`description`, `side-effects-change`, `initial-states-change`, `final-states-change` and
+`description`, `side-effects-change`, `initial-states-change`, `final-states-change`, `layout` and
 `replace`. `description` carries a `ref` (`{ kind, id }`) since both states and transitions have
 one; every other transition kind carries a `transitionId`. `describeChange(change)` turns any of
 them into a label for an undo stack.
@@ -618,7 +666,8 @@ server-side rendering on top of it: `addState`, `updateState`, `removeState`, `a
 `canPaste`, `duplicateState`, `duplicateTransition`, `copyName`), the history helpers backing the
 editor's own stack (`createHistory`,
 `recordHistory`, `undoHistory`, `redoHistory`, `canUndo`, `canRedo`, `pendingUndo`, `pendingRedo`,
-`HISTORY_LIMIT`), plus the geometry helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`, …).
+`HISTORY_LIMIT`), the layout helpers (`layoutPositions`, `organizeMachine`, `isUnpositioned`), plus
+the geometry helpers (`computeEdgeGeometry`, `fitViewport`, `zoomBy`, …).
 
 ## Framework usage
 
@@ -689,9 +738,9 @@ path in place of the bare specifier. Everything else in this README applies unch
 | | `./register` (bundler) | `./bundled` (no bundler) |
 | --- | --- | --- |
 | Files to serve | your bundler's output | `bundled.js`, and nothing else |
-| Loaded up front | 107.2 kB → **30.1 kB gzipped** | 431.4 kB → **135.2 kB gzipped** |
+| Loaded up front | 111.3 kB → **31.4 kB gzipped** | 445.7 kB → **139.5 kB gzipped** |
 | Loaded on first **JSON** tab | 339.4 kB → 110.1 kB gzipped | — already there |
-| Total over the wire | 446.6 kB → 140.2 kB gzipped | 431.4 kB → 135.2 kB gzipped |
+| Total over the wire | 450.7 kB → 141.5 kB gzipped | 445.7 kB → 139.5 kB gzipped |
 
 Roughly the same bytes overall — the split column also carries the demo page's own code — and the
 difference is *when*. The bundler route keeps CodeMirror out of the initial
@@ -701,7 +750,7 @@ the sessions that never open a JSON tab.
 That is the deliberate trade. Keeping the split would have meant emitting a second file with a
 stable name and asking every host to copy it too — a step that is easy to miss, and whose failure
 mode is a runtime error in one tab of one dialog rather than a broken build. One file cannot be
-half-deployed. If the eager 135 kB matters more to you than that, use a bundler and the `./register`
+half-deployed. If the eager 139 kB matters more to you than that, use a bundler and the `./register`
 export, which is unchanged and still code-split.
 
 ## Styling
@@ -741,7 +790,7 @@ itself is browser-only and has no Node requirement.
 Consumers install CodeMirror transitively (`@codemirror/state`, `view`, `commands`, `language`,
 `lang-json`, `lint` and `@lezer/highlight`). The dialog reaches it through a dynamic `import()`, and
 nothing else in the package references it, so bundlers put it in its own chunk that is fetched the
-first time someone opens the JSON tab. In this repo's demo build that is 92 kB up front (25 kB
+first time someone opens the JSON tab. In this repo's demo build that is 111 kB up front (31 kB
 gzipped) with CodeMirror's 339 kB in a separate chunk. Hosts without a bundler take the
 [other route](#no-build-step) instead.
 

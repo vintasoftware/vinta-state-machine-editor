@@ -14,6 +14,7 @@ import {
   type EdgeGeometry,
   orderCreationAnchors,
 } from '../geometry/edge.js';
+import { isUnpositioned, organizeMachine } from '../geometry/layout.js';
 import { boxAround, findFreeLabelSpot } from '../geometry/placement.js';
 import {
   boundsOf,
@@ -153,6 +154,12 @@ const PLACEMENT_RINGS = 6;
 const CREATION_NAME = 'create';
 /** How far a pasted state starts out from the one it was copied from. */
 const PASTE_OFFSET = 24;
+
+/**
+ * Clear space the automatic layout leaves around the block it draws, so the
+ * cards do not start hard against the toolbar in a freshly fitted view.
+ */
+const LAYOUT_ORIGIN: Point = { x: 40, y: 40 };
 
 const EMPTY_GEOMETRY: EdgeGeometry = {
   path: '',
@@ -365,6 +372,7 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #redoButton: HTMLButtonElement;
   readonly #copyButton: HTMLButtonElement;
   readonly #pasteButton: HTMLButtonElement;
+  readonly #organizeButton: HTMLButtonElement;
   readonly #stateViews = new Map<string, StateView>();
   readonly #transitionViews = new Map<string, TransitionView>();
 
@@ -484,6 +492,12 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: toolbar,
       text: 'Paste',
     });
+    this.#organizeButton = createButton({
+      className: 'toolbar__organize',
+      parent: toolbar,
+      text: 'Organize',
+      attrs: { 'aria-label': 'Organize layout' },
+    });
     const zoomOut = createButton({
       parent: toolbar,
       text: '−',
@@ -516,6 +530,13 @@ export class StateMachineEditorElement extends HTMLElement {
     });
     this.#pasteButton.addEventListener('click', () => {
       this.paste();
+    });
+    this.#organizeButton.addEventListener('click', () => {
+      // The button is the one place that also fits the view: the whole point of
+      // pressing it is to look at the result, which may well have moved.
+      if (this.organize()) {
+        this.zoomToFit();
+      }
     });
     zoomOut.addEventListener('click', () => this.zoomOut());
     zoomIn.addEventListener('click', () => this.zoomIn());
@@ -585,7 +606,10 @@ export class StateMachineEditorElement extends HTMLElement {
     // that renders the editor from its own state. It is made against the input,
     // before validation rebuilds it into a machine of its own.
     const echoed = machine === this.#machine;
-    const next = assertStateMachine(machine);
+    const parsed = assertStateMachine(machine);
+    // A graph that arrives with no layout at all gets one before it is ever
+    // drawn, so the pile of cards on the origin is never what the user sees.
+    const next = isUnpositioned(parsed) ? this.#organized(parsed) : parsed;
     if (!echoed) {
       this.#history = createHistory();
       this.#historyBase = next;
@@ -596,6 +620,13 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#selection = null;
     }
     this.#render();
+    // The positions are the editor's own work rather than the host's, so they
+    // are announced: without this the layout would be recomputed on every load
+    // and never stored. It is not an undo step — there is nothing sensible to
+    // put back, the state before it being the pile this just took apart.
+    if (next !== parsed) {
+      this.#emitChange(next, { kind: 'layout' }, false);
+    }
     if (dropped) {
       this.#emitSelectionChange(null);
     }
@@ -870,6 +901,34 @@ export class StateMachineEditorElement extends HTMLElement {
       ? measured
       : { width: bounds.width + padding * 2, height: bounds.height + padding * 2 };
     this.#setViewport(fitViewport(bounds, size, padding));
+  }
+
+  /**
+   * Arranges every card into a readable layout: columns left to right, one per
+   * step away from where a record enters the machine, with the states of a
+   * column ordered to keep the edges between them from crossing. Recorded as a
+   * single undo step, and announced as one `layout` change.
+   *
+   * Cards the user dragged are *not* preserved. A transition's offset is
+   * relative to an edge that has just been redrawn somewhere else entirely, so
+   * keeping it would scatter the very cards this is meant to tidy; the cards
+   * are put back on their edges and then nudged off each other.
+   *
+   * Returns `false` when there is nothing to do — an empty machine, a read-only
+   * editor, or a machine already laid out exactly this way. The view is left
+   * where it is: the toolbar's **Organize** fits it, the method does not, so a
+   * host can organize without taking the user's viewport away from them.
+   */
+  organize(): boolean {
+    if (this.#readOnly || this.#machine.states.length === 0) {
+      return false;
+    }
+    const next = this.#organized(this.#machine);
+    if (next === this.#machine) {
+      return false;
+    }
+    this.#commit(next, { kind: 'layout' });
+    return true;
   }
 
   /**
@@ -1452,6 +1511,39 @@ export class StateMachineEditorElement extends HTMLElement {
     });
   }
 
+  /**
+   * `machine` laid out: the states on the automatic grid, then every transition
+   * card placed clear of the cards around it.
+   *
+   * Returns `machine` itself when nothing moved, so both callers can tell an
+   * already-tidy graph from one that has just been rearranged.
+   */
+  #organized(machine: StateMachine): StateMachine {
+    const laid = organizeMachine(machine, {
+      nodeSize: this.#nodeSize(),
+      labelSize: this.#labelSize(),
+      origin: LAYOUT_ORIGIN,
+    });
+    return this.#placeLabels(laid);
+  }
+
+  /**
+   * Nudges every transition card off whatever it landed on, one at a time, each
+   * measured against the cards already placed. The layout leaves a card's width
+   * between two columns, so most keep the automatic placement the reflow just
+   * handed back to them; the ones that do not are the edges that skip a column.
+   */
+  #placeLabels(machine: StateMachine): StateMachine {
+    let next = machine;
+    for (const transition of machine.transitions) {
+      const offset = this.#freeLabelOffset(next, transition);
+      if (offset.x !== 0 || offset.y !== 0) {
+        next = updateTransition(next, transition.id, { labelOffset: offset });
+      }
+    }
+    return next;
+  }
+
   /** Adds a copy of `state` and reports where it landed. */
   #pasteState(state: StateNode): ElementRef {
     const copy = duplicateState(state, {
@@ -1516,6 +1608,7 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#addStateButton.disabled = this.#readOnly;
     this.#renderHistoryButtons();
     this.#renderClipboardButtons();
+    this.#organizeButton.disabled = this.#readOnly || this.#machine.states.length === 0;
   }
 
   /**

@@ -104,6 +104,18 @@ function parsePoint(value: unknown, path: string, issues: Issues): Point {
   return { x: readNumber(value, 'x', path, issues), y: readNumber(value, 'y', path, issues) };
 }
 
+/**
+ * A state's position, defaulting to the origin when the host never stored one.
+ *
+ * An absent position is not a broken machine: a backend that only models states
+ * and transitions has nothing to store, and the editor lays such a graph out
+ * itself the first time it is assigned. A *malformed* position is still an
+ * error — that is a host writing coordinates it got wrong, not one abstaining.
+ */
+function parseOptionalPoint(value: unknown, path: string, issues: Issues): Point {
+  return value === undefined ? { x: 0, y: 0 } : parsePoint(value, path, issues);
+}
+
 function parseParams(value: unknown, path: string, issues: Issues): JsonObject {
   if (value === undefined) {
     return {};
@@ -211,7 +223,7 @@ function parseState(value: unknown, path: string, issues: Issues): StateNode {
   return {
     id: readString(value, 'id', path, issues),
     name: readString(value, 'name', path, issues),
-    position: parsePoint(value['position'], `${path}.position`, issues),
+    position: parseOptionalPoint(value['position'], `${path}.position`, issues),
     onEnter: parseHooks(value['onEnter'], `${path}.onEnter`, issues),
     onLeave: parseHooks(value['onLeave'], `${path}.onLeave`, issues),
     color: parseColor(value['color'], `${path}.color`, issues),
