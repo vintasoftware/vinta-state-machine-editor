@@ -589,6 +589,8 @@ export function describeChange(change: MachineChange): string {
       return 'Change description';
     case 'side-effects-change':
       return 'Change side effects';
+    case 'layout':
+      return 'Organize layout';
     case 'initial-states-change':
       return 'Change initial states';
     case 'final-states-change':

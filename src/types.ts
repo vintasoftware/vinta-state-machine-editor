@@ -231,6 +231,7 @@ export type MachineChange =
   | { readonly kind: 'transition-reorder'; readonly transitionId: string }
   | { readonly kind: 'description'; readonly ref: ElementRef }
   | { readonly kind: 'side-effects-change'; readonly ref: SideEffectListRef }
+  | { readonly kind: 'layout' }
   | { readonly kind: 'initial-states-change' }
   | { readonly kind: 'final-states-change' }
   | { readonly kind: 'replace' };

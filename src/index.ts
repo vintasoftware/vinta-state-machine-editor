@@ -21,6 +21,8 @@ export {
   curvatureFor,
   orderCreationAnchors,
 } from './geometry/edge.js';
+export type { LayoutOptions } from './geometry/layout.js';
+export { isUnpositioned, layoutPositions, organizeMachine } from './geometry/layout.js';
 export { boxAround, findFreeLabelSpot, rectsOverlap } from './geometry/placement.js';
 export type { Viewport } from './geometry/viewport.js';
 export {

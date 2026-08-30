@@ -8,7 +8,7 @@ import {
   StateMachineEditorElement,
   StateMachineError,
 } from '../src/index.js';
-import { createTransition, getSideEffects } from '../src/model/machine.js';
+import { createState, createTransition, getSideEffects } from '../src/model/machine.js';
 import type {
   GuardValidation,
   JsonObject,
@@ -16,6 +16,7 @@ import type {
   Point,
   Rect,
   Selection,
+  StateMachine,
 } from '../src/types.js';
 import {
   ACTIONS,
@@ -3166,5 +3167,138 @@ describe('the side effect count on a chip', () => {
     expect(chip?.hasAttribute('data-many')).toBe(true);
     expect(chip?.hasAttribute('data-has-params')).toBe(true);
     expect(chip?.getAttribute('aria-label')).toContain('2 side effects, 2 with parameters');
+  });
+});
+
+describe('organizing the layout', () => {
+  /** A machine as a backend that never stored coordinates hands it over. */
+  function unpositioned(): StateMachine {
+    return {
+      states: [
+        createState({ id: 'paid', name: 'Paid', position: { x: 0, y: 0 } }),
+        createState({ id: 'draft', name: 'Draft', position: { x: 0, y: 0 } }),
+      ],
+      transitions: [createTransition({ id: 'pay', name: 'pay', from: 'draft', to: 'paid' })],
+      initialStateIds: ['draft'],
+      finalStateIds: ['paid'],
+      data: {},
+    };
+  }
+
+  function positionOf(editor: StateMachineEditorElement, id: string): Point {
+    const state = editor.value.states.find((candidate) => candidate.id === id);
+    if (state === undefined) {
+      throw new Error(`No state "${id}".`);
+    }
+    return state.position;
+  }
+
+  it('lays a machine out on assignment when every card sits on the origin', () => {
+    const editor = mountEditor();
+    editor.value = unpositioned();
+
+    // Draft is where a record enters, so it takes the first column whatever
+    // order the states arrived in.
+    expect(positionOf(editor, 'draft').x).toBeLessThan(positionOf(editor, 'paid').x);
+    expect(editor.value.states.every((state) => state.position.y >= 0)).toBe(true);
+  });
+
+  it('announces the layout it invented, so the host can store it', () => {
+    const editor = mountEditor();
+    const recorded = changes(editor);
+    editor.value = unpositioned();
+
+    expect(recorded).toEqual([{ kind: 'layout' }]);
+  });
+
+  it('does not make the layout an undo step', () => {
+    const editor = mountEditor();
+    editor.value = unpositioned();
+
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('leaves a machine that carries positions exactly where it is', () => {
+    const editor = mountEditor();
+    const recorded = changes(editor);
+    editor.value = sampleMachine();
+
+    expect(recorded).toEqual([]);
+    expect(positionOf(editor, 'paid')).toEqual({ x: 400, y: 0 });
+  });
+
+  it('organizes on demand, as one undo step', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+
+    expect(editor.organize()).toBe(true);
+    expect(recorded).toEqual([{ kind: 'layout' }]);
+    expect(positionOf(editor, 'draft').x).toBeLessThan(positionOf(editor, 'paid').x);
+
+    editor.undo();
+    expect(positionOf(editor, 'paid')).toEqual({ x: 400, y: 0 });
+  });
+
+  it('names the step after what it did', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.organize();
+
+    expect(queryButton(shadowOf(editor), '.toolbar__history').getAttribute('aria-label')).toBe(
+      'Undo organize layout',
+    );
+  });
+
+  it('reports that an already organized machine has nothing to do', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.organize();
+
+    expect(editor.organize()).toBe(false);
+  });
+
+  it('puts a dragged transition card back on its edge', () => {
+    const editor = mountEditor();
+    const base = sampleMachine();
+    editor.value = {
+      ...base,
+      transitions: [
+        createTransition({
+          id: 'pay',
+          name: 'pay',
+          from: 'draft',
+          to: 'paid',
+          labelOffset: { x: 40, y: 90 },
+        }),
+      ],
+    };
+    editor.organize();
+
+    expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 0 });
+  });
+
+  it('organizes from the toolbar', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryButton(shadowOf(editor), '.toolbar__organize').click();
+
+    expect(positionOf(editor, 'draft').x).toBeLessThan(positionOf(editor, 'paid').x);
+  });
+
+  it('has nothing to organize while the machine is empty', () => {
+    const editor = mountEditor();
+
+    expect(queryButton(shadowOf(editor), '.toolbar__organize').disabled).toBe(true);
+    expect(editor.organize()).toBe(false);
+  });
+
+  it('stays out of a read-only editor', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.readOnly = true;
+
+    expect(queryButton(shadowOf(editor), '.toolbar__organize').disabled).toBe(true);
+    expect(editor.organize()).toBe(false);
   });
 });

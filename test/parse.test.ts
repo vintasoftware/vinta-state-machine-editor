@@ -40,6 +40,22 @@ describe('parseStateMachine', () => {
     }
   });
 
+  it('takes a state with no position at all, for the layout to place', () => {
+    const result = parseStateMachine({ states: [{ id: 's', name: 'S' }] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.states[0]?.position).toEqual({ x: 0, y: 0 });
+    }
+  });
+
+  it('still rejects a position that is there and wrong', () => {
+    const result = parseStateMachine({ states: [{ id: 's', name: 'S', position: 'middle' }] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain('machine.states[0].position must be an object with x and y.');
+    }
+  });
+
   it('rejects non objects', () => {
     expect(parseStateMachine(null).ok).toBe(false);
     expect(parseStateMachine([]).ok).toBe(false);

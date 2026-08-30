@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-30
+
+### Added
+
+- **Automatic layout.** A new **Organize** button in the toolbar, and an `organize()` method behind
+  it, arrange every card into a readable graph: columns from left to right, one per step away from
+  where a record enters the machine, with the states inside a column ordered so the edges between
+  them cross as little as possible. It is the layered (Sugiyama) shape, minus the parts a canvas
+  this size does not need.
+
+  Column 0 holds the states a record can enter at — the ones a creation edge targets, or, with
+  none, the ones in `initialStateIds`, or, with neither, the ones nothing transitions into. Every
+  other state sits as many columns along as it is transitions from the nearest of those. That is a
+  breadth-first distance rather than a longest path: a cycle is normal in a state machine, and a
+  longest path is only defined on a graph without one, so a machine that is one closed cycle is
+  laid out from its first state instead of not being laid out at all. Self transitions and creation
+  edges take no part in the ranking — a self loop says nothing about which column its state belongs
+  in, and the start bar is placed rather than laid out.
+
+  Rows come from a handful of barycentre sweeps, the classic crossing-reduction heuristic. Columns
+  are centred on the tallest one, so a graph that widens and narrows again reads as a spine rather
+  than as a staircase, and sub-graphs sharing no transition are laid out separately and stacked, so
+  an island never lands in the middle of the graph it has nothing to do with. Columns are spread by
+  a whole transition card's width plus a margin — both measured from the DOM rather than assumed —
+  so the cards between two columns have room to be read.
+
+  Transition cards go back to automatic placement and are then nudged off each other, the same
+  search a brand new card goes through. A card the user dragged is deliberately not kept: its offset
+  is relative to an edge that has just been redrawn somewhere else, so keeping it would scatter the
+  very cards the command is meant to tidy. The toolbar button fits the view afterwards; `organize()`
+  does not, so a host can organize without taking the user's viewport away from them.
+
+- **A machine with no layout is organized on arrival.** Assigning a `value` whose states all sit on
+  the origin — a graph authored anywhere but this editor: a backend that never stored coordinates, a
+  fixture written by hand — lays it out before it is ever drawn, instead of rendering it as one pile
+  of cards.
+
+  That pass is the one time assigning `value` emits `state-machine-change`. The positions are the
+  editor's own work rather than the host's, and without the event they would be recomputed on every
+  load and never stored. It carries the new `{ kind: 'layout' }` and is not an undo step — the state
+  before it is the pile it just took apart. A host echoing the value back gets no second pass, since
+  the cards are no longer on the origin.
+
+- `src/geometry/layout.ts`: `layoutPositions`, `organizeMachine` and `isUnpositioned` — pure,
+  DOM-free (the caller measures the cards and hands the sizes in) and exported, so a host can draw
+  the same arrangement somewhere the component is not.
+
+### Changed
+
+- A state's `position` is now **optional** in the parsed input. A backend that only models states
+  and transitions has no coordinates to send, and rejecting it forced every host to invent some. A
+  missing position reads as `{ x: 0, y: 0 }`, which is exactly what the automatic layout looks for.
+  A position that is present and malformed is still an error.
+- `MachineChange` gains the `layout` kind. `describeChange` names it *Organize layout*, so the undo
+  button reads *Undo organize layout* like every other step.
+
 ## [0.4.0] - 2026-08-24
 
 ### Added
@@ -257,7 +313,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.1.0...v0.2.0
