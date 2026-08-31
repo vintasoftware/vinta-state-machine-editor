@@ -1,22 +1,27 @@
+/*
+ * The page follows the editor rather than the operating system: `main.ts`
+ * stamps the scheme the component is in onto the root element, so the chrome
+ * around the canvas changes with the toolbar's toggle. Dark is the default on
+ * both sides.
+ */
 :root {
+  --bg: #101216;
+  --surface: #191c22;
+  --border: #2c313b;
+  --text: #eef1f6;
+  --muted: #98a1b0;
+  --accent: #7d9bff;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
   --bg: #f6f7f9;
   --surface: #fff;
   --border: #dde1e8;
   --text: #16181d;
   --muted: #6b7280;
   --accent: #3d63dd;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #101216;
-    --surface: #191c22;
-    --border: #2c313b;
-    --text: #eef1f6;
-    --muted: #98a1b0;
-    --accent: #7d9bff;
-  }
+  color-scheme: light;
 }
 
 * {

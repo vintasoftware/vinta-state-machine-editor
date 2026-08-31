@@ -1,5 +1,6 @@
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
 import { dialogStyles } from './styles.js';
+import { applyTheme, type EditorTheme, themeOf } from './theme.js';
 
 export interface ConfirmDialogOptions {
   readonly title: string;
@@ -75,6 +76,19 @@ export class ConfirmDialogElement extends HTMLElement {
     this.#confirmButton.addEventListener('click', () => this.#finish(true));
     this.#backdrop.addEventListener('pointerdown', this.#onBackdropPointerDown);
     this.#panel.addEventListener('keydown', this.#onKeyDown);
+  }
+
+  /**
+   * The colour scheme, reflected to the `theme` attribute. The editor hands its
+   * own down when it opens the dialog; a host driving the dialog on its own
+   * sets it here. Defaults to dark, like the editor.
+   */
+  get theme(): EditorTheme {
+    return themeOf(this);
+  }
+
+  set theme(value: EditorTheme) {
+    applyTheme(this, value);
   }
 
   /**

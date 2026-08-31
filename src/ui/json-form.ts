@@ -12,12 +12,21 @@ import {
   setAtPath,
 } from '../model/json.js';
 import type { JsonObject, JsonValue } from '../types.js';
-import { createButton, createElement } from './dom.js';
+import { createElement } from './dom.js';
+import {
+  createIconButton,
+  DEFAULT_ICONS,
+  type EditorIcons,
+  type IconOverrides,
+  mergeIcons,
+} from './icons.js';
 
 export interface JsonFormOptions {
   /** Element the form is rendered into. Its contents are replaced. */
   readonly container: HTMLElement;
   readonly onChange: (value: JsonObject) => void;
+  /** Glyphs for the add and remove buttons. Anything left out keeps its default. */
+  readonly icons?: IconOverrides | undefined;
 }
 
 const INDENT_PX = 14;
@@ -42,10 +51,22 @@ export class JsonFormEditor {
   readonly #onChange: (value: JsonObject) => void;
   #value: JsonObject = {};
   #readOnly = false;
+  #icons: EditorIcons = DEFAULT_ICONS;
 
   constructor(options: JsonFormOptions) {
     this.#container = options.container;
     this.#onChange = options.onChange;
+    this.#icons = mergeIcons(options.icons);
+  }
+
+  /** The glyphs in force. Assigning a partial set leaves the rest at their defaults. */
+  get icons(): EditorIcons {
+    return this.#icons;
+  }
+
+  set icons(overrides: IconOverrides | undefined) {
+    this.#icons = mergeIcons(overrides);
+    this.#render();
   }
 
   get value(): JsonObject {
@@ -93,10 +114,10 @@ export class JsonFormEditor {
       return;
     }
 
-    const add = createButton({
+    const add = createIconButton(this.#icons, 'add', {
       className: 'jf-add',
       parent,
-      text: isJsonArray(value) ? '+ Add item' : '+ Add field',
+      label: isJsonArray(value) ? 'Add item' : 'Add field',
     });
     add.style.marginLeft = `${depth * INDENT_PX}px`;
     add.addEventListener('click', (event) => {
@@ -156,10 +177,9 @@ export class JsonFormEditor {
     this.#renderValueControl(value, path, label, row, type);
 
     if (!this.#readOnly) {
-      const remove = createButton({
+      const remove = createIconButton(this.#icons, 'remove', {
         className: 'jf-remove',
         parent: row,
-        text: '✕',
         attrs: { 'aria-label': `Remove ${label}` },
       });
       remove.addEventListener('click', (event) => {

@@ -17,6 +17,21 @@
           <input type="checkbox" id="readonly" />
           Read-only
         </label>
+        <label class="switch">
+          Theme
+          <select id="theme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+        <label class="switch">
+          Icons
+          <select id="icons">
+            <option value="default">Default</option>
+            <option value="emoji">Emoji</option>
+            <option value="svg">SVG</option>
+          </select>
+        </label>
         <button type="button" id="fit">Zoom to fit</button>
         <button type="button" id="reset">Reset example</button>
         <button type="button" id="unpositioned">Example without positions</button>
@@ -42,6 +57,8 @@
             <li><b>Pan</b>: drag the background, scroll, or move two fingers together. <b>Zoom</b>: pinch on a trackpad or touchscreen, toolbar buttons, or Ctrl/⌘ + scroll.</li>
             <li><b>Delete</b>: select a state/transition and press Delete.</li>
             <li><b>Copy / paste</b>: select a state or transition, then <b>Copy</b> / <b>Paste</b> in the toolbar, or Ctrl/⌘ + C and Ctrl/⌘ + V. The copy carries the side effects, colour and attributes across under ids of its own; initial/final roles stay behind.</li>
+            <li><b>Theme</b>: the toolbar's <b>☀</b> / <b>☾</b> switches the canvas between dark and light. A host picks the one it opens in with the <code>theme</code> attribute — dark when it says nothing — and hears about every switch through <code>state-machine-theme-change</code>. The picker above and this page's own colours are wired to exactly that.</li>
+            <li><b>Icons</b>: the picker above swaps every glyph the canvas draws through the <code>icons</code> property — plain strings for the emoji set, <code>&lt;svg&gt;</code> nodes built per button for the other. Nothing is rebuilt: each icon is redrawn where it stands, dialogs included. A partial set replaces only what it names, and the glyphs written into these hints are the defaults.</li>
             <li><b>Undo / redo</b>: the toolbar's <b>↶</b> / <b>↷</b>, or Ctrl/⌘ + Z and Ctrl/⌘ + Shift + Z. A whole drag, and a whole properties save, each count as one step.</li>
           </ul>
         </section>

@@ -13,12 +13,14 @@ import {
   defineStateMachineEditor,
   describeChange,
   type GuardValidation,
+  type IconOverrides,
   type JsonObject,
   type SelectionChangeEvent,
   type SideEffectDefinition,
   type StateMachine,
   type StateMachineChangeEvent,
   StateMachineEditorElement,
+  type ThemeChangeEvent,
 } from '../src/index.js';
 
 defineStateMachineEditor();
@@ -57,6 +59,105 @@ const ACTIONS: readonly ActionDefinition[] = [
   { id: 'refund', name: 'refund' },
   { id: 'import', name: 'import', description: 'Bulk import from a spreadsheet' },
 ];
+
+/*
+ * Two icon sets, to show the two forms an icon takes beyond the defaults.
+ * Both are *partial*: `icons` replaces only what it names, so a set that left
+ * `link` out would keep drawing the default arrow for it.
+ */
+
+/**
+ * Strings are drawn as plain text — never parsed as markup — so an emoji set is
+ * one object literal and nothing else.
+ */
+const EMOJI_ICONS: IconOverrides = {
+  undo: '↩️',
+  redo: '↪️',
+  zoomOut: '🔍',
+  zoomIn: '🔎',
+  lightTheme: '🌞',
+  darkTheme: '🌜',
+  rename: '📝',
+  properties: '🎛️',
+  remove: '❌',
+  confirm: '✅',
+  cancel: '🚫',
+  link: '🔗',
+  initial: '🟢',
+  final: '🏁',
+  add: '➕',
+  dragHandle: '↕️',
+  params: '🧩',
+  moveUp: '🔼',
+  moveDown: '🔽',
+};
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * One stroked 24×24 icon, as a function returning a fresh node per button.
+ *
+ * A plain `<svg>` node would do just as well — the editor copies a node it is
+ * given, once per button that carries it — but a factory is what an icon set
+ * bound to a framework's render function looks like, so that is the form shown
+ * here. `currentColor` is what makes these inherit each button's own colour,
+ * hover and disabled states included.
+ */
+function strokeIcon(shapes: string): () => SVGSVGElement {
+  return () => {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.innerHTML = shapes;
+    return svg;
+  };
+}
+
+const SVG_ICONS: IconOverrides = {
+  undo: strokeIcon('<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
+  redo: strokeIcon('<path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/>'),
+  zoomOut: strokeIcon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M8 11h6"/>'),
+  zoomIn: strokeIcon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M8 11h6M11 8v6"/>'),
+  lightTheme: strokeIcon(
+    '<circle cx="12" cy="12" r="4"/>' +
+      '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2' +
+      'M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  ),
+  darkTheme: strokeIcon('<path d="M20 14A8.1 8.1 0 0 1 10 4a8 8 0 1 0 10 10z"/>'),
+  rename: strokeIcon('<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 6 4 4"/>'),
+  properties: strokeIcon(
+    '<path d="M4 7h8M17 7h3M4 17h3M12 17h8"/>' +
+      '<circle cx="14.5" cy="7" r="2.2"/><circle cx="9.5" cy="17" r="2.2"/>',
+  ),
+  remove: strokeIcon('<path d="M6 6 18 18M18 6 6 18"/>'),
+  confirm: strokeIcon('<path d="m5 13 4 4L19 7"/>'),
+  cancel: strokeIcon('<path d="M6 6 18 18M18 6 6 18"/>'),
+  link: strokeIcon('<path d="M4 12h14"/><path d="m13 6 6 6-6 6"/>'),
+  initial: strokeIcon('<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>'),
+  final: strokeIcon(
+    '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>',
+  ),
+  add: strokeIcon('<path d="M12 5v14M5 12h14"/>'),
+  dragHandle: strokeIcon(
+    '<path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke-width="2.6"/>',
+  ),
+  params: strokeIcon(
+    '<path d="M9 4c-2 0-2.5 1-2.5 2.5v2C6.5 10 5.5 11 4 12c1.5 1 2.5 2 2.5 3.5v2C6.5 19 7 20 9 20"/>' +
+      '<path d="M15 4c2 0 2.5 1 2.5 2.5v2c0 1.5 1 2.5 2.5 3.5-1.5 1-2.5 2-2.5 3.5v2c0 1.5-.5 2.5-2.5 2.5"/>',
+  ),
+  moveUp: strokeIcon('<path d="m6 15 6-6 6 6"/>'),
+  moveDown: strokeIcon('<path d="m6 9 6 6 6-6"/>'),
+};
+
+const ICON_SETS: Readonly<Record<string, IconOverrides | undefined>> = {
+  default: undefined,
+  emoji: EMOJI_ICONS,
+  svg: SVG_ICONS,
+};
 
 /**
  * Stands in for `fetch('/api/side-effects')`. Swap the body for a real request:
@@ -233,11 +334,17 @@ function isInput(value: Element): value is HTMLInputElement {
   return value instanceof HTMLInputElement;
 }
 
+function isSelect(value: Element): value is HTMLSelectElement {
+  return value instanceof HTMLSelectElement;
+}
+
 const editor = requireElement('#editor', isEditor);
 const json = requireElement('#json', isHtml);
 const log = requireElement('#log', isHtml);
 const eventCount = requireElement('#event-count', isHtml);
 const readOnlyToggle = requireElement('#readonly', isInput);
+const themePicker = requireElement('#theme', isSelect);
+const iconPicker = requireElement('#icons', isSelect);
 
 editor.sideEffectProvider = fetchSideEffectCatalog;
 editor.actionProvider = fetchActionCatalog;
@@ -278,6 +385,48 @@ editor.addEventListener('state-machine-selection-change', (event: SelectionChang
 
 readOnlyToggle.addEventListener('change', () => {
   editor.readOnly = readOnlyToggle.checked;
+});
+
+/*
+ * The scheme travels both ways: the picker sets it, and the editor's own
+ * toolbar button reports back through `state-machine-theme-change`. A host that
+ * persists the choice would save it here; this page just paints its own chrome
+ * to match, so the canvas and the page around it never disagree.
+ */
+themePicker.addEventListener('change', () => {
+  editor.setAttribute('theme', themePicker.value);
+});
+
+editor.addEventListener('state-machine-theme-change', (event: ThemeChangeEvent) => {
+  const { theme } = event.detail;
+  themePicker.value = theme;
+  document.documentElement.setAttribute('data-theme', theme);
+  addLogEntry('Theme', theme);
+});
+
+themePicker.value = editor.theme;
+document.documentElement.setAttribute('data-theme', editor.theme);
+
+/*
+ * Swapping the whole set is one assignment, at any time: the toolbar was built
+ * in the element's constructor and the cards outlive every render, but each
+ * icon remembers which one it is and is redrawn where it stands.
+ */
+iconPicker.addEventListener('change', () => {
+  const icons = ICON_SETS[iconPicker.value];
+  editor.icons = icons;
+  /*
+   * One marker is not an icon: the `{ }` a chip shows when its list carries
+   * parameters is drawn in CSS, which can hold text and nothing else. It
+   * follows the `params` icon while that icon is a string, and falls back to
+   * the default when the set hands the editor a node instead.
+   */
+  const marker = icons?.params;
+  if (typeof marker === 'string') {
+    editor.style.setProperty('--sme-params-marker', `'${marker}'`);
+  } else {
+    editor.style.removeProperty('--sme-params-marker');
+  }
 });
 
 requireElement('#fit', isHtml).addEventListener('click', () => editor.zoomToFit());

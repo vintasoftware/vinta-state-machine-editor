@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A theme the host picks.** The editor renders dark or light on demand, through a `theme`
+  attribute and the matching property:
+
+  ```html
+  <state-machine-editor theme="light"></state-machine-editor>
+  ```
+
+  It is `dark` when nothing says otherwise, and a value the element does not recognize —
+  `theme="system"`, say — renders as that default while staying in the DOM as written, the way an
+  unknown `type` on an `<input>` does. The property reflects to the attribute, which is what the
+  CSS keys off, so a host can read the scheme back off the element it set.
+
+- **A toolbar button that switches it.** **☀** / **☾**, at the end of the row, named after the
+  scheme the press moves *to*. It stays enabled while the editor is read-only: looking is not
+  editing. `toggleTheme(): 'dark' | 'light'` is the same switch from code, and returns the scheme
+  it moved to.
+
+- `state-machine-theme-change`, carrying `{ theme }`. Without it a host has no way to hear about a
+  choice the user made inside the component, so a picker of its own would drift out of step with
+  the toolbar. It fires on a real change only — assigning the scheme already in force stays quiet.
+
+- The three dialogs each take a `theme` attribute of their own. They carry shadow roots the
+  editor's `:host` tokens cannot reach by inheritance, so the editor hands its scheme down as it
+  opens them; the attribute is there for a host driving a dialog on its own.
+
+- **Every icon is the host's to replace**, through an `icons` property. A partial set replaces only
+  what it names and leaves the rest at their defaults, so swapping one glyph does not mean
+  restating the other eighteen:
+
+  ```ts
+  editor.icons = { rename: '📝', remove: '🗑' };
+  editor.icons.properties; // '⚙' — still the default
+  ```
+
+  An icon is a string, drawn as plain text; a DOM node the host builds — an `<svg>`, an `<img>` —
+  copied for each button that carries it; or a function returning a fresh one per button. Strings
+  are never parsed as markup: an icon set is often data from somewhere else, and that somewhere
+  else does not get to run scripts on the page. Reading `icons` back gives the whole set with the
+  defaults filled in; assigning `undefined` puts them all back.
+
+  The nineteen names are `undo`, `redo`, `zoomOut`, `zoomIn`, `lightTheme`, `darkTheme`, `rename`,
+  `properties`, `remove`, `confirm`, `cancel`, `link`, `initial`, `final`, `add`, `dragHandle`,
+  `params`, `moveUp` and `moveDown` — named after what they mean rather than where they sit, so one
+  `remove` covers the cards, the side effect rows and the JSON parameter fields alike. An icon that
+  leads a label keeps it: replacing `initial` turns `▶ Initial` into `→ Initial`, it does not lose
+  the word, and accessible names and tooltips never depended on the glyph in the first place.
+
+  Icons can be set at any time. The toolbar is built in the constructor, long before a host gets to
+  assign anything, and the cards outlive every render — so nothing is rebuilt: each icon is redrawn
+  where it stands, and the dialogs are handed the new set as they open. The side effects and
+  properties dialogs take an `icons` property of their own, for a host driving one directly.
+
+- Every icon sits in a `part="icon"` span, so a replaced set can be sized or coloured from outside
+  the shadow root: `state-machine-editor::part(icon) { … }`. The one marker that is not an icon —
+  the `{ }` a canvas chip shows when its list carries parameters — is drawn in CSS, which can hold
+  text and nothing else, and follows a new `--sme-params-marker` custom property.
+
+### Changed
+
+- **The editor no longer follows `prefers-color-scheme`.** It used to flip with the operating
+  system's setting; the palette is now the host's `theme` alone, and dark unless the host says
+  otherwise. It is a component inside someone else's page, and a page that is light all the way
+  through has no use for a canvas that turns dark on its own — that is the embedding page's call to
+  make, not the operating system's.
+
+  A host that wants the old behaviour asks for it:
+
+  ```ts
+  const media = matchMedia('(prefers-color-scheme: dark)');
+  const follow = () => {
+    editor.theme = media.matches ? 'dark' : 'light';
+  };
+  follow();
+  media.addEventListener('change', follow);
+  ```
+
+  Hosts already overriding the custom properties are unaffected: an override set on the element
+  still wins in both schemes. To keep a different one per scheme, key it off the same attribute the
+  component does — `state-machine-editor[theme='light'] { … }`.
+
 ## [0.6.0] - 2026-08-31
 
 ### Added

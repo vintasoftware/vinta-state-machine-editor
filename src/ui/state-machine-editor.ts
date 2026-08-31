@@ -2,8 +2,13 @@ import type {
   SelectionChangeEvent,
   StateMachineChangeEvent,
   StateMachineEditorEventMap,
+  ThemeChangeEvent,
 } from '../events.js';
-import { SELECTION_CHANGE_EVENT, STATE_MACHINE_CHANGE_EVENT } from '../events.js';
+import {
+  SELECTION_CHANGE_EVENT,
+  STATE_MACHINE_CHANGE_EVENT,
+  THEME_CHANGE_EVENT,
+} from '../events.js';
 import {
   bendEdgeThrough,
   bendSelfEdgeThrough,
@@ -107,6 +112,18 @@ import { STATE_COLORS } from '../types.js';
 import { ConfirmDialogElement } from './confirm-dialog.js';
 import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
 import {
+  clearIcon,
+  createIconButton,
+  DEFAULT_ICONS,
+  type EditorIcons,
+  hasIcon,
+  type IconName,
+  type IconOverrides,
+  mergeIcons,
+  refreshIcons,
+  setIcon,
+} from './icons.js';
+import {
   describeElement,
   describeSideEffectList,
   describeSource,
@@ -117,17 +134,38 @@ import type { OrderContext, PropertiesDraft } from './properties-dialog.js';
 import { PropertiesDialogElement } from './properties-dialog.js';
 import {
   countWithParams,
+  EMPTY_SIDE_EFFECTS_LABEL,
   formatSideEffectHead,
   formatSideEffectTitle,
 } from './side-effect-summary.js';
 import { SideEffectsDialogElement } from './side-effects-dialog.js';
 import { editorStyles } from './styles.js';
+import {
+  applyTheme,
+  DEFAULT_THEME,
+  type EditorTheme,
+  normalizeTheme,
+  otherTheme,
+  THEME_ATTRIBUTE,
+} from './theme.js';
 
 const FALLBACK_NODE_WIDTH = 248;
 const FALLBACK_NODE_HEIGHT = 152;
 const ZOOM_STEP = 1.25;
 const GRID_SIZE = 24;
-const ADD_SIDE_EFFECT_LABEL = '+ Add side effect';
+/** What an empty side effect chip offers, after its `add` icon. */
+const ADD_SIDE_EFFECT_LABEL = 'Add side effect';
+/**
+ * What the theme toggle shows, keyed by the scheme in force. Both the icon and
+ * the label name the scheme the press *switches to*, which is the thing the
+ * user is deciding about.
+ */
+const THEME_TOGGLE: Readonly<
+  Record<EditorTheme, { readonly icon: IconName; readonly label: string }>
+> = {
+  dark: { icon: 'lightTheme', label: 'Switch to the light theme' },
+  light: { icon: 'darkTheme', label: 'Switch to the dark theme' },
+};
 /** How long after the last viewport change the canvas is considered settled. */
 const TRANSFORM_SETTLE_MS = 180;
 /** Dropping a transition card this close to its edge snaps it back to automatic placement. */
@@ -358,7 +396,7 @@ function containsPoint(rect: Rect, point: Point): boolean {
  */
 export class StateMachineEditorElement extends HTMLElement {
   static readonly tagName = 'state-machine-editor';
-  static readonly observedAttributes: readonly string[] = ['readonly'];
+  static readonly observedAttributes: readonly string[] = ['readonly', THEME_ATTRIBUTE];
 
   readonly #shadow: ShadowRoot;
   readonly #viewportElement: HTMLElement;
@@ -374,6 +412,7 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #copyButton: HTMLButtonElement;
   readonly #pasteButton: HTMLButtonElement;
   readonly #organizeButton: HTMLButtonElement;
+  readonly #themeButton: HTMLButtonElement;
   readonly #stateViews = new Map<string, StateView>();
   readonly #transitionViews = new Map<string, TransitionView>();
 
@@ -399,6 +438,8 @@ export class StateMachineEditorElement extends HTMLElement {
   /** Slot each creation edge leaves the bar from. Rebuilt on every render. */
   #creationAnchors: ReadonlyMap<string, Point> = new Map();
   #readOnly = false;
+  #theme: EditorTheme = DEFAULT_THEME;
+  #icons: EditorIcons = DEFAULT_ICONS;
   #drag: DragState | undefined;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
   /** State whose colour palette is open, if any. */
@@ -472,16 +513,14 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: toolbar,
       text: 'Add state',
     });
-    this.#undoButton = createButton({
+    this.#undoButton = createIconButton(this.#icons, 'undo', {
       className: 'toolbar__history',
       parent: toolbar,
-      text: '↶',
       attrs: { 'aria-label': 'Undo' },
     });
-    this.#redoButton = createButton({
+    this.#redoButton = createIconButton(this.#icons, 'redo', {
       className: 'toolbar__history',
       parent: toolbar,
-      text: '↷',
       attrs: { 'aria-label': 'Redo' },
     });
     this.#copyButton = createButton({
@@ -500,9 +539,8 @@ export class StateMachineEditorElement extends HTMLElement {
       text: 'Organize',
       attrs: { 'aria-label': 'Organize layout' },
     });
-    const zoomOut = createButton({
+    const zoomOut = createIconButton(this.#icons, 'zoomOut', {
       parent: toolbar,
-      text: '−',
       attrs: { 'aria-label': 'Zoom out' },
     });
     this.#zoomLabel = createButton({
@@ -511,11 +549,20 @@ export class StateMachineEditorElement extends HTMLElement {
       text: '100%',
       attrs: { 'aria-label': 'Reset zoom to 100%' },
     });
-    const zoomIn = createButton({ parent: toolbar, text: '+', attrs: { 'aria-label': 'Zoom in' } });
+    const zoomIn = createIconButton(this.#icons, 'zoomIn', {
+      parent: toolbar,
+      attrs: { 'aria-label': 'Zoom in' },
+    });
     const fit = createButton({
       parent: toolbar,
       text: 'Fit',
       attrs: { 'aria-label': 'Zoom to fit' },
+    });
+    // Last in the row: the theme is a property of the view, not of the machine,
+    // and it stays available while the editor is read-only.
+    this.#themeButton = createIconButton(this.#icons, THEME_TOGGLE[this.#theme].icon, {
+      className: 'toolbar__theme',
+      parent: toolbar,
     });
 
     this.#addStateButton.addEventListener('click', () => {
@@ -536,6 +583,9 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#organizeButton.addEventListener('click', () => {
       void this.confirmOrganize();
     });
+    this.#themeButton.addEventListener('click', () => {
+      this.toggleTheme();
+    });
     zoomOut.addEventListener('click', () => this.zoomOut());
     zoomIn.addEventListener('click', () => this.zoomIn());
     fit.addEventListener('click', () => this.zoomToFit());
@@ -555,6 +605,13 @@ export class StateMachineEditorElement extends HTMLElement {
     if (!this.hasAttribute('tabindex')) {
       this.setAttribute('tabindex', '0');
     }
+    // The default is written out rather than left implied, so a host reading
+    // the attribute back — to persist the choice, say — always finds a scheme
+    // there. A value the element does not know is left alone: it renders as the
+    // default, exactly like an unknown `type` on an `<input>`.
+    if (!this.hasAttribute(THEME_ATTRIBUTE)) {
+      applyTheme(this, DEFAULT_THEME);
+    }
     this.#render();
   }
 
@@ -573,6 +630,18 @@ export class StateMachineEditorElement extends HTMLElement {
     if (name === 'readonly') {
       this.#readOnly = next !== null;
       this.#render();
+      return;
+    }
+    if (name === THEME_ATTRIBUTE) {
+      const theme = normalizeTheme(next);
+      // Two spellings of the same scheme — the attribute going from absent to
+      // `dark`, say — are not a change worth announcing.
+      if (theme === this.#theme) {
+        return;
+      }
+      this.#theme = theme;
+      this.#render();
+      this.#emitThemeChange(theme);
     }
   }
 
@@ -680,6 +749,69 @@ export class StateMachineEditorElement extends HTMLElement {
     this.toggleAttribute('readonly', value);
     this.#readOnly = value;
     this.#render();
+  }
+
+  /**
+   * The colour scheme, reflected to the `theme` attribute. `'dark'` is what a
+   * host that never sets it gets: the editor deliberately ignores the operating
+   * system's preference, so an embedding page — not the machine it runs on —
+   * decides what the canvas looks like.
+   *
+   * Assigning anything else than `'dark'` or `'light'` falls back to the
+   * default, and so does an attribute the element does not recognize.
+   */
+  get theme(): EditorTheme {
+    return this.#theme;
+  }
+
+  set theme(value: EditorTheme) {
+    // The attribute is the source of truth — the CSS keys off it — and writing
+    // it runs `attributeChangedCallback`, which normalizes and re-renders.
+    applyTheme(this, value);
+  }
+
+  /**
+   * The glyphs drawn on the editor's buttons and handles — the pencil that
+   * renames, the arrow dragged between two cards, and so on.
+   *
+   * Assigning a partial set replaces only what it names and leaves every other
+   * icon at its default, so a host swapping one glyph does not have to restate
+   * the other eighteen. Assigning `undefined` puts them all back.
+   *
+   * An icon is a string, drawn as plain text, or a DOM node the host builds —
+   * an `<svg>`, an `<img>` — or a function returning a fresh one per button.
+   * A node given directly is copied for each button that carries it, so one
+   * `<svg>` can stand for every rename button on the canvas.
+   *
+   * ```js
+   * editor.icons = { rename: '📝', remove: closeSvg, link: () => makeArrow() };
+   * ```
+   *
+   * The reading passes the whole set back, defaults included. The dialogs are
+   * handed it as they open, so it reaches their rows and order controls too.
+   */
+  get icons(): EditorIcons {
+    return this.#icons;
+  }
+
+  set icons(overrides: IconOverrides | undefined) {
+    this.#icons = mergeIcons(overrides);
+    // The toolbar is built in the constructor, long before a host can assign
+    // this, and the cards outlive every render — so nothing is rebuilt here.
+    // Each icon remembers which one it is, and is redrawn where it stands.
+    refreshIcons(this.#shadow, this.#icons);
+    for (const dialog of [this.#dialog, this.#propertiesDialog]) {
+      if (dialog !== undefined) {
+        dialog.icons = this.#icons;
+      }
+    }
+  }
+
+  /** Switches between the two schemes, which is what the toolbar's button does. */
+  toggleTheme(): EditorTheme {
+    const next = otherTheme(this.#theme);
+    this.theme = next;
+    return next;
   }
 
   get selection(): Selection {
@@ -981,6 +1113,7 @@ export class StateMachineEditorElement extends HTMLElement {
       effects: getSideEffects(this.#machine, ref),
       provider: this.#provider,
       readOnly: this.#readOnly,
+      icons: this.#icons,
     });
     dialog.remove();
     if (result === null) {
@@ -1013,6 +1146,7 @@ export class StateMachineEditorElement extends HTMLElement {
       guardValidator: this.#guardValidator,
       order: ref.kind === 'transition' ? this.#orderContextFor(ref.id) : undefined,
       readOnly: this.#readOnly,
+      icons: this.#icons,
     });
     dialog.remove();
     if (result === null) {
@@ -1070,37 +1204,31 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   #ensureDialog(): SideEffectsDialogElement {
-    const existing = this.#dialog;
-    if (existing !== undefined) {
-      this.#shadow.append(existing);
-      return existing;
-    }
-    const dialog = new SideEffectsDialogElement();
+    const dialog = this.#dialog ?? new SideEffectsDialogElement();
     this.#dialog = dialog;
-    this.#shadow.append(dialog);
-    return dialog;
+    return this.#openInShadow(dialog);
   }
 
   #ensureConfirmDialog(): ConfirmDialogElement {
-    const existing = this.#confirmDialog;
-    if (existing !== undefined) {
-      this.#shadow.append(existing);
-      return existing;
-    }
-    const dialog = new ConfirmDialogElement();
+    const dialog = this.#confirmDialog ?? new ConfirmDialogElement();
     this.#confirmDialog = dialog;
-    this.#shadow.append(dialog);
-    return dialog;
+    return this.#openInShadow(dialog);
   }
 
   #ensurePropertiesDialog(): PropertiesDialogElement {
-    const existing = this.#propertiesDialog;
-    if (existing !== undefined) {
-      this.#shadow.append(existing);
-      return existing;
-    }
-    const dialog = new PropertiesDialogElement();
+    const dialog = this.#propertiesDialog ?? new PropertiesDialogElement();
     this.#propertiesDialog = dialog;
+    return this.#openInShadow(dialog);
+  }
+
+  /**
+   * Puts a dialog in the shadow tree under the editor's own theme. Appending one
+   * already there moves it back to the end, which is where a modal belongs.
+   */
+  #openInShadow<
+    T extends SideEffectsDialogElement | PropertiesDialogElement | ConfirmDialogElement,
+  >(dialog: T): T {
+    dialog.theme = this.#theme;
     this.#shadow.append(dialog);
     return dialog;
   }
@@ -1288,6 +1416,15 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#selection = selection;
     this.#render();
     this.#emitSelectionChange(selection);
+  }
+
+  #emitThemeChange(theme: EditorTheme): void {
+    const event: ThemeChangeEvent = new CustomEvent(THEME_CHANGE_EVENT, {
+      detail: { theme },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
   }
 
   #emitSelectionChange(selection: Selection): void {
@@ -1682,7 +1819,27 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#addStateButton.disabled = this.#readOnly;
     this.#renderHistoryButtons();
     this.#renderClipboardButtons();
+    this.#renderTheme();
     this.#organizeButton.disabled = this.#readOnly || this.#machine.states.length === 0;
+  }
+
+  /**
+   * Names the theme toggle after the scheme it switches to, and hands the
+   * scheme down to the dialogs — they carry shadow roots of their own, so the
+   * tokens on the editor's `:host` never reach them by inheritance.
+   */
+  #renderTheme(): void {
+    const { icon, label } = THEME_TOGGLE[this.#theme];
+    if (!hasIcon(this.#themeButton, icon)) {
+      setIcon(this.#themeButton, this.#icons, icon);
+    }
+    this.#themeButton.setAttribute('aria-label', label);
+    this.#themeButton.title = label;
+    for (const dialog of [this.#dialog, this.#propertiesDialog, this.#confirmDialog]) {
+      if (dialog !== undefined) {
+        dialog.theme = this.#theme;
+      }
+    }
   }
 
   /**
@@ -1790,10 +1947,9 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: root,
       text: START_BAR_LABEL,
     });
-    const linkHandle = createButton({
+    const linkHandle = createIconButton(this.#icons, 'link', {
       className: 'node__link start-node__link',
       parent: root,
-      text: '\u2192',
       attrs: { 'aria-label': 'Drag to a state to create a creation transition' },
     });
     linkHandle.addEventListener('pointerdown', (event) => this.#onLinkPointerDown(event, null));
@@ -1832,26 +1988,23 @@ export class StateMachineEditorElement extends HTMLElement {
       event.stopPropagation();
       this.#togglePalette(stateId);
     });
-    const renameButton = createButton({
+    const renameButton = createIconButton(this.#icons, 'rename', {
       className: 'icon-button node__rename',
       parent: actions,
-      text: '✎',
       attrs: { 'aria-label': 'Rename state', title: 'Rename (F2)' },
     });
-    const propertiesButton = createButton({
+    const propertiesButton = createIconButton(this.#icons, 'properties', {
       className: 'icon-button node__properties',
       parent: actions,
-      text: '⚙',
       attrs: { 'aria-label': 'State properties', title: 'Properties' },
     });
     propertiesButton.addEventListener('click', (event) => {
       event.stopPropagation();
       void this.openProperties({ kind: 'state', id: stateId });
     });
-    const removeButton = createButton({
+    const removeButton = createIconButton(this.#icons, 'remove', {
       className: 'icon-button node__remove',
       parent: actions,
-      text: '✕',
       attrs: { 'aria-label': 'Remove state' },
     });
     const hooks = createElement('div', { className: 'hooks', parent: root });
@@ -1890,10 +2043,10 @@ export class StateMachineEditorElement extends HTMLElement {
     const roles = createElement('div', { className: 'node__roles', parent: root });
     const roleButtons = new Map<StateRole, HTMLButtonElement>();
     for (const role of ['initial', 'final'] as const) {
-      const button = createButton({
+      const button = createIconButton(this.#icons, role, {
         className: `node__role node__role--${role}`,
         parent: roles,
-        text: role === 'initial' ? '▶ Initial' : '◉ Final',
+        label: role === 'initial' ? 'Initial' : 'Final',
         attrs: { 'aria-pressed': 'false' },
       });
       button.addEventListener('click', (event) => {
@@ -1905,10 +2058,10 @@ export class StateMachineEditorElement extends HTMLElement {
 
     // Only reachable while the state is initial: the start pseudo-node does not
     // exist until a creation edge does, so there is nothing to drag from yet.
-    const creationButton = createButton({
+    const creationButton = createIconButton(this.#icons, 'add', {
       className: 'node__create',
       parent: roles,
-      text: '+ Creation',
+      label: 'Creation',
       attrs: { title: 'Add a transition that creates a record in this state' },
     });
     creationButton.addEventListener('click', (event) => {
@@ -1929,10 +2082,9 @@ export class StateMachineEditorElement extends HTMLElement {
       attrs: { 'marker-end': 'url(#sme-arrow)' },
     });
 
-    const linkHandle = createButton({
+    const linkHandle = createIconButton(this.#icons, 'link', {
       className: 'node__link',
       parent: root,
-      text: '→',
       attrs: { 'aria-label': 'Drag to another state to create a transition' },
     });
 
@@ -2116,9 +2268,17 @@ export class StateMachineEditorElement extends HTMLElement {
 
   #updateChip(chip: ChipView, ref: SideEffectListRef): void {
     const effects = getSideEffects(this.#machine, ref);
-    const emptyLabel = this.#readOnly ? 'No side effects' : ADD_SIDE_EFFECT_LABEL;
     const button = chip.button;
-    chip.label.textContent = formatSideEffectHead(effects, emptyLabel);
+    // Only the offer to add one leads with an icon; a list that has something in
+    // it leads with the first side effect's name, and read-only says so plainly.
+    if (effects.length === 0 && !this.#readOnly) {
+      if (!hasIcon(chip.label, 'add', ADD_SIDE_EFFECT_LABEL)) {
+        setIcon(chip.label, this.#icons, 'add', ADD_SIDE_EFFECT_LABEL);
+      }
+    } else {
+      clearIcon(chip.label);
+      chip.label.textContent = formatSideEffectHead(effects, EMPTY_SIDE_EFFECTS_LABEL);
+    }
     button.classList.toggle('is-filled', effects.length > 0);
     button.title = formatSideEffectTitle(effects);
     const labels = describeSideEffectList(this.#machine, ref);
@@ -2174,26 +2334,23 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: card,
       attrs: { part: 'card-actions', role: 'toolbar' },
     });
-    const renameButton = createButton({
+    const renameButton = createIconButton(this.#icons, 'rename', {
       className: 'icon-button edge-card__rename',
       parent: actions,
-      text: '✎',
       attrs: { 'aria-label': 'Rename transition', title: 'Rename (F2)' },
     });
-    const propertiesButton = createButton({
+    const propertiesButton = createIconButton(this.#icons, 'properties', {
       className: 'icon-button edge-card__properties',
       parent: actions,
-      text: '⚙',
       attrs: { 'aria-label': 'Transition properties', title: 'Properties' },
     });
     propertiesButton.addEventListener('click', (event) => {
       event.stopPropagation();
       void this.openProperties({ kind: 'transition', id: transitionId });
     });
-    const removeButton = createButton({
+    const removeButton = createIconButton(this.#icons, 'remove', {
       className: 'icon-button edge-card__remove',
       parent: actions,
-      text: '✕',
       attrs: { 'aria-label': 'Remove transition' },
     });
     /*
@@ -2864,14 +3021,12 @@ export class StateMachineEditorElement extends HTMLElement {
     const input = createElement('input', { className: 'name-input' });
     input.value = options.current;
     input.setAttribute('aria-label', options.ariaLabel);
-    const save = createButton({
+    const save = createIconButton(this.#icons, 'confirm', {
       className: 'icon-button icon-button--confirm',
-      text: '✓',
       attrs: { 'aria-label': 'Save name', title: 'Save (Enter)' },
     });
-    const cancel = createButton({
+    const cancel = createIconButton(this.#icons, 'cancel', {
       className: 'icon-button icon-button--cancel',
-      text: '✕',
       attrs: { 'aria-label': 'Cancel renaming', title: 'Cancel (Escape)' },
     });
     editor.append(input, save, cancel);

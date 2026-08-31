@@ -4,10 +4,18 @@ import { createSideEffect } from '../model/machine.js';
 import { parseSideEffectDefinitions } from '../model/parse.js';
 import type { JsonObject, SideEffect, SideEffectDefinition, SideEffectProvider } from '../types.js';
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
+import {
+  createIconButton,
+  DEFAULT_ICONS,
+  type EditorIcons,
+  type IconOverrides,
+  mergeIcons,
+} from './icons.js';
 import { JsonFormEditor } from './json-form.js';
 import type { JsonTextEditor } from './json-text-editor.js';
 import { ReorderController } from './reorder.js';
 import { dialogStyles } from './styles.js';
+import { applyTheme, type EditorTheme, themeOf } from './theme.js';
 
 export interface SideEffectsDialogOptions {
   readonly title: string;
@@ -15,6 +23,11 @@ export interface SideEffectsDialogOptions {
   readonly effects: readonly SideEffect[];
   readonly provider?: SideEffectProvider | undefined;
   readonly readOnly?: boolean;
+  /**
+   * Glyphs for the rows' handles and buttons. Anything left out keeps its
+   * default; left out entirely, whatever was assigned to `icons` stands.
+   */
+  readonly icons?: IconOverrides | undefined;
 }
 
 type DialogResolver = (result: readonly SideEffect[] | null) => void;
@@ -60,6 +73,7 @@ export class SideEffectsDialogElement extends HTMLElement {
   /** CodeMirror instance of the open parameters panel, if any. */
   #textEditor: JsonTextEditor | undefined;
   #paramsMode: ParamsMode = 'form';
+  #icons: EditorIcons = DEFAULT_ICONS;
 
   constructor() {
     super();
@@ -136,11 +150,41 @@ export class SideEffectsDialogElement extends HTMLElement {
     return this.#draft;
   }
 
+  /**
+   * The colour scheme, reflected to the `theme` attribute. The editor hands its
+   * own down when it opens the dialog; a host driving the dialog on its own
+   * sets it here. Defaults to dark, like the editor.
+   */
+  get theme(): EditorTheme {
+    return themeOf(this);
+  }
+
+  set theme(value: EditorTheme) {
+    applyTheme(this, value);
+  }
+
+  /**
+   * The glyphs the rows are drawn with. The editor hands its own down when it
+   * opens the dialog; a host driving the dialog on its own sets them here.
+   * Assigning a partial set leaves every other icon at its default.
+   */
+  get icons(): EditorIcons {
+    return this.#icons;
+  }
+
+  set icons(overrides: IconOverrides | undefined) {
+    this.#icons = mergeIcons(overrides);
+    this.#renderList();
+  }
+
   /** Opens the modal; resolves with the new list, or `null` when cancelled. */
   open(options: SideEffectsDialogOptions): Promise<readonly SideEffect[] | null> {
     this.#previouslyFocused = this.ownerDocument.activeElement;
     this.#draft = [...options.effects];
     this.#readOnly = options.readOnly === true;
+    if (options.icons !== undefined) {
+      this.#icons = mergeIcons(options.icons);
+    }
     this.#expandedId = undefined;
     this.#paramsMode = 'form';
     this.#title.textContent = options.title;
@@ -237,10 +281,9 @@ export class SideEffectsDialogElement extends HTMLElement {
       });
       const row = createElement('div', { className: 'row', parent: item });
 
-      const handle = createButton({
+      const handle = createIconButton(this.#icons, 'dragHandle', {
         className: 'row__handle',
         parent: row,
-        text: '⠿',
         attrs: {
           'aria-label': `Reorder ${effect.name}. Position ${index + 1} of ${this.#draft.length}. Use Alt with arrow keys to move.`,
           title: 'Drag to reorder, or press Alt + Arrow Up/Down',
@@ -275,13 +318,16 @@ export class SideEffectsDialogElement extends HTMLElement {
       });
 
       const expanded = this.#expandedId === effect.id;
-      const params = createButton({
+      // The badge is the parameters icon plus how many are set, so replacing
+      // the icon leaves the count exactly where it was.
+      const paramCount = countParams(effect.params);
+      const params = createIconButton(this.#icons, 'params', {
         className: 'row__params',
         parent: row,
-        text: formatParamsBadge(effect.params),
+        label: paramCount === 0 ? undefined : String(paramCount),
         attrs: {
           'aria-expanded': expanded ? 'true' : 'false',
-          'aria-label': `${expanded ? 'Hide' : 'Edit'} parameters of ${effect.name}, ${countParams(effect.params)} set`,
+          'aria-label': `${expanded ? 'Hide' : 'Edit'} parameters of ${effect.name}, ${paramCount} set`,
           title: 'JSON parameters',
           'data-params-for': effect.id,
         },
@@ -294,10 +340,9 @@ export class SideEffectsDialogElement extends HTMLElement {
         this.#renderList();
       });
 
-      const remove = createButton({
+      const remove = createIconButton(this.#icons, 'remove', {
         className: 'row__remove',
         parent: row,
-        text: '✕',
         attrs: { 'aria-label': `Remove ${effect.name}` },
       });
       remove.disabled = this.#readOnly;
@@ -351,6 +396,7 @@ export class SideEffectsDialogElement extends HTMLElement {
     const editor = new JsonFormEditor({
       container: form,
       onChange: (value) => this.#updateParams(effect.id, value),
+      icons: this.#icons,
     });
 
     const currentParams = (): JsonObject =>

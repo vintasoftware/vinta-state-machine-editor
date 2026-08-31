@@ -18,7 +18,8 @@ npm install vinta-state-machine-editor
 ## Quick start
 
 ```html
-<state-machine-editor id="editor" style="height: 600px"></state-machine-editor>
+<!-- theme is optional: it defaults to "dark". -->
+<state-machine-editor id="editor" theme="light" style="height: 600px"></state-machine-editor>
 
 <script type="module">
   import 'vinta-state-machine-editor/register';
@@ -102,6 +103,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Organize the layout | **Organize** in the toolbar — it asks first, since every position on the canvas is replaced — or `editor.organize()`, which does not ask |
 | Pan | Drag the background, scroll, or move two fingers together |
 | Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
+| Switch the theme | Toolbar **☀** / **☾**, or `editor.theme = 'light'` / `editor.toggleTheme()` |
 
 ## Data model
 
@@ -570,6 +572,8 @@ isUnpositioned(machine); // what the automatic pass tests for
 | `actionProvider` | `() => MaybePromise<ActionDefinition[]>` | Catalog the transition trigger is picked from. Without it the trigger is a free text field. |
 | `guardValidator` | `(expression) => MaybePromise<{ ok: true } \| { ok: false, errors }>` | Called on every guard edit; errors render inline. Absent means no validation. |
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
+| `icons` | `Partial<EditorIcons> \| undefined` | Glyphs for the buttons and handles. A partial set replaces only what it names; reading it back gives the whole set, defaults filled in — see [Icons](#icons). |
+| `theme` | `'dark' \| 'light'` | Reflected to the `theme` attribute, which is what the CSS keys off. Defaults to `'dark'`; a value the element does not know reads back as the default. Never taken from the operating system — see [Theming](#theming). |
 | `selection` | `{ kind: 'state' \| 'transition', id } \| null` | Survives a `value` assignment that keeps the selected element; becomes `null` if that element is gone, and only that drop emits `state-machine-selection-change`. |
 | `viewport` | `{ x, y, scale }` | Pan/zoom state; assignable to restore a saved view. |
 | `clipboard` | `{ kind: 'state', state } \| { kind: 'transition', transition } \| null` | The editor's own copy buffer, not the system one. Assignable, so a copy can move between two editors on the page or be seeded from storage. |
@@ -584,7 +588,8 @@ creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `
 `openSideEffects(ref): Promise<boolean>`, `openProperties(ref): Promise<boolean>` where `ref` is
 `{ kind: 'state' | 'transition', id }`, `undo()`, `redo()`, `clearHistory()`,
 `copySelection()`, `copy(ref)`, `paste()`, `organize()`,
-`confirmOrganize(): Promise<boolean>`.
+`confirmOrganize(): Promise<boolean>`, `toggleTheme(): 'dark' | 'light'` — switches to the other
+scheme and returns it, which is what the toolbar's button calls.
 
 ### Events
 
@@ -592,6 +597,7 @@ creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `
 | --- | --- |
 | `state-machine-change` | `{ value, change, transient }` — `change` says what happened (`state-move`, `side-effects-change`, …); `transient: true` marks the intermediate frames of a drag. |
 | `state-machine-selection-change` | `{ selection }` |
+| `state-machine-theme-change` | `{ theme }` — fires when the scheme actually changes, including the switch the toolbar's own button makes. Setting `theme` to the scheme already in force stays quiet. |
 
 Both bubble and are `composed`, so they cross shadow boundaries.
 
@@ -770,10 +776,132 @@ mode is a runtime error in one tab of one dialog rather than a broken build. One
 half-deployed. If the eager 139 kB matters more to you than that, use a bundler and the `./register`
 export, which is unchanged and still code-split.
 
+## Theming
+
+The component ships a dark and a light scheme, and the host picks which one:
+
+```html
+<state-machine-editor theme="light"></state-machine-editor>
+```
+
+```ts
+editor.theme = 'light'; // reflected to the attribute
+editor.theme; // 'light'
+editor.toggleTheme(); // 'dark'
+```
+
+`theme` is `dark` when nothing says otherwise, and a value the element does not recognize —
+`theme="system"`, say — renders as that default while staying in the DOM as written, the way an
+unknown `type` on an `<input>` does.
+
+The editor deliberately **never reads `prefers-color-scheme`**. It is a component inside someone
+else's page, and a page that is light all the way through has no use for a canvas that turns dark
+on its own. A host that *does* want to follow the operating system asks for it explicitly:
+
+```ts
+const media = matchMedia('(prefers-color-scheme: dark)');
+const follow = () => {
+  editor.theme = media.matches ? 'dark' : 'light';
+};
+follow();
+media.addEventListener('change', follow);
+```
+
+The toolbar's **☀** / **☾** button switches the scheme from inside the editor — it stays enabled
+in read-only mode, since looking is not editing — and every switch, from the button or from the
+host, arrives as `state-machine-theme-change`:
+
+```ts
+editor.addEventListener('state-machine-theme-change', (event) => {
+  localStorage.setItem('editor-theme', event.detail.theme);
+});
+```
+
+The dialogs carry shadow roots of their own, so the editor hands its scheme down to them as it
+opens them; they also take a `theme` attribute directly, for a host driving one on its own.
+
+## Icons
+
+Every glyph the editor draws on a button or a handle is replaceable, through the `icons`
+property. A partial set replaces only what it names and leaves the rest alone:
+
+```ts
+editor.icons = { rename: '📝', remove: '🗑' };
+editor.icons.properties; // '⚙' — still the default
+```
+
+Reading `icons` back gives the whole set with the defaults filled in. Assigning `undefined` puts
+them all back.
+
+An icon is one of three things:
+
+| Form | Example | Drawn as |
+| --- | --- | --- |
+| A string | `'📝'` | Plain **text**, never markup: an icon set is often data from somewhere else, and a component that parsed it as HTML would run that somewhere else's scripts. |
+| A DOM node | `svgElement` | The node, **copied** for each button that carries it — the canvas draws `rename` once per card, and a node can only be in one place. Your own node is left untouched. |
+| A function | `() => makeIcon()` | Called once per button, and what it returns is used as it is. This is the form to use when the icon has to be built fresh — bound to a framework, or carrying per-button state. |
+
+So an SVG icon set looks like this:
+
+```ts
+const icon = (path) => () => {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.innerHTML = `<path d="${path}" fill="currentColor" />`;
+  return svg;
+};
+
+editor.icons = { rename: icon(PENCIL), remove: icon(CROSS), properties: icon(GEAR) };
+```
+
+Icons can be set at any time. The toolbar is built in the constructor, long before a host gets to
+assign anything, and the cards outlive every render — so nothing is rebuilt when the set changes:
+each icon is redrawn where it stands, and the dialogs are handed the new set as they open.
+
+### The set
+
+Icons are named after what they **mean**, not where they sit, so replacing one covers every place
+it is drawn: one `remove` serves the state cards, the transition cards, the side effect rows and
+the JSON parameter fields.
+
+| Name | Default | Where |
+| --- | --- | --- |
+| `undo` / `redo` | ↶ ↷ | Toolbar |
+| `zoomOut` / `zoomIn` | − + | Toolbar |
+| `lightTheme` / `darkTheme` | ☀ ☾ | Toolbar; each names the scheme its press switches **to** |
+| `rename` | ✎ | State and transition cards |
+| `properties` | ⚙ | State and transition cards |
+| `remove` | ✕ | Cards, side effect rows, JSON parameter fields |
+| `confirm` / `cancel` | ✓ ✕ | The inline rename editor |
+| `link` | → | The handle dragged from one card to another, and from the start bar |
+| `initial` / `final` | ▶ ◉ | The role pills on a state card |
+| `add` | + | Leads `Creation`, `Add side effect`, `Add item` and `Add field` |
+| `dragHandle` | ⠿ | The grip a side effect is reordered by |
+| `params` | `{ }` | The button holding a side effect's JSON parameters |
+| `moveUp` / `moveDown` | ↑ ↓ | Transition order, in the properties dialog |
+
+An icon that leads a label keeps that label: replacing `initial` turns `▶ Initial` into
+`→ Initial`, it does not lose the word. Accessible names and tooltips are unaffected throughout —
+they are written out in full and never depend on the glyph.
+
+The dialogs take an `icons` property of their own, for a host driving one directly rather than
+through the editor:
+
+```ts
+const dialog = new SideEffectsDialogElement();
+dialog.icons = { dragHandle: '≡' };
+```
+
+One marker is not an icon: the `{ }` a canvas chip shows when its list carries parameters is drawn
+in CSS, which can hold text and nothing else. It follows `--sme-params-marker`:
+
+```css
+state-machine-editor { --sme-params-marker: '{…}'; }
+```
+
 ## Styling
 
-The component ships a self-contained light/dark theme driven by CSS custom properties, all
-overridable from the host:
+Both schemes are built out of the same CSS custom properties, all overridable from the host:
 
 ```css
 state-machine-editor {
@@ -786,7 +914,22 @@ state-machine-editor {
 }
 ```
 
-Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `card-actions`, `start-node`, `edge`, `chip`.
+An override set on the element wins in both schemes. To keep a scheme of your own on each, key the
+overrides off the same attribute the component does:
+
+```css
+state-machine-editor[theme='light'] { --sme-accent: #7c3aed; }
+state-machine-editor[theme='dark'] { --sme-accent: #b38cff; }
+```
+
+Exposed shadow parts: `viewport`, `toolbar`, `state`, `transition`, `card-actions`, `start-node`, `edge`, `chip`, `icon`.
+
+Every icon sits in its own `part="icon"` span, so a host can size or colour a replaced icon set
+from outside the shadow root:
+
+```css
+state-machine-editor::part(icon) { color: #7c3aed; }
+```
 
 The canvas sets `touch-action: none`, so touch gestures reach the component instead of scrolling
 the page. Pinch is handled from raw pointer events (two fingers) and from `wheel` events with

@@ -1453,6 +1453,127 @@ function machineWithCreation(): ReturnType<typeof sampleMachine> {
   };
 }
 
+describe('theme', () => {
+  /** The dialog element itself — the theme lives on it, not in its shadow tree. */
+  function dialogElement(editor: StateMachineEditorElement, tag: string): Element {
+    const dialog = shadowOf(editor).querySelector(tag);
+    if (dialog === null) {
+      throw new Error(`${tag} is not open`);
+    }
+    return dialog;
+  }
+
+  it('starts dark, and says so in the attribute', () => {
+    const editor = mountEditor();
+
+    expect(editor.theme).toBe('dark');
+    expect(editor.getAttribute('theme')).toBe('dark');
+  });
+
+  it('takes the scheme from an attribute set before it is mounted', () => {
+    defineStateMachineEditor();
+    const editor = document.createElement('state-machine-editor');
+    editor.setAttribute('theme', 'light');
+    document.body.append(editor);
+
+    expect(editor.theme).toBe('light');
+  });
+
+  it('reflects an assigned scheme to the attribute', () => {
+    const editor = mountEditor();
+    editor.theme = 'light';
+
+    expect(editor.getAttribute('theme')).toBe('light');
+    expect(editor.theme).toBe('light');
+  });
+
+  it('reads a scheme it does not know as the default', () => {
+    const editor = mountEditor();
+    editor.setAttribute('theme', 'midnight');
+
+    // Left in the DOM as written — like an unknown `type` on an `<input>` —
+    // and rendered as the default, which is what the CSS falls back to.
+    expect(editor.getAttribute('theme')).toBe('midnight');
+    expect(editor.theme).toBe('dark');
+  });
+
+  it('never asks the operating system', () => {
+    const matchMedia = vi.fn(() => ({ matches: true, addEventListener: vi.fn() }));
+    vi.stubGlobal('matchMedia', matchMedia);
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    expect(editor.theme).toBe('dark');
+    expect(matchMedia).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('switches from the toolbar, and names the scheme the press moves to', () => {
+    const editor = mountEditor();
+    const button = queryButton(shadowOf(editor), '.toolbar__theme');
+
+    expect(button.getAttribute('aria-label')).toBe('Switch to the light theme');
+    button.click();
+    expect(editor.theme).toBe('light');
+    expect(button.getAttribute('aria-label')).toBe('Switch to the dark theme');
+
+    button.click();
+    expect(editor.theme).toBe('dark');
+    expect(button.getAttribute('aria-label')).toBe('Switch to the light theme');
+  });
+
+  it('switches from the method too', () => {
+    const editor = mountEditor();
+
+    expect(editor.toggleTheme()).toBe('light');
+    expect(editor.toggleTheme()).toBe('dark');
+  });
+
+  it('stays available read-only: looking is not editing', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.readOnly = true;
+    const button = queryButton(shadowOf(editor), '.toolbar__theme');
+
+    expect(button.disabled).toBe(false);
+    button.click();
+    expect(editor.theme).toBe('light');
+  });
+
+  it('hands the scheme down to the dialogs, which carry roots of their own', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    editor.sideEffectProvider = () => CATALOG;
+    editor.theme = 'light';
+
+    queryAll(shadowOf(editor), '.edge-card .chip')[0]?.click();
+    await flush();
+    expect(dialogElement(editor, 'state-machine-side-effects-dialog').getAttribute('theme')).toBe(
+      'light',
+    );
+    queryButton(openedDialog(editor), '.footer .button').click();
+    await flush();
+
+    queryButton(shadowOf(editor), '.toolbar__organize').click();
+    await flush();
+    expect(dialogElement(editor, 'state-machine-confirm-dialog').getAttribute('theme')).toBe(
+      'light',
+    );
+  });
+
+  it('reaches a dialog that is already open when the scheme changes', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    void editor.openProperties({ kind: 'state', id: 'draft' });
+    await flush();
+
+    editor.theme = 'light';
+    expect(dialogElement(editor, 'state-machine-properties-dialog').getAttribute('theme')).toBe(
+      'light',
+    );
+  });
+});
+
 describe('creation transitions', () => {
   it('shows no start pseudo-node until a creation edge exists', () => {
     const editor = mountEditor();

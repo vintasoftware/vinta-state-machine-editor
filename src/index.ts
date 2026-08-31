@@ -9,8 +9,14 @@ export type {
   StateMachineChangeDetail,
   StateMachineChangeEvent,
   StateMachineEditorEventMap,
+  ThemeChangeDetail,
+  ThemeChangeEvent,
 } from './events.js';
-export { SELECTION_CHANGE_EVENT, STATE_MACHINE_CHANGE_EVENT } from './events.js';
+export {
+  SELECTION_CHANGE_EVENT,
+  STATE_MACHINE_CHANGE_EVENT,
+  THEME_CHANGE_EVENT,
+} from './events.js';
 export type { CreationAnchorInput, EdgeGeometry } from './geometry/edge.js';
 export {
   bendEdgeThrough,
@@ -145,6 +151,25 @@ export {
 } from './types.js';
 export type { ConfirmDialogOptions } from './ui/confirm-dialog.js';
 export { ConfirmDialogElement } from './ui/confirm-dialog.js';
+export type {
+  EditorIcons,
+  Icon,
+  IconButtonOptions,
+  IconContent,
+  IconName,
+  IconOverrides,
+} from './ui/icons.js';
+export {
+  clearIcon,
+  createIconButton,
+  DEFAULT_ICONS,
+  hasIcon,
+  ICON_NAMES,
+  isIconName,
+  mergeIcons,
+  refreshIcons,
+  setIcon,
+} from './ui/icons.js';
 export type { JsonFormOptions } from './ui/json-form.js';
 export { JsonFormEditor } from './ui/json-form.js';
 // JsonTextEditor is deliberately not re-exported: a static export here would pull
@@ -181,6 +206,17 @@ export {
 export type { SideEffectsDialogOptions } from './ui/side-effects-dialog.js';
 export { formatParamsBadge, SideEffectsDialogElement } from './ui/side-effects-dialog.js';
 export { StateMachineEditorElement } from './ui/state-machine-editor.js';
+export type { EditorTheme } from './ui/theme.js';
+export {
+  applyTheme,
+  DEFAULT_THEME,
+  EDITOR_THEMES,
+  isEditorTheme,
+  normalizeTheme,
+  otherTheme,
+  THEME_ATTRIBUTE,
+  themeOf,
+} from './ui/theme.js';
 
 let dialogRegistered = false;
 let propertiesRegistered = false;

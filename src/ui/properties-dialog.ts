@@ -6,7 +6,15 @@ import type {
   TransitionTrigger,
 } from '../types.js';
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
+import {
+  createIconButton,
+  DEFAULT_ICONS,
+  type EditorIcons,
+  type IconOverrides,
+  mergeIcons,
+} from './icons.js';
 import { dialogStyles } from './styles.js';
+import { applyTheme, type EditorTheme, themeOf } from './theme.js';
 
 /** Everything the properties dialog can edit. A state only uses `description`. */
 export interface PropertiesDraft {
@@ -35,6 +43,11 @@ export interface PropertiesDialogOptions {
   readonly guardValidator?: GuardValidator | undefined;
   readonly order?: OrderContext | undefined;
   readonly readOnly?: boolean;
+  /**
+   * Glyphs for the order controls. Anything left out keeps its default; left
+   * out entirely, whatever was assigned to `icons` stands.
+   */
+  readonly icons?: IconOverrides | undefined;
 }
 
 type DialogResolver = (result: PropertiesDraft | null) => void;
@@ -97,6 +110,7 @@ export class PropertiesDialogElement extends HTMLElement {
   #draft: PropertiesDraft = emptyPropertiesDraft();
   #resolve: DialogResolver | undefined;
   #readOnly = false;
+  #icons: EditorIcons = DEFAULT_ICONS;
   #previouslyFocused: Element | null = null;
   /** Bumped on every guard edit, so a slow validator cannot overwrite a newer verdict. */
   #guardToken = 0;
@@ -143,11 +157,40 @@ export class PropertiesDialogElement extends HTMLElement {
     return this.#draft;
   }
 
+  /**
+   * The colour scheme, reflected to the `theme` attribute. The editor hands its
+   * own down when it opens the dialog; a host driving the dialog on its own
+   * sets it here. Defaults to dark, like the editor.
+   */
+  get theme(): EditorTheme {
+    return themeOf(this);
+  }
+
+  set theme(value: EditorTheme) {
+    applyTheme(this, value);
+  }
+
+  /**
+   * The glyphs the order controls are drawn with. The editor hands its own down
+   * when it opens the dialog; a host driving the dialog on its own sets them
+   * here. Assigning a partial set leaves every other icon at its default.
+   */
+  get icons(): EditorIcons {
+    return this.#icons;
+  }
+
+  set icons(overrides: IconOverrides | undefined) {
+    this.#icons = mergeIcons(overrides);
+  }
+
   /** Opens the modal; resolves with the edited values, or `null` when cancelled. */
   open(options: PropertiesDialogOptions): Promise<PropertiesDraft | null> {
     this.#previouslyFocused = this.ownerDocument.activeElement;
     this.#draft = options.values;
     this.#readOnly = options.readOnly === true;
+    if (options.icons !== undefined) {
+      this.#icons = mergeIcons(options.icons);
+    }
     this.#title.textContent = options.title;
     this.#subtitle.textContent = options.description;
     this.#saveButton.hidden = this.#readOnly;
@@ -346,16 +389,14 @@ export class PropertiesDialogElement extends HTMLElement {
       hint: `Edges leaving ${order.sourceLabel} are evaluated in this order.`,
     });
     const readout = createElement('span', { className: 'order__readout', parent: control });
-    const up = createButton({
+    const up = createIconButton(this.#icons, 'moveUp', {
       className: 'order__move order__move--up',
       parent: control,
-      text: '↑',
       attrs: { 'aria-label': 'Move earlier' },
     });
-    const down = createButton({
+    const down = createIconButton(this.#icons, 'moveDown', {
       className: 'order__move order__move--down',
       parent: control,
-      text: '↓',
       attrs: { 'aria-label': 'Move later' },
     });
     const refresh = (): void => {

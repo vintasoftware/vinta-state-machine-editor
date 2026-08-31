@@ -1,7 +1,9 @@
-/** Design tokens shared by the editor and the dialog. */
-export const tokens: string = `
-  :host {
-    --sme-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+/**
+ * The light palette. Every colour token is named in both palettes, so neither
+ * leans on the other and a host reading one gets the whole scheme.
+ */
+const lightPalette = `
+    color-scheme: light;
     --sme-surface: #ffffff;
     --sme-surface-muted: #f4f5f7;
     --sme-canvas: #f8f9fb;
@@ -13,7 +15,7 @@ export const tokens: string = `
     --sme-accent-soft: #e7edff;
     --sme-danger: #c62f3a;
     --sme-edge: #8b93a3;
-    --sme-radius: 10px;
+    --sme-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 8px 24px rgba(16, 24, 40, 0.08);
     --sme-code-key: #8250df;
     --sme-code-string: #0a7c42;
     --sme-code-number: #b3541e;
@@ -27,39 +29,55 @@ export const tokens: string = `
     --sme-color-warning: #d97706;
     --sme-color-danger: #dc2626;
     --sme-color-muted: #cbd5e1;
-    --sme-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 8px 24px rgba(16, 24, 40, 0.08);
+`;
+
+const darkPalette = `
+    color-scheme: dark;
+    --sme-surface: #1b1e25;
+    --sme-surface-muted: #22262f;
+    --sme-canvas: #14161b;
+    --sme-grid: #23262e;
+    --sme-border: #333844;
+    --sme-text: #eef1f6;
+    --sme-text-muted: #9aa3b2;
+    --sme-accent: #7d9bff;
+    --sme-accent-soft: #26304a;
+    --sme-danger: #ff8080;
+    --sme-edge: #6d7688;
+    --sme-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --sme-code-key: #c8a8ff;
+    --sme-code-string: #7ee2a8;
+    --sme-code-number: #ffb27a;
+    --sme-code-keyword: #8ab4ff;
+    --sme-code-punctuation: #8b93a3;
+    --sme-code-invalid: #ff8080;
+    --sme-code-selection: rgba(125, 155, 255, 0.32);
+    --sme-color-neutral: #94a3b8;
+    --sme-color-info: #60a5fa;
+    --sme-color-success: #4ade80;
+    --sme-color-warning: #fbbf24;
+    --sme-color-danger: #f87171;
+    --sme-color-muted: #475569;
+`;
+
+/**
+ * Design tokens shared by the editor and the dialogs.
+ *
+ * The palette is picked by the `theme` attribute alone — never by
+ * `prefers-color-scheme` — so an embedding page decides what the editor looks
+ * like. Dark is what a host that has said nothing gets, which is why it sits on
+ * the bare `:host`: `theme="dark"` and a missing attribute are the same thing.
+ */
+export const tokens: string = `
+  :host {
+    --sme-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --sme-radius: 10px;
     --sme-node-width: 248px;
-    color-scheme: light dark;
+    ${darkPalette}
   }
 
-  @media (prefers-color-scheme: dark) {
-    :host {
-      --sme-surface: #1b1e25;
-      --sme-surface-muted: #22262f;
-      --sme-canvas: #14161b;
-      --sme-grid: #23262e;
-      --sme-border: #333844;
-      --sme-text: #eef1f6;
-      --sme-text-muted: #9aa3b2;
-      --sme-accent: #7d9bff;
-      --sme-accent-soft: #26304a;
-      --sme-danger: #ff8080;
-      --sme-edge: #6d7688;
-      --sme-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
-      --sme-code-key: #c8a8ff;
-      --sme-code-string: #7ee2a8;
-      --sme-code-number: #ffb27a;
-      --sme-code-keyword: #8ab4ff;
-      --sme-code-punctuation: #8b93a3;
-      --sme-code-invalid: #ff8080;
-      --sme-code-selection: rgba(125, 155, 255, 0.32);
-      --sme-color-neutral: #94a3b8;
-      --sme-color-info: #60a5fa;
-      --sme-color-success: #4ade80;
-      --sme-color-warning: #fbbf24;
-      --sme-color-danger: #f87171;
-      --sme-color-muted: #475569;
-    }
+  :host([theme='light']) {
+    ${lightPalette}
   }
 
   * { box-sizing: border-box; }
@@ -84,8 +102,24 @@ export const tokens: string = `
   }
 `;
 
+/*
+ * Every icon the editor draws sits in a span of its own, so a host can swap a
+ * character for an <svg> without the layout moving under it. The span itself
+ * is left inline — exactly what the character it replaced was — and only what a
+ * host puts inside it is held to the size of the line it sits on.
+ */
+const iconStyles = `
+  .icon > svg,
+  .icon > img {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
+  }
+`;
+
 export const editorStyles: string = `
   ${tokens}
+  ${iconStyles}
 
   :host {
     display: block;
@@ -336,8 +370,13 @@ export const editorStyles: string = `
    */
   .chip[data-has-params] { padding-right: 24px; }
 
+  /*
+   * Drawn in CSS, which can hold text and nothing else — so this one marker
+   * follows the params icon only while that icon is a string. A host that hands
+   * the editor a node for it sets --sme-params-marker here instead.
+   */
   .chip[data-has-params]::after {
-    content: '{ }';
+    content: var(--sme-params-marker, '{ }');
     position: absolute;
     top: 50%;
     right: 7px;
@@ -674,7 +713,7 @@ export const editorStyles: string = `
     top: 12px;
     left: 12px;
     display: flex;
-    /* Ten controls outgrow a phone; wrapping keeps them all reachable rather
+    /* Eleven controls outgrow a phone; wrapping keeps them all reachable rather
        than running the last of them off the edge of the canvas. */
     flex-wrap: wrap;
     max-width: calc(100% - 24px);
@@ -703,6 +742,7 @@ export const editorStyles: string = `
   .toolbar__zoom { min-width: 56px; font-variant-numeric: tabular-nums; }
   /* The arrows sit small for their em box, so they need a size of their own. */
   .toolbar__history { font-size: 16px; line-height: 1; }
+  .toolbar__theme { font-size: 15px; line-height: 1; }
 
   /*
    * Touch and pen: grow every hit target. 22px icons are comfortable with a
@@ -746,6 +786,7 @@ export const editorStyles: string = `
 
 export const dialogStyles: string = `
   ${tokens}
+  ${iconStyles}
 
   :host {
     display: contents;
