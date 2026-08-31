@@ -104,6 +104,7 @@ import type {
   TransitionTrigger,
 } from '../types.js';
 import { STATE_COLORS } from '../types.js';
+import { ConfirmDialogElement } from './confirm-dialog.js';
 import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
 import {
   describeElement,
@@ -408,6 +409,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #trackingPointers = false;
   #dialog: SideEffectsDialogElement | undefined;
   #propertiesDialog: PropertiesDialogElement | undefined;
+  #confirmDialog: ConfirmDialogElement | undefined;
   /**
    * The open inline name editors, keyed by the state or transition they edit.
    * Several can be open at once: an edit only ends when its own save or cancel
@@ -532,11 +534,7 @@ export class StateMachineEditorElement extends HTMLElement {
       this.paste();
     });
     this.#organizeButton.addEventListener('click', () => {
-      // The button is the one place that also fits the view: the whole point of
-      // pressing it is to look at the result, which may well have moved.
-      if (this.organize()) {
-        this.zoomToFit();
-      }
+      void this.confirmOrganize();
     });
     zoomOut.addEventListener('click', () => this.zoomOut());
     zoomIn.addEventListener('click', () => this.zoomIn());
@@ -607,19 +605,28 @@ export class StateMachineEditorElement extends HTMLElement {
     // before validation rebuilds it into a machine of its own.
     const echoed = machine === this.#machine;
     const parsed = assertStateMachine(machine);
-    // A graph that arrives with no layout at all gets one before it is ever
-    // drawn, so the pile of cards on the origin is never what the user sees.
-    const next = isUnpositioned(parsed) ? this.#organized(parsed) : parsed;
     if (!echoed) {
       this.#history = createHistory();
-      this.#historyBase = next;
     }
-    this.#machine = next;
+    this.#machine = parsed;
     const dropped = this.#selection !== null && !selectionExists(this.#machine, this.#selection);
     if (dropped) {
       this.#selection = null;
     }
     this.#render();
+    // A graph that arrives with no layout at all gets one, so the pile of cards
+    // on the origin is never what the user sees. It is laid out *after* that
+    // first render and drawn again: the cards have to exist to be measured, and
+    // a layout pitched on the fallback size would crowd every card that is
+    // taller than it. Both passes are one turn, so the pile is never painted.
+    const next = isUnpositioned(parsed) ? this.#organized(parsed) : parsed;
+    if (next !== parsed) {
+      this.#machine = next;
+      this.#render();
+    }
+    if (!echoed) {
+      this.#historyBase = next;
+    }
     // The positions are the editor's own work rather than the host's, so they
     // are announced: without this the layout would be recomputed on every load
     // and never stored. It is not an undo step — there is nothing sensible to
@@ -932,6 +939,36 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   /**
+   * Asks first, then organizes: what the toolbar's **Organize** does.
+   *
+   * Every card the user placed by hand is moved, and the arrangement they had
+   * is not something they can reconstruct from memory — so unlike every other
+   * command here it is worth a question, even though one undo puts it back.
+   * The view is fitted afterwards: the whole point of pressing the button is to
+   * look at the result, which may well have moved off screen.
+   *
+   * Resolves `false` when the user cancelled, and when there was nothing to do.
+   */
+  async confirmOrganize(): Promise<boolean> {
+    if (this.#readOnly || this.#machine.states.length === 0) {
+      return false;
+    }
+    const dialog = this.#ensureConfirmDialog();
+    const confirmed = await dialog.open({
+      title: 'Organize the layout?',
+      message:
+        'Every card is moved onto the automatic layout. The positions on the canvas now — including the ones you dragged — are lost, though a single undo brings them back.',
+      confirmLabel: 'Organize',
+    });
+    dialog.remove();
+    if (!confirmed || !this.organize()) {
+      return false;
+    }
+    this.zoomToFit();
+    return true;
+  }
+
+  /**
    * Opens the side effects dialog for a list.
    * Resolves with `true` when the user saved, `false` when they cancelled.
    */
@@ -1025,7 +1062,11 @@ export class StateMachineEditorElement extends HTMLElement {
 
   /** True while either dialog sits in the shadow tree, which is to say: is open. */
   #dialogOpen(): boolean {
-    return this.#dialog?.isConnected === true || this.#propertiesDialog?.isConnected === true;
+    return (
+      this.#dialog?.isConnected === true ||
+      this.#propertiesDialog?.isConnected === true ||
+      this.#confirmDialog?.isConnected === true
+    );
   }
 
   #ensureDialog(): SideEffectsDialogElement {
@@ -1036,6 +1077,18 @@ export class StateMachineEditorElement extends HTMLElement {
     }
     const dialog = new SideEffectsDialogElement();
     this.#dialog = dialog;
+    this.#shadow.append(dialog);
+    return dialog;
+  }
+
+  #ensureConfirmDialog(): ConfirmDialogElement {
+    const existing = this.#confirmDialog;
+    if (existing !== undefined) {
+      this.#shadow.append(existing);
+      return existing;
+    }
+    const dialog = new ConfirmDialogElement();
+    this.#confirmDialog = dialog;
     this.#shadow.append(dialog);
     return dialog;
   }
@@ -1456,6 +1509,26 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   /**
+   * Size of every state card that has rendered, keyed by id.
+   *
+   * A card grows with what it holds — one carrying a list of side effects is
+   * several times the height of a bare one — so the layout is given each card
+   * rather than one measurement standing in for all of them. Cards that have not
+   * rendered are left out, and fall back to `#nodeSize()` there.
+   */
+  #nodeSizes(): ReadonlyMap<string, Size> {
+    const sizes = new Map<string, Size>();
+    for (const [id, view] of this.#stateViews) {
+      const width = view.root.offsetWidth;
+      const height = view.root.offsetHeight;
+      if (width > 0 && height > 0) {
+        sizes.set(id, { width, height });
+      }
+    }
+    return sizes;
+  }
+
+  /**
    * Everything already drawn that a newly placed card or node should not land
    * on: the state cards, and every transition card at the point it actually
    * sits. Read from the geometry rather than the DOM, so it is right even
@@ -1521,6 +1594,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #organized(machine: StateMachine): StateMachine {
     const laid = organizeMachine(machine, {
       nodeSize: this.#nodeSize(),
+      nodeSizes: this.#nodeSizes(),
       labelSize: this.#labelSize(),
       origin: LAYOUT_ORIGIN,
     });

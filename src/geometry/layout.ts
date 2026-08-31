@@ -14,12 +14,19 @@ import type { Point, Size, StateMachine, StateNode, Transition } from '../types.
  * before the component has rendered once.
  */
 
-/** Clear space demanded on each side of the transition cards between two layers. */
-const COLUMN_MARGIN = 56;
-/** Clear space between two state cards stacked in the same layer. */
-const ROW_MARGIN = 40;
+/**
+ * Clear space demanded on each side of the transition cards between two layers.
+ *
+ * The same rule holds in both directions: a gap is a whole transition card plus
+ * this margin on either side of it, so a card that lands between two state cards
+ * — the usual case going across, an edge that skips a column or a self loop
+ * going down — is read as sitting in a gap rather than as touching a neighbour.
+ */
+const COLUMN_MARGIN = 88;
+/** Clear space above and below the transition cards between two stacked states. */
+const ROW_MARGIN = 64;
 /** Clear space between two disconnected sub-graphs, stacked one above the other. */
-const COMPONENT_MARGIN = 96;
+const COMPONENT_MARGIN = 160;
 /** How many barycentre passes are made over the layers. */
 const SWEEPS = 4;
 
@@ -33,6 +40,16 @@ export interface LayoutOptions {
   readonly labelSize: Size;
   /** Top-left corner of the block the layout is drawn into. Defaults to the origin. */
   readonly origin?: Point;
+  /**
+   * Size of individual cards, keyed by state id, for the ones that do not render
+   * at `nodeSize`.
+   *
+   * A state card grows with what it holds — a list of side effects makes it two
+   * or three times the height of a bare one — so a layout pitched on a single
+   * measurement leaves the tall cards nearly touching the ones under them.
+   * Anything missing here falls back to `nodeSize`.
+   */
+  readonly nodeSizes?: ReadonlyMap<string, Size>;
 }
 
 /**
@@ -279,27 +296,34 @@ export function layoutPositions(
   options: LayoutOptions,
 ): ReadonlyMap<string, Point> {
   const origin = options.origin ?? { x: 0, y: 0 };
-  const columnPitch = options.nodeSize.width + options.labelSize.width + COLUMN_MARGIN * 2;
-  const rowPitch = options.nodeSize.height + ROW_MARGIN;
+  const sizeOf = (id: string): Size => options.nodeSizes?.get(id) ?? options.nodeSize;
+  // Both gaps are a whole transition card plus a margin on either side of it:
+  // across, that is the card sitting on the edge between two columns; down, it
+  // is the one an edge skipping a column, or a self loop, is nudged into.
+  const columnGap = options.labelSize.width + COLUMN_MARGIN * 2;
+  const rowGap = options.labelSize.height + ROW_MARGIN * 2;
   const graph = buildGraph(machine);
   const positions = new Map<string, Point>();
+  // Stacked rather than pitched on one measurement: cards differ in height by
+  // what they hold, and a fixed pitch would leave the tall ones nearly touching.
+  const heightOf = (layer: readonly string[]): number =>
+    layer.reduce((total, id) => total + sizeOf(id).height, 0) + rowGap * (layer.length - 1);
   let top = origin.y;
   for (const component of components(machine, graph)) {
     const layers = buildLayers(component, assignRanks(machine, graph, component));
     reduceCrossings(layers, graph);
-    const tallest = Math.max(...layers.map((layer) => layer.length));
-    const height = tallest * rowPitch - ROW_MARGIN;
-    layers.forEach((layer, rank) => {
+    const height = Math.max(...layers.map(heightOf));
+    let left = origin.x;
+    for (const layer of layers) {
       // Each column is centred on the tallest one, so a graph that widens and
       // narrows again reads as a spine rather than as a staircase.
-      const layerHeight = layer.length * rowPitch - ROW_MARGIN;
-      layer.forEach((id, index) => {
-        positions.set(id, {
-          x: Math.round(origin.x + rank * columnPitch),
-          y: Math.round(top + (height - layerHeight) / 2 + index * rowPitch),
-        });
-      });
-    });
+      let y = top + (height - heightOf(layer)) / 2;
+      for (const id of layer) {
+        positions.set(id, { x: Math.round(left), y: Math.round(y) });
+        y += sizeOf(id).height + rowGap;
+      }
+      left += Math.max(...layer.map((id) => sizeOf(id).width)) + columnGap;
+    }
     top += height + COMPONENT_MARGIN;
   }
   return positions;

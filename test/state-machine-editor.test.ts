@@ -3278,12 +3278,115 @@ describe('organizing the layout', () => {
     expect(editor.value.transitions[0]?.labelOffset).toEqual({ x: 0, y: 0 });
   });
 
-  it('organizes from the toolbar', () => {
+  /** The confirmation the toolbar's Organize opens, or a throw if it did not. */
+  function confirmDialog(editor: StateMachineEditorElement): ShadowRoot {
+    const dialog = shadowOf(editor).querySelector('state-machine-confirm-dialog');
+    if (dialog === null) {
+      throw new Error('confirmation is not open');
+    }
+    return shadowOf(dialog);
+  }
+
+  it('organizes from the toolbar once the question is answered', async () => {
     const editor = mountEditor();
     editor.value = sampleMachine();
     queryButton(shadowOf(editor), '.toolbar__organize').click();
+    queryButton(confirmDialog(editor), '[data-confirm="confirm"]').click();
+    await flush();
 
+    // Off the position it arrived with, and onto the layout's own grid.
+    expect(positionOf(editor, 'paid')).not.toEqual({ x: 400, y: 0 });
     expect(positionOf(editor, 'draft').x).toBeLessThan(positionOf(editor, 'paid').x);
+  });
+
+  it('leaves every card alone when the question is cancelled', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    const recorded = changes(editor);
+    queryButton(shadowOf(editor), '.toolbar__organize').click();
+    queryButton(confirmDialog(editor), '[data-confirm="cancel"]').click();
+    await flush();
+
+    expect(recorded).toEqual([]);
+    expect(positionOf(editor, 'paid')).toEqual({ x: 400, y: 0 });
+    expect(shadowOf(editor).querySelector('state-machine-confirm-dialog')).toBeNull();
+  });
+
+  it('takes Escape on the question as a no', async () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+    queryButton(shadowOf(editor), '.toolbar__organize').click();
+    fireKey(queryOne(confirmDialog(editor), '.panel'), 'Escape');
+    await flush();
+
+    expect(positionOf(editor, 'paid')).toEqual({ x: 400, y: 0 });
+  });
+
+  it('leaves room between every pair of cards, not just no overlap', () => {
+    const editor = mountEditor();
+    // A branch and a state carrying two edges into it: the shapes that used to
+    // land a transition card on top of a state, or a state under its neighbour.
+    editor.value = {
+      states: ['draft', 'paid', 'cancelled', 'archived'].map((id) =>
+        createState({ id, name: id, position: { x: 0, y: 0 } }),
+      ),
+      transitions: [
+        createTransition({ id: 'pay', name: 'pay', from: 'draft', to: 'paid' }),
+        createTransition({ id: 'cancel', name: 'cancel', from: 'draft', to: 'cancelled' }),
+        createTransition({ id: 'archive', name: 'archive', from: 'paid', to: 'archived' }),
+        createTransition({ id: 'file', name: 'file', from: 'cancelled', to: 'archived' }),
+        // Skips a column, so its card lands where the layout has to have left room.
+        createTransition({ id: 'shortcut', name: 'shortcut', from: 'draft', to: 'archived' }),
+      ],
+      initialStateIds: ['draft'],
+      finalStateIds: ['archived'],
+      data: {},
+    };
+    editor.organize();
+
+    // At the sizes the editor falls back to under jsdom.
+    const boxes: Rect[] = editor.value.states.map((state) => ({
+      x: state.position.x,
+      y: state.position.y,
+      width: 248,
+      height: 152,
+    }));
+    for (const card of queryAll(shadowOf(editor), '.edge-card')) {
+      boxes.push({
+        x: Number.parseFloat(card.style.left) - 93,
+        y: Number.parseFloat(card.style.top) - 36,
+        width: 186,
+        height: 72,
+      });
+    }
+    // Cards that clear each other by a hair still read as one crowded blob, so
+    // this asks for a gap rather than for the absence of an overlap.
+    const clearance = (a: Rect, b: Rect): number =>
+      Math.max(
+        a.x - (b.x + b.width),
+        b.x - (a.x + a.width),
+        a.y - (b.y + b.height),
+        b.y - (a.y + a.height),
+      );
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a === undefined || b === undefined) {
+          throw new Error('missing card');
+        }
+        expect(rectsOverlap(a, b)).toBe(false);
+        expect(clearance(a, b)).toBeGreaterThanOrEqual(24);
+      }
+    }
+  });
+
+  it('organizes without asking when a host calls the method', () => {
+    const editor = mountEditor();
+    editor.value = sampleMachine();
+
+    expect(editor.organize()).toBe(true);
+    expect(shadowOf(editor).querySelector('state-machine-confirm-dialog')).toBeNull();
   });
 
   it('has nothing to organize while the machine is empty', () => {

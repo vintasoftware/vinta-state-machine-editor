@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Organize asks before it runs.** The toolbar's **Organize** now opens a confirmation: it replaces
+  every position on the canvas at once, including the ones placed by hand, and that is not an
+  arrangement anybody can reconstruct from memory. A single undo still puts it back. Cancel, Escape
+  and a press on the backdrop are all a no, and focus opens on **Cancel** so the button that moves
+  everything is pressed on purpose.
+
+  `organize()` is unchanged and asks nothing — a host calling it has its own reason to. The new
+  `confirmOrganize(): Promise<boolean>` is what the button does: ask, organize, fit the view.
+
+- `ConfirmDialogElement` (`<state-machine-confirm-dialog>`), registered alongside the other two by
+  `defineStateMachineEditor` and exported for a host that wants the same question elsewhere.
+
+- `LayoutOptions.nodeSizes`: the size of individual cards, keyed by state id, for the ones that do
+  not render at `nodeSize`.
+
+### Changed
+
+- **The automatic layout leaves room.** Cards used to land close enough together to read as one
+  crowded block. A gap is now a whole transition card plus a margin on either side of it in *both*
+  directions — across, that is the card sitting on the edge between two columns; down, it is the one
+  an edge that skips a column, or a self loop, is nudged into. Disconnected sub-graphs clear each
+  other by more than they used to as well.
+
+- **Every card is measured on its own.** A state carrying a list of side effects renders several
+  times the height of a bare one, and the layout pitched every row on a single measurement — so the
+  tall cards ended up nearly touching what sat under them. Rows are now stacked by each card's own
+  height, and columns spread by the widest card in them.
+
+- **A machine that arrives without positions is laid out after its first render** rather than before
+  it, so that pass measures the real cards instead of falling back to an assumed size. Both passes
+  happen in one turn, so the pile on the origin is still never painted.
+
+- A card nudged clear of another one now keeps a wider gap from it (28 px, was 12), so a card that
+  had to move reads as having been given room rather than as having just missed.
+
 ## [0.5.0] - 2026-08-30
 
 ### Added

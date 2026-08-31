@@ -1,3 +1,4 @@
+import { ConfirmDialogElement } from './ui/confirm-dialog.js';
 import { PropertiesDialogElement } from './ui/properties-dialog.js';
 import { SideEffectsDialogElement } from './ui/side-effects-dialog.js';
 import { StateMachineEditorElement } from './ui/state-machine-editor.js';
@@ -142,6 +143,8 @@ export {
   STATE_ROLES,
   STATE_TRIGGERS,
 } from './types.js';
+export type { ConfirmDialogOptions } from './ui/confirm-dialog.js';
+export { ConfirmDialogElement } from './ui/confirm-dialog.js';
 export type { JsonFormOptions } from './ui/json-form.js';
 export { JsonFormEditor } from './ui/json-form.js';
 // JsonTextEditor is deliberately not re-exported: a static export here would pull
@@ -181,14 +184,15 @@ export { StateMachineEditorElement } from './ui/state-machine-editor.js';
 
 let dialogRegistered = false;
 let propertiesRegistered = false;
+let confirmRegistered = false;
 let editorRegistered = false;
 
 /**
  * Registers the custom elements. Safe to call multiple times.
  *
  * @param tagName - overrides the editor tag name; the dialogs are registered as
- *   `<tagName>-side-effects-dialog` and `<tagName>-properties-dialog` so they
- *   never clash with the default names.
+ *   `<tagName>-side-effects-dialog`, `<tagName>-properties-dialog` and
+ *   `<tagName>-confirm-dialog` so they never clash with the default names.
  */
 export function defineStateMachineEditor(
   tagName: string = StateMachineEditorElement.tagName,
@@ -204,6 +208,7 @@ export function defineStateMachineEditor(
   const propertiesTagName = isDefaultTag
     ? PropertiesDialogElement.tagName
     : `${tagName}-properties-dialog`;
+  const confirmTagName = isDefaultTag ? ConfirmDialogElement.tagName : `${tagName}-confirm-dialog`;
   if (!dialogRegistered && registry.get(dialogTagName) === undefined) {
     registry.define(dialogTagName, SideEffectsDialogElement);
     dialogRegistered = true;
@@ -211,6 +216,10 @@ export function defineStateMachineEditor(
   if (!propertiesRegistered && registry.get(propertiesTagName) === undefined) {
     registry.define(propertiesTagName, PropertiesDialogElement);
     propertiesRegistered = true;
+  }
+  if (!confirmRegistered && registry.get(confirmTagName) === undefined) {
+    registry.define(confirmTagName, ConfirmDialogElement);
+    confirmRegistered = true;
   }
   if (!editorRegistered && registry.get(tagName) === undefined) {
     registry.define(tagName, StateMachineEditorElement);
@@ -223,5 +232,6 @@ declare global {
     'state-machine-editor': StateMachineEditorElement;
     'state-machine-side-effects-dialog': SideEffectsDialogElement;
     'state-machine-properties-dialog': PropertiesDialogElement;
+    'state-machine-confirm-dialog': ConfirmDialogElement;
   }
 }

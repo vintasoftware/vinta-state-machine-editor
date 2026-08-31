@@ -99,7 +99,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Remove | Click **✕** in the card's rail, or select it and press `Delete` |
 | Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
 | Copy / paste | Select a state or transition, then toolbar **Copy** / **Paste**, or `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V` |
-| Organize the layout | **Organize** in the toolbar, or `editor.organize()` — the button also fits the view afterwards |
+| Organize the layout | **Organize** in the toolbar — it asks first, since every position on the canvas is replaced — or `editor.organize()`, which does not ask |
 | Pan | Drag the background, scroll, or move two fingers together |
 | Zoom | Pinch (trackpad or touch), toolbar `−` / `+` / `Fit`, or `Ctrl`/`⌘` + scroll (20 % … 300 %) |
 
@@ -517,13 +517,24 @@ the parts a canvas this size does not need.
   up. Columns are centred on the tallest one, so a graph that widens and narrows again reads as a
   spine rather than as a staircase. Sub-graphs that share no transition are laid out separately and
   stacked, so an island never lands in the middle of the graph it has nothing to do with.
+- **How far apart.** A gap — across *and* down — is a whole transition card plus a margin on either
+  side of it. Across, that is the card sitting on the edge between two columns; down, it is the one
+  an edge that skips a column, or a self loop, is nudged into. Every card is measured on its own
+  rather than one measurement standing in for all of them: a state carrying a list of side effects
+  renders several times the height of a bare one, and a column pitched on the short card would
+  leave the tall ones nearly touching what is under them.
 - **The transition cards** go back to automatic placement and are then nudged off each other, the
   same search a new transition's card goes through. A card the user dragged is deliberately not
   kept: its offset is relative to an edge that has just been redrawn somewhere else entirely, so
   keeping it would scatter the very cards this is meant to tidy.
 
-Columns are spread by a whole transition card's width plus a margin, both measured from the DOM
-rather than assumed, so the cards that sit between two columns have room to be read.
+The sizes come from the DOM rather than being assumed, so the arrangement follows whatever the
+cards actually render at — including a `--sme-node-width` you overrode.
+
+The toolbar button **asks before it runs**, and fits the view afterwards. Every position on the
+canvas is replaced at once, including the ones placed by hand, and that is not an arrangement
+anybody can reconstruct from memory — so it is worth a question, even though a single undo puts it
+back. `organize()` asks nothing: a host calling it has its own reason to.
 
 It runs **by itself** when a machine is assigned whose states all sit on the origin — a graph
 authored anywhere but this editor: a backend that never stored coordinates, a fixture written by
@@ -538,10 +549,15 @@ the value back gets no second pass, since the cards are no longer on the origin.
 
 ```js
 editor.organize(); // false when the machine is empty, read-only, or already laid out this way
+await editor.confirmOrganize(); // …the toolbar's version: asks first, then fits the view
 layoutPositions(machine, { nodeSize, labelSize }); // the same arrangement, as a Map of id → point
 organizeMachine(machine, { nodeSize, labelSize }); // …applied, returning the machine when nothing moved
+organizeMachine(machine, { nodeSize, labelSize, nodeSizes }); // …with the cards that render at their own size
 isUnpositioned(machine); // what the automatic pass tests for
 ```
+
+`nodeSizes` is a `Map` of state id → `{ width, height }`; anything missing from it falls back to
+`nodeSize`.
 
 ## Element API
 
@@ -567,7 +583,8 @@ creation transition — `addCreationTransition(stateId)`, `renameSelection()`, `
 `zoomOut()`, `setZoom(scale)`, `zoomToFit(padding?)`,
 `openSideEffects(ref): Promise<boolean>`, `openProperties(ref): Promise<boolean>` where `ref` is
 `{ kind: 'state' | 'transition', id }`, `undo()`, `redo()`, `clearHistory()`,
-`copySelection()`, `copy(ref)`, `paste()`, `organize()`.
+`copySelection()`, `copy(ref)`, `paste()`, `organize()`,
+`confirmOrganize(): Promise<boolean>`.
 
 ### Events
 

@@ -778,6 +778,9 @@ export const dialogStyles: string = `
     box-shadow: var(--sme-shadow);
   }
 
+  /* A question and two buttons: it has no fields to keep at a readable width. */
+  .panel--confirm { width: min(380px, 100%); gap: 18px; }
+
   .title { margin: 0; font-size: 16px; }
   .subtitle { margin: 2px 0 0; font-size: 12px; color: var(--sme-text-muted); }
 

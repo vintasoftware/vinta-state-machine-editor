@@ -13,9 +13,12 @@ const OPTIONS: LayoutOptions = {
   labelSize: { width: 100, height: 50 },
 };
 
-/** Matches the module's own constants, so the tests read as geometry not magic. */
-const COLUMN_PITCH = 200 + 100 + 56 * 2;
-const ROW_PITCH = 100 + 40;
+/**
+ * Matches the module's own constants, so the tests read as geometry not magic:
+ * a gap is a whole transition card plus a margin on either side of it.
+ */
+const COLUMN_PITCH = 200 + (100 + 88 * 2);
+const ROW_PITCH = 100 + (50 + 64 * 2);
 
 interface Edge {
   readonly from: string | null;
@@ -105,6 +108,49 @@ describe('layoutPositions', () => {
     const machine = machineOf(['a', 'b'], [{ from: 'a', to: 'b' }]);
     const gap = at(machine, 'b').x - at(machine, 'a').x - OPTIONS.nodeSize.width;
     expect(gap).toBeGreaterThan(OPTIONS.labelSize.width);
+  });
+
+  it('leaves a whole transition card between two stacked states, too', () => {
+    const machine = machineOf(
+      ['a', 'b', 'c'],
+      [
+        { from: 'a', to: 'b' },
+        { from: 'a', to: 'c' },
+      ],
+    );
+    const gap = at(machine, 'c').y - at(machine, 'b').y - OPTIONS.nodeSize.height;
+    // A card skipping a column, or a self loop, is nudged into this gap: it has
+    // to hold one and still read as a gap.
+    expect(gap).toBeGreaterThan(OPTIONS.labelSize.height);
+  });
+
+  it('gives a card measured taller than the rest its own room', () => {
+    const machine = machineOf(
+      ['a', 'b', 'c'],
+      [
+        { from: 'a', to: 'b' },
+        { from: 'a', to: 'c' },
+      ],
+    );
+    // "b" carries a list of side effects, so it renders three times as tall as
+    // a bare card; stacking on one measurement would put "c" through it.
+    const tall = { width: OPTIONS.nodeSize.width, height: OPTIONS.nodeSize.height * 3 };
+    const options = { ...OPTIONS, nodeSizes: new Map([['b', tall]]) };
+    const positions = layoutPositions(machine, options);
+    const top = positions.get('b');
+    const below = positions.get('c');
+    if (top === undefined || below === undefined) {
+      throw new Error('Both cards should have been placed.');
+    }
+    expect(below.y - top.y).toBeGreaterThan(tall.height);
+  });
+
+  it('spreads the columns by the widest card in each', () => {
+    const machine = machineOf(['a', 'b'], [{ from: 'a', to: 'b' }]);
+    const wide = { width: OPTIONS.nodeSize.width * 2, height: OPTIONS.nodeSize.height };
+    const options = { ...OPTIONS, nodeSizes: new Map([['a', wide]]) };
+    const positions = layoutPositions(machine, options);
+    expect(positions.get('b')?.x).toBe(COLUMN_PITCH + OPTIONS.nodeSize.width);
   });
 
   it('stacks a branch in the same column and centres the column it leaves', () => {

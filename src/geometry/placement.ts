@@ -1,7 +1,11 @@
 import type { Point, Rect, Size } from '../types.js';
 
-/** Gap left between a card and whatever it was moved clear of. */
-const GUTTER = 12;
+/**
+ * Gap left between a card and whatever it was moved clear of. Wide enough for
+ * the two to read as separate cards: a card nudged by a hair looks like a
+ * mistake, not like a card that was given room.
+ */
+const GUTTER = 28;
 
 /**
  * Directions tried around a taken spot, nearest-first within a ring.

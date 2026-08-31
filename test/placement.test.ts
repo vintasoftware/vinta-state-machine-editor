@@ -3,6 +3,9 @@ import { boxAround, findFreeLabelSpot, rectsOverlap } from '../src/geometry/plac
 import type { Rect, Size } from '../src/types.js';
 
 const CARD: Size = { width: 100, height: 40 };
+/** The module's own gutter: a step out is a whole card plus this. */
+const GUTTER = 28;
+const STEP_DOWN = CARD.height + GUTTER;
 
 describe('boxAround', () => {
   it('centres the box on the point', () => {
@@ -46,14 +49,14 @@ describe('findFreeLabelSpot', () => {
     // Down clears the neighbour in the shortest distance, so it is tried first.
     expect(findFreeLabelSpot({ x: 0, y: 0 }, CARD, [boxAround({ x: 0, y: 0 }, CARD)])).toEqual({
       x: 0,
-      y: 52,
+      y: STEP_DOWN,
     });
   });
 
   it('keeps stepping until it finds room', () => {
     const desired = { x: 0, y: 0 };
     // Everything within one ring vertically is taken, so it has to go further.
-    const taken = [-52, 0, 52].map((y) => boxAround({ x: 0, y }, CARD));
+    const taken = [-STEP_DOWN, 0, STEP_DOWN].map((y) => boxAround({ x: 0, y }, CARD));
     const spot = findFreeLabelSpot(desired, CARD, taken);
     expect(taken.every((rect) => !rectsOverlap(boxAround(spot, CARD), rect))).toBe(true);
   });
