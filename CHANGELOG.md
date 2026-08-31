@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-31
+
 ### Added
 
 - **A theme the host picks.** The editor renders dark or light on demand, through a `theme`
@@ -434,7 +436,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.3.0...v0.4.0
