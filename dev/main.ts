@@ -58,6 +58,11 @@ const ACTIONS: readonly ActionDefinition[] = [
   { id: 'cancel', name: 'cancel' },
   { id: 'refund', name: 'refund' },
   { id: 'import', name: 'import', description: 'Bulk import from a spreadsheet' },
+  {
+    id: 'import.finish',
+    name: 'import.finish',
+    description: 'Every child of the import batch has finished',
+  },
 ];
 
 /*
@@ -249,6 +254,27 @@ function exampleMachine(): StateMachine {
     position: { x: 1640, y: 620 },
     color: 'danger',
   });
+  /*
+   * A state that fans work out to child records and waits for the batch, so the
+   * waiting band, the fan-out stub and the decision card below are all visible
+   * on the demo canvas without anybody having to build them by hand.
+   */
+  const processing = {
+    ...createState({
+      id: 'processing',
+      name: 'Processing items',
+      position: { x: 1020, y: 860 },
+      color: 'info',
+      data: {
+        is_waiting: true,
+        join_action: 'import.finish',
+        child_machine: 'import_file.status',
+        timeout: 'PT2H',
+      },
+    }),
+    onEnter: { before: [effect('audit-log', 'e-audit-3')], after: [] },
+    onLeave: { before: [], after: [] },
+  };
 
   const submit = createTransition({ id: 'submit', name: 'submit', from: 'draft', to: 'pending' });
   const pay = {
@@ -276,11 +302,61 @@ function exampleMachine(): StateMachine {
     effects: { before: [], after: [effect('refund', 'e-refund')] },
   };
 
-  // Two transitions between the same pair, in opposite directions, to show the fanning.
+  /*
+   * Two transitions between the same pair, in opposite directions, to show the
+   * fanning — and, since `paid` is final and the engine refuses to leave a final
+   * state, one card carrying a validation stripe.
+   */
   const refund = {
     ...createTransition({ id: 'refund', name: 'refund', from: 'paid', to: 'pending' }),
     effects: { before: [], after: [effect('refund', 'e-refund-2')] },
   };
+
+  const startImport = createTransition({
+    id: 'start-import',
+    name: 'start import',
+    from: 'pending',
+    to: 'processing',
+    trigger: { id: 'import', name: 'import' },
+  });
+
+  /*
+   * Four edges leaving one state under one action: the editor draws them as a
+   * single decision card, tried top to bottom, with the unguarded one as the
+   * `else` row at the bottom.
+   */
+  const finish = { id: 'import.finish', name: 'import.finish' };
+  const finishTimedOut = createTransition({
+    id: 'finish-timed-out',
+    name: 'timed out',
+    from: 'processing',
+    to: 'cancelled',
+    trigger: finish,
+    guard: 'reason == "timeout"',
+  });
+  const finishCompleted = createTransition({
+    id: 'finish-completed',
+    name: 'completed',
+    from: 'processing',
+    to: 'paid',
+    trigger: finish,
+    guard: 'failed == 0',
+  });
+  const finishPartial = createTransition({
+    id: 'finish-partial',
+    name: 'partially done',
+    from: 'processing',
+    to: 'pending',
+    trigger: finish,
+    guard: 'succeeded > 0',
+  });
+  const finishFailed = createTransition({
+    id: 'finish-failed',
+    name: 'failed',
+    from: 'processing',
+    to: 'cancelled',
+    trigger: finish,
+  });
 
   // Two creation edges, so the start pseudo-node and its fanning are visible.
   const create = createTransition({
@@ -303,8 +379,28 @@ function exampleMachine(): StateMachine {
   });
 
   return {
-    states: [draft, pending, paid, cancelled],
-    transitions: [create, importOrder, submit, pay, cancel, refund],
+    // `paid` and `cancelled` count towards the batch a parent record waits on.
+    // Both are final, so their report is drawn as the enter half alone.
+    states: [
+      draft,
+      pending,
+      processing,
+      { ...paid, data: { counts_as: 'success' } },
+      { ...cancelled, data: { counts_as: 'failure' } },
+    ],
+    transitions: [
+      create,
+      importOrder,
+      submit,
+      pay,
+      cancel,
+      refund,
+      startImport,
+      finishTimedOut,
+      finishCompleted,
+      finishPartial,
+      finishFailed,
+    ],
     initialStateIds: ['draft'],
     finalStateIds: ['paid', 'cancelled'],
     data: {},
