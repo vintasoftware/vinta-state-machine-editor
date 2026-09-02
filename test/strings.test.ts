@@ -202,7 +202,8 @@ describe('the label helpers', () => {
     const kinds = Object.keys(DEFAULT_STRINGS.change);
     expect(kinds).toContain('side-effects-change');
     expect(kinds).toContain('replace');
-    expect(kinds).toHaveLength(19);
+    expect(kinds).toContain('state-data');
+    expect(kinds).toHaveLength(20);
   });
 });
 

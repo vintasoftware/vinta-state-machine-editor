@@ -99,6 +99,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Edit side effect parameters | Press **{ }** on a row in the dialog, then use the nested form or the JSON tab |
 | Colour a state | Press the round swatch in the card's rail and pick one of the six |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
+| Mark a state as waiting on a batch | Toggle **⑂ Waiting** beside them — the card grows a band naming the fan-out |
 | Remove | Click **✕** in the card's rail, or select it and press `Delete` |
 | Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
 | Copy / paste | Select a state or transition, then toolbar **Copy** / **Paste**, or `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V` |
@@ -378,6 +379,70 @@ always did (`transition-rename`, `transition-guard`, `transition-permission`, �
 > first sends the card leaping across the canvas the moment that changes. A group of one reduces
 > to exactly that member, so a lone edge card is unaffected.
 
+### Waiting: a state that fans work out
+
+A state can start a batch of child jobs, wait for all of them, and move the record on by itself
+when they finish. That is structure — it changes what the state *is* — so the card says so:
+a `⑂ Waiting` toggle beside `▶ Initial` and `◉ Final`, and a band **above** the hook lanes,
+drawn apart from them because a fan-out is not something that runs.
+
+```text
+┌─────────────────────────────────────┐
+│ ⑂ Processing                        │
+├─────────────────────────────────────┤
+│ FANS OUT TO   import_file.status    │
+│ JOINS WITH    ⚡ import.finish       │
+│ TIMEOUT       2h                    │
+├─────────────────────────────────────┤
+│ BEFORE·ENTER   reserveStock         │
+├─────────────────────────────────────┤
+│  ▶ Initial   ◉ Final   ⑂ Waiting    │
+└─────────────────────────────────────┘
+```
+
+It rides in four keys of `state.data`:
+
+```jsonc
+"data": {
+  "is_waiting": true,
+  "join_action": "import.finish",         // an ActionType key, picked from the trigger catalog
+  "child_machine": "import_file.status",  // optional, display only
+  "timeout": "PT2H"                       // ISO 8601 duration, optional
+}
+```
+
+- **A document without them renders exactly as it did before.** They are the only keys of `data`
+  the component reads, and it touches nothing else in the blob.
+- **A key of the wrong type is ignored**, not a validation error: `data` is the host's, and one
+  bad value in it should not cost anybody their graph.
+- **Turning the wait off drops `is_waiting` and keeps the other three**, so a toggle pressed by
+  mistake costs nobody their setup. An empty value is removed rather than stored blank.
+- **The band's lines open the state's properties dialog**, which edits all four under a *Waiting
+  for a batch* section. The join action is a picker when an `actionProvider` is set, free text
+  when it is not.
+- **A line with nothing in it is left out** — except `JOINS WITH`, whose absence is the thing
+  worth seeing: it is what closes the wait.
+- **The timeout is shown in whole units**: `PT2H` reads as `2h`, `P1DT6H30M` as `1d 6h 30m`, and
+  anything the editor cannot read is shown exactly as it was written. Days down to seconds only —
+  months and years depend on when you start counting.
+
+A waiting state is marked so it is findable while scanning a graph: a weave over its colour bar
+and a dashed left edge. `color` is deliberately left alone — it is the author's choice and it
+means something else.
+
+```js
+editor.toggleWaitingState('processing');
+editor.setStateWaiting('processing', {
+  isWaiting: true,
+  joinAction: 'import.finish',
+  childMachine: 'import_file.status',
+  timeout: 'PT2H',
+});
+readWaiting(machine.states[0]); // { isWaiting: true, joinAction: 'import.finish', … }
+```
+
+Changes arrive as `state-data`.
+
 ### Host-owned data
 
 `StateMachine`, `StateNode`, `Transition` and `SideEffect` each carry a `data: JsonObject` that
@@ -397,8 +462,11 @@ Absent parses as `{}`; a non-object is a validation error with a path
 (`machine.states[0].data must be a JSON object.`), exactly like `params`. The `create*` helpers
 accept one and default to `{}`; every other helper carries it through untouched.
 
-There is **no UI for it and no `MachineChange` kind**. A host mutating it assigns `value`, which
-already emits nothing.
+The one exception is the four keys of `state.data` that describe a
+[waiting state](#waiting-a-state-that-fans-work-out) — `is_waiting`, `join_action`,
+`child_machine` and `timeout`. Those the component does read, does render and does write, and
+edits to them arrive as a `state-data` change. Every other key, and every other object's `data`,
+is carried through untouched and emits nothing; a host mutating one assigns `value`.
 
 > Anything the component models itself belongs in a real field instead. `data` is the escape
 > hatch for attributes this component has no concept of — not a place to shadow `guard`,
@@ -930,6 +998,7 @@ the JSON parameter fields.
 | `confirm` / `cancel` | ✓ ✕ | The inline rename editor |
 | `link` | → | The handle dragged from one card to another, and from the start bar |
 | `initial` / `final` | ▶ ◉ | The role pills on a state card |
+| `waiting` | ⑂ | The role pill marking a state that waits for a batch |
 | `add` | + | Leads `Creation`, `Add side effect`, `Add item` and `Add field` |
 | `dragHandle` | ⠿ | The grip a side effect or a decision row is reordered by |
 | `params` | `{ }` | The button holding a side effect's JSON parameters |
@@ -1078,6 +1147,7 @@ import { DEFAULT_STRINGS, STRING_GROUPS } from 'vinta-state-machine-editor';
 | `rename` | The inline name editor and its two buttons |
 | `transition` | An edge card: tools, the trigger and guard lines |
 | `decision` | The card several edges under one action share, and its rows |
+| `waiting` | The batch a state waits on: the toggle, the band, the dialog's fields |
 | `startNode` | The bar every creation edge leaves from |
 | `source` | What to call a transition's source — including a name's quotation marks |
 | `chip` | The side effect chips on a card |

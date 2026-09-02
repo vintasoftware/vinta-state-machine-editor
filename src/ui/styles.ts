@@ -317,6 +317,69 @@ export const editorStyles: string = `
     padding: 2px 6px;
   }
 
+  /*
+   * A state that fans work out is findable while scanning a graph, without
+   * overloading the state's colour — that is the author's choice and it means
+   * something else entirely. The bar keeps its colour and gains a weave over
+   * it, and the card a dashed edge on the side the work leaves from.
+   */
+  .node.is-waiting > .node__bar {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.55) 0 3px,
+      transparent 3px 7px
+    );
+  }
+
+  .node.is-waiting { border-left: 2px dashed var(--sme-state-color); }
+
+  /*
+   * Structure, not a side effect: the band sits above the hook lanes and is
+   * drawn as a block of its own, so nobody reads a fan-out as something that
+   * runs when the state is entered.
+   */
+  .band {
+    display: grid;
+    gap: 1px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--sme-border);
+    background: var(--sme-surface-muted);
+  }
+
+  .band__row {
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    padding: 2px 4px;
+    margin: 0 -4px;
+    border-radius: 5px;
+    text-align: left;
+  }
+
+  .band__row:hover { background: var(--sme-surface); }
+
+  .band__label {
+    font-size: 9.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--sme-text-muted);
+  }
+
+  .band__value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .band__row--join .band__value { color: var(--sme-accent); }
+  .band__row.is-unset .band__value { font-weight: 400; font-style: italic; color: var(--sme-text-muted); }
+
   .hooks { display: grid; gap: 4px; padding: 8px 10px 10px; }
 
   .hook { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: 8px; }
@@ -1230,6 +1293,19 @@ export const dialogStyles: string = `
   }
 
   .field__input--area { resize: vertical; font-family: inherit; }
+
+  /* A checkbox is its own size: stretching it across the row would be absurd. */
+  .field__check { flex: none; width: 16px; height: 16px; accent-color: var(--sme-accent); }
+
+  /* Rules a run of related fields off from the ones above it. */
+  .section {
+    margin: 4px 0 -4px;
+    padding-top: 12px;
+    border-top: 1px solid var(--sme-border);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
 
   .field__errors {
     flex: 1 0 100%;

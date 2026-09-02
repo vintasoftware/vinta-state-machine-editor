@@ -142,6 +142,11 @@ export function updateState(
     readonly position?: Point;
     readonly color?: StateColor;
     readonly description?: string;
+    /**
+     * The host-owned blob, replaced wholesale. The component writes it only
+     * through the helpers that own a key of it — see `model/waiting.ts`.
+     */
+    readonly data?: JsonObject;
   },
 ): StateMachine {
   const current = requireState(machine, stateId);
@@ -151,6 +156,7 @@ export function updateState(
     position: patch.position ?? current.position,
     color: patch.color ?? current.color,
     description: patch.description ?? current.description,
+    data: patch.data ?? current.data,
   };
   return {
     ...machine,
@@ -569,6 +575,8 @@ export function describeChange(change: MachineChange): string {
       return 'Move state';
     case 'state-color':
       return 'Change state colour';
+    case 'state-data':
+      return 'Change state attributes';
     case 'transition-add':
       return 'Add transition';
     case 'transition-remove':

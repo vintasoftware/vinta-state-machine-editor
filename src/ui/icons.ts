@@ -55,6 +55,8 @@ export interface EditorIcons {
   readonly initial: Icon;
   /** Marks the final role on a state card. */
   readonly final: Icon;
+  /** Marks a state that fans work out and waits for it — the batch it joins on. */
+  readonly waiting: Icon;
   /** Leads a label that adds something, e.g. `+ Creation`. */
   readonly add: Icon;
   /** The grip a side effect is dragged by to reorder it. */
@@ -93,6 +95,7 @@ export const DEFAULT_ICONS: EditorIcons = {
   link: '→',
   initial: '▶',
   final: '◉',
+  waiting: '⑂',
   add: '+',
   dragHandle: '⠿',
   params: '{ }',

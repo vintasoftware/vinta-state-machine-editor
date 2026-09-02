@@ -221,6 +221,8 @@ export type MachineChange =
   | { readonly kind: 'state-rename'; readonly stateId: string }
   | { readonly kind: 'state-move'; readonly stateId: string }
   | { readonly kind: 'state-color'; readonly stateId: string }
+  /** A key of `state.data` the component owns — the fan-out a state waits on. */
+  | { readonly kind: 'state-data'; readonly stateId: string }
   | { readonly kind: 'transition-add'; readonly transitionId: string }
   | { readonly kind: 'transition-remove'; readonly transitionId: string }
   | { readonly kind: 'transition-rename'; readonly transitionId: string }

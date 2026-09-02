@@ -13,6 +13,7 @@
  * plural forms above all, which English gets wrong for most of the world.
  */
 
+import type { DurationParts } from '../model/waiting.js';
 import type { MachineChange, SideEffectPhase, StateColor, StateTrigger } from '../types.js';
 
 /** What the two halves of a copy or paste label are called in prose. */
@@ -156,6 +157,48 @@ export interface EditorStrings {
     /** The panel a row opens, naming the edge it edits. */
     readonly fieldsLabel: (params: { readonly name: string }) => string;
     readonly fieldName: string;
+  };
+
+  /**
+   * A state that fans work out to child records and waits for the batch: the
+   * footer toggle that marks it, the band that describes it, and the fields the
+   * properties dialog edits it with.
+   */
+  readonly waiting: {
+    /** The footer toggle, beside Initial and Final. */
+    readonly role: string;
+    readonly mark: (params: { readonly name: string }) => string;
+    readonly unmark: (params: { readonly name: string }) => string;
+    /** Accessible name of the band itself. */
+    readonly bandLabel: (params: { readonly name: string }) => string;
+    readonly fansOut: string;
+    readonly joinsWith: string;
+    readonly timeout: string;
+    /** What a row of the band reads when its key is not set. */
+    readonly unset: string;
+    /** A row of the band, which opens the state's properties. */
+    readonly rowLabel: (params: {
+      readonly field: string;
+      readonly value: string;
+      readonly name: string;
+    }) => string;
+    /** The join action, glyph included, exactly as an edge card names a trigger. */
+    readonly action: (params: { readonly name: string }) => string;
+    /** A timeout the editor could read, spelled in whole units. */
+    readonly duration: (parts: DurationParts) => string;
+    /** The section the properties dialog groups the fields under. */
+    readonly section: string;
+    readonly fieldWaiting: string;
+    readonly waitingHint: string;
+    readonly fieldJoin: string;
+    readonly joinHint: string;
+    readonly joinPlaceholder: string;
+    readonly fieldChild: string;
+    readonly childPlaceholder: string;
+    readonly childHint: string;
+    readonly fieldTimeout: string;
+    readonly timeoutPlaceholder: string;
+    readonly timeoutHint: string;
   };
 
   /** The UML initial pseudostate every creation transition leaves from. */
@@ -458,6 +501,47 @@ export const DEFAULT_STRINGS: EditorStrings = {
     fieldName: 'Name',
   },
 
+  waiting: {
+    role: 'Waiting',
+    mark: ({ name }) => `Mark “${name}” as a state that waits for a batch`,
+    unmark: ({ name }) => `Unmark “${name}” as a state that waits for a batch`,
+    bandLabel: ({ name }) => `The batch “${name}” waits for`,
+    fansOut: 'Fans out to',
+    joinsWith: 'Joins with',
+    timeout: 'Timeout',
+    unset: 'not set',
+    rowLabel: ({ field, value, name }) => `${field}: ${value}. Edit the attributes of “${name}”.`,
+    action: ({ name }) => `⚡ ${name}`,
+    duration: ({ days, hours, minutes, seconds }) => {
+      const written: string[] = [];
+      if (days > 0) {
+        written.push(`${days}d`);
+      }
+      if (hours > 0) {
+        written.push(`${hours}h`);
+      }
+      if (minutes > 0) {
+        written.push(`${minutes}m`);
+      }
+      if (seconds > 0) {
+        written.push(`${seconds}s`);
+      }
+      return written.length === 0 ? '0s' : written.join(' ');
+    },
+    section: 'Waiting for a batch',
+    fieldWaiting: 'Waits for a batch',
+    waitingHint: 'The record moves on by itself once every child job has finished.',
+    fieldJoin: 'Join action',
+    joinHint: 'Fired once the batch completes. An edge leaving this state has to answer it.',
+    joinPlaceholder: 'e.g. import.finish',
+    fieldChild: 'Child machine',
+    childPlaceholder: 'e.g. import_file.status',
+    childHint: 'The machine the children are governed by. Shown on the card, never followed.',
+    fieldTimeout: 'Timeout',
+    timeoutPlaceholder: 'e.g. PT2H',
+    timeoutHint: 'ISO 8601 duration. Left empty, the wait has no deadline.',
+  },
+
   startNode: {
     label: 'Create',
     title: 'Every transition leaving here creates a record',
@@ -573,6 +657,7 @@ export const DEFAULT_STRINGS: EditorStrings = {
     'state-rename': 'rename state',
     'state-move': 'move state',
     'state-color': 'change state colour',
+    'state-data': 'change state attributes',
     'transition-add': 'add transition',
     'transition-remove': 'remove transition',
     'transition-rename': 'rename transition',
@@ -687,6 +772,7 @@ export function mergeStrings(overrides: StringOverrides | undefined): EditorStri
     rename: mergeGroup(DEFAULT_STRINGS.rename, overrides.rename),
     transition: mergeGroup(DEFAULT_STRINGS.transition, overrides.transition),
     decision: mergeGroup(DEFAULT_STRINGS.decision, overrides.decision),
+    waiting: mergeGroup(DEFAULT_STRINGS.waiting, overrides.waiting),
     startNode: mergeGroup(DEFAULT_STRINGS.startNode, overrides.startNode),
     source: mergeGroup(DEFAULT_STRINGS.source, overrides.source),
     chip: mergeGroup(DEFAULT_STRINGS.chip, overrides.chip),

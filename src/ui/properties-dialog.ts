@@ -1,4 +1,5 @@
 import { parseActionDefinitions } from '../model/parse.js';
+import { emptyWaitingConfig, type WaitingConfig } from '../model/waiting.js';
 import type {
   ActionDefinition,
   ActionProvider,
@@ -22,7 +23,11 @@ import {
 import { dialogStyles } from './styles.js';
 import { applyTheme, type EditorTheme, themeOf } from './theme.js';
 
-/** Everything the properties dialog can edit. A state only uses `description`. */
+/**
+ * Everything the properties dialog can edit. A transition uses the trigger, the
+ * guard, the permission and the order; a state uses the fan-out it waits on.
+ * Both use the description.
+ */
 export interface PropertiesDraft {
   readonly trigger: TransitionTrigger | null;
   readonly guard: string;
@@ -30,6 +35,8 @@ export interface PropertiesDraft {
   readonly description: string;
   /** Position among the edges leaving the same state; `-1` when not applicable. */
   readonly orderIndex: number;
+  /** The batch a state waits on. Left at its defaults for a transition. */
+  readonly waiting: WaitingConfig;
 }
 
 /** Where the transition sits among its siblings, and what to call that group. */
@@ -64,7 +71,14 @@ export interface PropertiesDialogOptions {
 type DialogResolver = (result: PropertiesDraft | null) => void;
 
 export function emptyPropertiesDraft(): PropertiesDraft {
-  return { trigger: null, guard: '', requiredPermission: '', description: '', orderIndex: -1 };
+  return {
+    trigger: null,
+    guard: '',
+    requiredPermission: '',
+    description: '',
+    orderIndex: -1,
+    waiting: emptyWaitingConfig(),
+  };
 }
 
 /** Reads a free text trigger back into the denormalized pair the model stores. */
@@ -124,6 +138,10 @@ export class PropertiesDialogElement extends HTMLElement {
   #previouslyFocused: Element | null = null;
   /** Bumped on every guard edit, so a slow validator cannot overwrite a newer verdict. */
   #guardToken = 0;
+  /** Bumped on every render, so a catalog arriving late cannot fill a stale panel. */
+  #actionsToken = 0;
+  /** The pickers waiting for the action catalog, filled when it lands. */
+  #actionFields: ((definitions: readonly ActionDefinition[]) => void)[] = [];
 
   constructor() {
     super();
@@ -232,6 +250,8 @@ export class PropertiesDialogElement extends HTMLElement {
 
   #renderFields(options: PropertiesDialogOptions): void {
     this.#body.replaceChildren();
+    this.#actionsToken += 1;
+    this.#actionFields = [];
     if (options.kind === 'transition') {
       this.#renderTrigger(options);
       this.#renderGuard(options.guardValidator);
@@ -240,6 +260,14 @@ export class PropertiesDialogElement extends HTMLElement {
     this.#renderDescription();
     if (options.kind === 'transition' && options.order !== undefined) {
       this.#renderOrder(options.order);
+    }
+    if (options.kind === 'state') {
+      this.#renderWaiting(options);
+    }
+    // One load for every picker on the panel: two fields asking the same host
+    // for the same catalog is one fetch too many.
+    if (options.actionProvider !== undefined && this.#actionFields.length > 0) {
+      void this.#loadActions(options.actionProvider);
     }
   }
 
@@ -267,17 +295,13 @@ export class PropertiesDialogElement extends HTMLElement {
       });
       return;
     }
-    const select = createElement('select', {
-      className: 'field__input',
-      parent: control,
-      attrs: { 'aria-label': text.fieldTrigger, 'data-field': 'trigger' },
-    });
-    select.disabled = this.#readOnly;
-    this.#renderTriggerOptions(select, []);
+    const select = this.#createActionSelect(control, text.fieldTrigger, 'trigger', () => ({
+      id: this.#draft.trigger?.id ?? '',
+      name: this.#draft.trigger?.name ?? '',
+    }));
     select.addEventListener('change', () => {
       this.#draft = { ...this.#draft, trigger: this.#triggerFor(select) };
     });
-    void this.#loadActions(options.actionProvider, select);
   }
 
   #triggerFor(select: HTMLSelectElement): TransitionTrigger | null {
@@ -289,36 +313,61 @@ export class PropertiesDialogElement extends HTMLElement {
   }
 
   /**
-   * The current trigger is always offered, even when the catalog does not know
-   * it — an action retired server-side must not be silently dropped on save.
+   * A `<select>` over the action catalog, filled once the catalog arrives.
+   *
+   * `current` is read rather than passed, so the option standing for an action
+   * the catalog has never heard of is rebuilt from whatever the draft holds by
+   * then — a value retired server-side must not be silently dropped on save.
    */
-  #renderTriggerOptions(select: HTMLSelectElement, definitions: readonly ActionDefinition[]): void {
-    select.replaceChildren();
-    const current = this.#draft.trigger;
-    createElement('option', {
-      text: this.#strings.properties.triggerNone,
-      attrs: { value: '' },
-      parent: select,
+  #createActionSelect(
+    parent: ParentNode,
+    label: string,
+    field: string,
+    current: () => { readonly id: string; readonly name: string },
+  ): HTMLSelectElement {
+    const select = createElement('select', {
+      className: 'field__input',
+      parent,
+      attrs: { 'aria-label': label, 'data-field': field },
     });
-    const known = definitions.map((definition) => definition.id);
-    const extra =
-      current !== null && !known.includes(current.id)
-        ? [{ id: current.id, name: current.name }]
-        : [];
-    for (const definition of [...definitions, ...extra]) {
+    select.disabled = this.#readOnly;
+    const fill = (definitions: readonly ActionDefinition[]): void => {
+      const chosen = current();
+      select.replaceChildren();
       createElement('option', {
-        text: definition.name,
-        attrs: { value: definition.id },
+        text: this.#strings.properties.triggerNone,
+        attrs: { value: '' },
         parent: select,
       });
-    }
-    select.value = current?.id ?? '';
+      const known = definitions.map((definition) => definition.id);
+      const extra =
+        chosen.id.length > 0 && !known.includes(chosen.id)
+          ? [{ id: chosen.id, name: chosen.name.length > 0 ? chosen.name : chosen.id }]
+          : [];
+      for (const definition of [...definitions, ...extra]) {
+        createElement('option', {
+          text: definition.name,
+          attrs: { value: definition.id },
+          parent: select,
+        });
+      }
+      select.value = chosen.id;
+    };
+    fill([]);
+    this.#actionFields.push(fill);
+    return select;
   }
 
-  async #loadActions(provider: ActionProvider, select: HTMLSelectElement): Promise<void> {
+  async #loadActions(provider: ActionProvider): Promise<void> {
+    this.#actionsToken += 1;
+    const token = this.#actionsToken;
+    const fields = this.#actionFields;
     this.#setStatus(this.#strings.properties.actionsLoading);
     try {
       const result = parseActionDefinitions(await provider());
+      if (token !== this.#actionsToken) {
+        return;
+      }
       if (!result.ok) {
         this.#setStatus(
           this.#strings.properties.actionsInvalid({ errors: result.errors.join(' ') }),
@@ -326,15 +375,115 @@ export class PropertiesDialogElement extends HTMLElement {
         );
         return;
       }
-      if (!select.isConnected) {
-        return;
+      for (const fill of fields) {
+        fill(result.value);
       }
-      this.#renderTriggerOptions(select, result.value);
       this.#setStatus('');
     } catch (error) {
+      if (token !== this.#actionsToken) {
+        return;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       this.#setStatus(this.#strings.properties.actionsLoadFailed({ reason }), true);
     }
+  }
+
+  /**
+   * The batch a state waits on: whether it waits at all, the action that closes
+   * the wait, the machine the children run, and how long it is given.
+   *
+   * The three details stay editable while the toggle is off — turning the wait
+   * off is not the same as forgetting how it was configured.
+   */
+  #renderWaiting(options: PropertiesDialogOptions): void {
+    const text = this.#strings.waiting;
+    createElement('h3', { className: 'section', parent: this.#body, text: text.section });
+
+    const flag = createField(this.#body, text.fieldWaiting, {
+      name: 'waiting',
+      hint: text.waitingHint,
+    });
+    const toggle = createElement('input', {
+      className: 'field__check',
+      parent: flag.control,
+      attrs: { 'aria-label': text.fieldWaiting, 'data-field': 'is-waiting' },
+    });
+    toggle.type = 'checkbox';
+    toggle.checked = this.#draft.waiting.isWaiting;
+    toggle.disabled = this.#readOnly;
+    toggle.addEventListener('change', () => {
+      this.#patchWaiting({ isWaiting: toggle.checked });
+    });
+
+    const join = createField(this.#body, text.fieldJoin, { name: 'join', hint: text.joinHint });
+    if (options.actionProvider === undefined) {
+      const input = this.#waitingInput(
+        join.control,
+        'join-action',
+        text.fieldJoin,
+        text.joinPlaceholder,
+        () => this.#draft.waiting.joinAction,
+      );
+      input.addEventListener('input', () => {
+        this.#patchWaiting({ joinAction: input.value.trim() });
+      });
+    } else {
+      const select = this.#createActionSelect(join.control, text.fieldJoin, 'join-action', () => ({
+        id: this.#draft.waiting.joinAction,
+        name: this.#draft.waiting.joinAction,
+      }));
+      select.addEventListener('change', () => {
+        this.#patchWaiting({ joinAction: select.value });
+      });
+    }
+
+    const child = createField(this.#body, text.fieldChild, { name: 'child', hint: text.childHint });
+    const childInput = this.#waitingInput(
+      child.control,
+      'child-machine',
+      text.fieldChild,
+      text.childPlaceholder,
+      () => this.#draft.waiting.childMachine,
+    );
+    childInput.addEventListener('input', () => {
+      this.#patchWaiting({ childMachine: childInput.value.trim() });
+    });
+
+    const timeout = createField(this.#body, text.fieldTimeout, {
+      name: 'timeout',
+      hint: text.timeoutHint,
+    });
+    const timeoutInput = this.#waitingInput(
+      timeout.control,
+      'timeout',
+      text.fieldTimeout,
+      text.timeoutPlaceholder,
+      () => this.#draft.waiting.timeout,
+    );
+    timeoutInput.addEventListener('input', () => {
+      this.#patchWaiting({ timeout: timeoutInput.value.trim() });
+    });
+  }
+
+  #waitingInput(
+    parent: ParentNode,
+    field: string,
+    label: string,
+    placeholder: string,
+    value: () => string,
+  ): HTMLInputElement {
+    const input = createElement('input', {
+      className: 'field__input',
+      parent,
+      attrs: { 'aria-label': label, 'data-field': field, placeholder },
+    });
+    input.value = value();
+    input.readOnly = this.#readOnly;
+    return input;
+  }
+
+  #patchWaiting(patch: Partial<WaitingConfig>): void {
+    this.#draft = { ...this.#draft, waiting: { ...this.#draft.waiting, ...patch } };
   }
 
   #renderGuard(validator: GuardValidator | undefined): void {

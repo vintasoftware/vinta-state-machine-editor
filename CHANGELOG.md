@@ -55,7 +55,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `decision` string group, and two new icons: `expand` and `fallback`.
 
+- **A state can say it fans work out and waits for it**, through a `⑂ Waiting` toggle beside
+  `▶ Initial` and `◉ Final`. When it is on, the card grows a band **above** the hook lanes,
+  styled apart from them because a fan-out is structure — what the state *is* — and not something
+  that runs:
+
+  ```text
+  ┌─────────────────────────────────────┐
+  │ ⑂ Processing                        │
+  ├─────────────────────────────────────┤
+  │ FANS OUT TO   import_file.status    │
+  │ JOINS WITH    ⚡ import.finish       │
+  │ TIMEOUT       2h                    │
+  ├─────────────────────────────────────┤
+  │ BEFORE·ENTER   reserveStock         │
+  └─────────────────────────────────────┘
+  ```
+
+  It is read off and written back to four keys of `state.data`, which the Django side sends:
+
+  ```jsonc
+  "data": {
+    "is_waiting": true,
+    "join_action": "import.finish",         // an ActionType key
+    "child_machine": "import_file.status",  // optional, display only
+    "timeout": "PT2H"                       // ISO 8601 duration, optional
+  }
+  ```
+
+  A document with none of those keys renders exactly as it did before. A key set to the wrong
+  type is ignored rather than failing the document — `data` is the host's, and one bad value in
+  it should not cost anybody their graph.
+
+- **A waiting state is findable while scanning a large graph.** Its colour bar gains a weave and
+  its card a dashed left edge. `color` is deliberately untouched: it is the author's choice and
+  it means something else.
+
+- **The properties dialog of a state edits the fan-out**, under a *Waiting for a batch* section:
+  the toggle, the join action (picked from the action catalog when the host supplies one, free
+  text otherwise), the child machine and the timeout. Every line of the band opens it.
+
+- A timeout is shown in whole units — `PT2H` reads as `2h`, `P1DT6H30M` as `1d 6h 30m` — through
+  `waiting.duration`, which a translated host replaces like any other string. A timeout the
+  editor cannot read is shown exactly as it was written.
+
+- New model helpers: `readWaiting`, `setWaiting`, `toggleWaiting`, `isWaitingState`,
+  `emptyWaitingConfig`, `parseDuration` and `WAITING_KEYS`. New element methods
+  `toggleWaitingState(stateId)` and `setStateWaiting(stateId, config)`.
+
+- New `waiting` string group, and a `waiting` icon (`⑂`).
+
 ### Changed
+
+- **`state.data` is no longer entirely opaque.** The component now owns four keys inside it —
+  and nothing else. Edits to them arrive as a new `state-data` change, and `updateState` takes a
+  `data` patch.
+
+- `PropertiesDraft` gained a `waiting` field. `emptyPropertiesDraft()` fills it in, so a host
+  building a draft from that helper needs no change; one building the object literally does.
+
+- The properties dialog asks the `ActionProvider` **once** per opening, however many pickers the
+  panel holds.
 
 - `labelOffset` is stored per edge, and a decision has one card. The card sits at the **mean** of
   the points its members' edges would each put a card at, plus the mean of their offsets, and

@@ -97,6 +97,14 @@ import {
   updateTransition,
 } from '../model/machine.js';
 import { assertStateMachine } from '../model/parse.js';
+import {
+  emptyWaitingConfig,
+  parseDuration,
+  readWaiting,
+  setWaiting,
+  toggleWaiting,
+  type WaitingConfig,
+} from '../model/waiting.js';
 import type {
   ActionProvider,
   ElementRef,
@@ -220,6 +228,11 @@ const EMPTY_GEOMETRY: EdgeGeometry = {
   arrowAngle: 0,
 };
 
+/** The lines of the waiting band, top to bottom. */
+type BandField = 'child' | 'join' | 'timeout';
+
+const BAND_FIELDS: readonly BandField[] = ['child', 'join', 'timeout'];
+
 type HookKey = `${StateTrigger}:${SideEffectPhase}`;
 
 const HOOK_KEYS: readonly HookKey[] = [
@@ -239,10 +252,21 @@ interface ChipView {
   readonly label: HTMLElement;
 }
 
+/** One line of the band: what it names, and what the state says about it. */
+interface BandRowView {
+  readonly root: HTMLButtonElement;
+  readonly label: HTMLElement;
+  readonly value: HTMLElement;
+}
+
 interface StateView {
   readonly root: HTMLElement;
   /** Colour bar across the top of the card. */
   readonly bar: HTMLElement;
+  /** Structure, not side effects: the batch this state fans out and waits for. */
+  readonly band: HTMLElement;
+  readonly bandRows: ReadonlyMap<BandField, BandRowView>;
+  readonly waitingButton: HTMLButtonElement;
   readonly colorButton: HTMLButtonElement;
   readonly palette: HTMLElement;
   readonly swatches: ReadonlyMap<StateColor, HTMLButtonElement>;
@@ -354,6 +378,15 @@ function hookRef(stateId: string, key: HookKey): SideEffectListRef {
     trigger: trigger === 'leave' ? 'leave' : 'enter',
     phase: phase === 'after' ? 'after' : 'before',
   };
+}
+
+function sameWaiting(a: WaitingConfig, b: WaitingConfig): boolean {
+  return (
+    a.isWaiting === b.isWaiting &&
+    a.joinAction === b.joinAction &&
+    a.childMachine === b.childMachine &&
+    a.timeout === b.timeout
+  );
 }
 
 function sameTrigger(a: TransitionTrigger | null, b: TransitionTrigger | null): boolean {
@@ -1014,6 +1047,24 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#commit(toggleInitialState(this.#machine, stateId), { kind: 'initial-states-change' });
   }
 
+  /**
+   * Marks (or unmarks) a state as one that fans work out and waits for it.
+   *
+   * Unmarking keeps the join action, the child machine and the timeout on the
+   * state: a toggle pressed by mistake should not cost anyone their setup.
+   */
+  toggleWaitingState(stateId: string): void {
+    if (this.#readOnly) {
+      return;
+    }
+    this.#commit(toggleWaiting(this.#machine, stateId), { kind: 'state-data', stateId });
+  }
+
+  /** Replaces the whole fan-out configuration of a state. */
+  setStateWaiting(stateId: string, config: WaitingConfig): void {
+    this.#commit(setWaiting(this.#machine, stateId, config), { kind: 'state-data', stateId });
+  }
+
   /** Marks (or unmarks) a state as one that ends the machine. */
   toggleFinalState(stateId: string): void {
     this.#commit(toggleFinalState(this.#machine, stateId), { kind: 'final-states-change' });
@@ -1370,6 +1421,7 @@ export class StateMachineEditorElement extends HTMLElement {
             requiredPermission: '',
             description: state.description,
             orderIndex: -1,
+            waiting: readWaiting(state),
           };
     }
     const transition = findTransition(this.#machine, ref.id);
@@ -1384,6 +1436,7 @@ export class StateMachineEditorElement extends HTMLElement {
       orderIndex: outgoingTransitions(this.#machine, transition.from).findIndex(
         (candidate) => candidate.id === transition.id,
       ),
+      waiting: emptyWaitingConfig(),
     };
   }
 
@@ -1416,6 +1469,12 @@ export class StateMachineEditorElement extends HTMLElement {
         this.#commit(setStateDescription(this.#machine, ref.id, after.description), {
           kind: 'description',
           ref,
+        });
+      }
+      if (!sameWaiting(before.waiting, after.waiting)) {
+        this.#commit(setWaiting(this.#machine, ref.id, after.waiting), {
+          kind: 'state-data',
+          stateId: ref.id,
         });
       }
       return;
@@ -2172,6 +2231,29 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: actions,
       attrs: { 'aria-label': this.#strings.state.remove },
     });
+    /*
+     * Above the hook lanes and styled apart from them: a fan-out is not
+     * something that runs, it is what the state is. Empty and hidden until the
+     * state says it waits.
+     */
+    const band = createElement('div', { className: 'band', parent: root });
+    band.hidden = true;
+    const bandRows = new Map<BandField, BandRowView>();
+    for (const field of BAND_FIELDS) {
+      const row = createButton({
+        className: `band__row band__row--${field}`,
+        parent: band,
+        attrs: { 'data-band': field },
+      });
+      const label = createElement('span', { className: 'band__label', parent: row });
+      const value = createElement('span', { className: 'band__value', parent: row });
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void this.openProperties({ kind: 'state', id: stateId });
+      });
+      bandRows.set(field, { root: row, label, value });
+    }
+
     const hooks = createElement('div', { className: 'hooks', parent: root });
     const chips = new Map<HookKey, ChipView>();
     for (const key of HOOK_KEYS) {
@@ -2229,6 +2311,17 @@ export class StateMachineEditorElement extends HTMLElement {
       roleButtons.set(role, button);
     }
 
+    const waitingButton = createIconButton(this.#icons, 'waiting', {
+      className: 'node__role node__role--waiting',
+      parent: roles,
+      label: this.#strings.waiting.role,
+      attrs: { 'aria-pressed': 'false' },
+    });
+    waitingButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.toggleWaitingState(stateId);
+    });
+
     // Only reachable while the state is initial: the start pseudo-node does not
     // exist until a creation edge does, so there is nothing to drag from yet.
     const creationButton = createIconButton(this.#icons, 'add', {
@@ -2285,6 +2378,9 @@ export class StateMachineEditorElement extends HTMLElement {
     return {
       root,
       bar,
+      band,
+      bandRows,
+      waitingButton,
       colorButton,
       palette,
       swatches,
@@ -2330,6 +2426,64 @@ export class StateMachineEditorElement extends HTMLElement {
     }
     this.#updateStateRoles(view, state);
     this.#updateStateColor(view, state);
+    this.#updateWaitingBand(view, state);
+  }
+
+  /**
+   * The band, and the toggle that puts it there.
+   *
+   * A row with nothing in it is left out rather than shown empty — except the
+   * join action, whose absence is the thing worth seeing: it is what closes the
+   * wait, and without it the record stops here.
+   */
+  #updateWaitingBand(view: StateView, state: StateNode): void {
+    const text = this.#strings.waiting;
+    const config = readWaiting(state);
+    view.waitingButton.classList.toggle('is-on', config.isWaiting);
+    view.waitingButton.setAttribute('aria-pressed', config.isWaiting ? 'true' : 'false');
+    view.waitingButton.disabled = this.#readOnly;
+    view.waitingButton.setAttribute(
+      'aria-label',
+      config.isWaiting ? text.unmark({ name: state.name }) : text.mark({ name: state.name }),
+    );
+
+    view.root.classList.toggle('is-waiting', config.isWaiting);
+    view.band.hidden = !config.isWaiting;
+    if (!config.isWaiting) {
+      return;
+    }
+    view.band.setAttribute('aria-label', text.bandLabel({ name: state.name }));
+    const lines: Readonly<Record<BandField, { readonly label: string; readonly value: string }>> = {
+      child: { label: text.fansOut, value: config.childMachine },
+      join: {
+        label: text.joinsWith,
+        value: config.joinAction.length === 0 ? '' : text.action({ name: config.joinAction }),
+      },
+      timeout: { label: text.timeout, value: this.#formatTimeout(config.timeout) },
+    };
+    for (const [field, row] of view.bandRows) {
+      const line = lines[field];
+      const missing = line.value.length === 0;
+      // The join is the only line worth drawing empty: see the doc comment.
+      row.root.hidden = missing && field !== 'join';
+      row.label.textContent = line.label;
+      row.value.textContent = missing ? text.unset : line.value;
+      row.root.classList.toggle('is-unset', missing);
+      row.root.title = `${line.label}: ${row.value.textContent}`;
+      row.root.setAttribute(
+        'aria-label',
+        text.rowLabel({ field: line.label, value: row.value.textContent, name: state.name }),
+      );
+    }
+  }
+
+  /** A timeout in whole units when it is a duration, and verbatim when it is not. */
+  #formatTimeout(timeout: string): string {
+    if (timeout.length === 0) {
+      return '';
+    }
+    const parts = parseDuration(timeout);
+    return parts === undefined ? timeout : this.#strings.waiting.duration(parts);
   }
 
   #updateStateColor(view: StateView, state: StateNode): void {

@@ -153,6 +153,16 @@ export {
   parseSideEffectDefinitions,
   parseStateMachine,
 } from './model/parse.js';
+export type { DurationParts, WaitingConfig } from './model/waiting.js';
+export {
+  emptyWaitingConfig,
+  isWaitingState,
+  parseDuration,
+  readWaiting,
+  setWaiting,
+  toggleWaiting,
+  WAITING_KEYS,
+} from './model/waiting.js';
 export type * from './types.js';
 export {
   isStateColor,
