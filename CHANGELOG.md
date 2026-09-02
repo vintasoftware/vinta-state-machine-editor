@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Edges leaving one state under one action are drawn as a single decision card.** The library
+  behind this editor resolves several such edges by trying each in order and taking the first
+  whose guard holds — one choice with several outcomes. As N separate cards, nothing on the
+  canvas said they were related, in what order they were tried, or which one was the fallback.
+
+  Two or more transitions sharing a `from` **and** a `trigger.id` now share one card: the action
+  in the header, one numbered row per outcome, each naming its guard and the state it lands on.
+  An edge with an empty guard is the fallback: it is drawn as an `else` row, ruled off and pinned
+  to the bottom. Anything that would be evaluated after it can never be reached, and is struck
+  through and marked *unreachable*.
+
+  ```text
+  ┌──────────────────────────────────────────────┐
+  │ ⚡ finish                          4 outcomes │
+  ├──────────────────────────────────────────────┤
+  │ 1  reason is timeout            →  Timed out │
+  │ 2  failed == 0                  →  Completed │
+  │ 3  succeeded > 0                →  Partial   │
+  │ ──────────────────────────────────────────── │
+  │ ⌄  else                         →  Failed    │
+  └──────────────────────────────────────────────┘
+  ```
+
+  A group of one renders exactly as it always did, so a graph that does not use this looks
+  unchanged. Nothing is stored to make it work: a group is derived from `from` and `trigger.id`,
+  and evaluation order stays what it has always been — position in the `transitions` array.
+
+- **Rows reorder by drag or from the keyboard**, with `Alt` + `Arrow Up`/`Arrow Down` on a row's
+  grip. A whole drag folds into one undoable step. Because ordering is positional, a move is a
+  move inside `transitions`: the outcome lands on the slot the row it displaces was holding, and
+  edges leaving the same state under a *different* action keep theirs.
+
+- **Each row opens in place** onto the edge's name, guard, required permission, `before`/`after`
+  side effect chips, its properties dialog and its remove button — everything a single edge card
+  offers today.
+
+- New model helpers, all pure and exported: `groupTransitions`, `groupKeyOf`, `findGroupOf`,
+  `isDecision`, `decisionRows`, `moveDecisionRow` and `setDecisionLabelOffset`.
+
+- New `decision` string group, and two new icons: `expand` and `fallback`.
+
+### Changed
+
+- `labelOffset` is stored per edge, and a decision has one card. The group reads the **first
+  member's** offset, and dragging the card writes that one answer back to every member. A member
+  that later leaves the group — its trigger changed, say — therefore starts out where the card it
+  belonged to was standing. A host reconciling the document back into rows should expect every
+  edge of a decision to carry the same `labelOffset`.
+
+- Every edge of a decision is bent through the single card they share, so the curves meet at it
+  and fan out from there to the states they land on.
+
 ## [0.8.0] - 2026-09-01
 
 ### Added

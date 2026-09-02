@@ -44,6 +44,15 @@ import {
   duplicateTransition,
 } from '../model/clipboard.js';
 import {
+  type DecisionRow,
+  decisionRows,
+  groupTransitions,
+  isDecision,
+  moveDecisionRow,
+  setDecisionLabelOffset,
+  type TransitionGroup,
+} from '../model/groups.js';
+import {
   canRedo,
   canUndo,
   createHistory,
@@ -108,7 +117,7 @@ import type {
   Transition,
   TransitionTrigger,
 } from '../types.js';
-import { STATE_COLORS } from '../types.js';
+import { SIDE_EFFECT_PHASES, STATE_COLORS } from '../types.js';
 import { ConfirmDialogElement } from './confirm-dialog.js';
 import { createButton, createElement, createSvgElement, isInteractiveTarget } from './dom.js';
 import {
@@ -132,6 +141,7 @@ import {
 } from './labels.js';
 import type { OrderContext, PropertiesDraft } from './properties-dialog.js';
 import { PropertiesDialogElement } from './properties-dialog.js';
+import { ReorderController } from './reorder.js';
 import {
   countWithParams,
   formatSideEffectHead,
@@ -253,7 +263,6 @@ interface StateView {
 }
 
 interface TransitionView {
-  readonly path: SVGPathElement;
   readonly card: HTMLElement;
   readonly name: HTMLElement;
   /** Rail of card tools, floating clear of the card so the name keeps the header. */
@@ -267,6 +276,45 @@ interface TransitionView {
   readonly guard: HTMLElement;
   readonly chips: ReadonlyMap<SideEffectPhase, ChipView>;
 }
+
+/** One outcome of a decision card, with the panel it opens underneath it. */
+interface DecisionRowView {
+  readonly root: HTMLElement;
+  readonly handle: HTMLButtonElement;
+  /** The order badge, or the fallback glyph on the unguarded row. */
+  readonly order: HTMLElement;
+  readonly summary: HTMLButtonElement;
+  /** The guard, or the word standing in for it on the fallback row. */
+  readonly outcome: HTMLElement;
+  readonly target: HTMLElement;
+  readonly flag: HTMLElement;
+  readonly panel: HTMLElement;
+  readonly nameInput: HTMLInputElement;
+  readonly guardInput: HTMLInputElement;
+  readonly permissionInput: HTMLInputElement;
+  readonly chips: ReadonlyMap<SideEffectPhase, ChipView>;
+  readonly propertiesButton: HTMLButtonElement;
+  readonly removeButton: HTMLButtonElement;
+}
+
+/** Several edges leaving one state under one action, drawn as one card. */
+interface DecisionView {
+  readonly card: HTMLElement;
+  readonly header: HTMLElement;
+  readonly action: HTMLElement;
+  readonly count: HTMLElement;
+  readonly list: HTMLElement;
+  readonly reorder: ReorderController;
+  readonly rows: Map<string, DecisionRowView>;
+}
+
+/**
+ * The card standing for one {@link TransitionGroup}: the classic edge card when
+ * the group holds a single edge, the decision card when it holds several.
+ */
+type CardView =
+  | { readonly kind: 'single'; readonly transitionId: string; readonly view: TransitionView }
+  | { readonly kind: 'decision'; readonly view: DecisionView };
 
 /** The UML initial pseudostate every creation transition originates from. */
 interface StartNodeView {
@@ -420,7 +468,18 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #zoomInButton: HTMLButtonElement;
   readonly #fitButton: HTMLButtonElement;
   readonly #stateViews = new Map<string, StateView>();
-  readonly #transitionViews = new Map<string, TransitionView>();
+  /** The curve of every edge, keyed by transition id. Cards are keyed by group. */
+  readonly #edgePaths = new Map<string, SVGPathElement>();
+  /** One card per {@link TransitionGroup}, keyed by the group's own key. */
+  readonly #cardViews = new Map<string, CardView>();
+  /** The groups of the machine as it stands, rebuilt at the top of every render. */
+  #groups: readonly TransitionGroup[] = [];
+  /** Which group each transition belongs to, so geometry never rescans the array. */
+  #groupOf: ReadonlyMap<string, TransitionGroup> = new Map();
+  /** The decision row open for editing, if any, keyed by the transition it edits. */
+  #expandedRow: string | undefined;
+  /** The outcome a reorder drag is carrying, so its frames fold into one step. */
+  #reordering: string | undefined;
 
   #machine: StateMachine = createEmptyMachine();
   #history: History = createHistory();
@@ -854,11 +913,14 @@ export class StateMachineEditorElement extends HTMLElement {
       view.startMarker.remove();
     }
     this.#stateViews.clear();
-    for (const view of this.#transitionViews.values()) {
-      view.path.remove();
-      view.card.remove();
+    for (const path of this.#edgePaths.values()) {
+      path.remove();
     }
-    this.#transitionViews.clear();
+    this.#edgePaths.clear();
+    for (const entry of this.#cardViews.values()) {
+      this.#destroyCard(entry);
+    }
+    this.#cardViews.clear();
     this.#startNode?.root.remove();
     this.#startNode = undefined;
     this.#renameEditors.clear();
@@ -1598,8 +1660,7 @@ export class StateMachineEditorElement extends HTMLElement {
    * a host that restyles either.
    */
   #startBarGap(): number {
-    const [transitionView] = this.#transitionViews.values();
-    const card = transitionView?.card.offsetWidth || FALLBACK_LABEL_WIDTH;
+    const card = this.#anyCard()?.offsetWidth || FALLBACK_LABEL_WIDTH;
     const [stateView] = this.#stateViews.values();
     const node = stateView?.root.offsetWidth || FALLBACK_NODE_WIDTH;
     return Math.round(card + CREATION_CARD_MARGIN * 2 + START_BAR_WIDTH + node / 4);
@@ -1693,11 +1754,17 @@ export class StateMachineEditorElement extends HTMLElement {
 
   /** Size a transition card renders at, measured where the DOM allows it. */
   #labelSize(): Size {
-    const [view] = this.#transitionViews.values();
+    const card = this.#anyCard();
     return {
-      width: view?.card.offsetWidth || FALLBACK_LABEL_WIDTH,
-      height: view?.card.offsetHeight || FALLBACK_LABEL_HEIGHT,
+      width: card?.offsetWidth || FALLBACK_LABEL_WIDTH,
+      height: card?.offsetHeight || FALLBACK_LABEL_HEIGHT,
     };
+  }
+
+  /** Any transition card that has rendered, to measure the breed against. */
+  #anyCard(): HTMLElement | undefined {
+    const [entry] = this.#cardViews.values();
+    return entry?.view.card;
   }
 
   #nodeSize(): Size {
@@ -1737,9 +1804,12 @@ export class StateMachineEditorElement extends HTMLElement {
   #occupiedRects(exceptTransitionId?: string): readonly Rect[] {
     const rects: Rect[] = this.#machine.states.map((state) => this.#rectFor(state));
     const size = this.#labelSize();
-    for (const transition of this.#machine.transitions) {
-      if (transition.id !== exceptTransitionId) {
-        rects.push(boxAround(this.#geometryFor(transition).label, size));
+    // One rect per card, so a decision's several edges do not each reserve the
+    // same spot — and excusing one edge excuses the whole card it shares.
+    for (const group of this.#groups) {
+      const holds = group.transitions.some((transition) => transition.id === exceptTransitionId);
+      if (!holds) {
+        rects.push(boxAround(this.#cardPointFor(group), size));
       }
     }
     return rects;
@@ -1756,7 +1826,10 @@ export class StateMachineEditorElement extends HTMLElement {
   #withMachine<T>(machine: StateMachine, read: () => T): T {
     const previousMachine = this.#machine;
     const previousAnchors = this.#creationAnchors;
+    const previousGroups = this.#groups;
+    const previousIndex = this.#groupOf;
     this.#machine = machine;
+    this.#indexGroups(machine);
     const creation = creationTransitions(machine);
     this.#creationAnchors =
       creation.length > 0
@@ -1767,6 +1840,8 @@ export class StateMachineEditorElement extends HTMLElement {
     } finally {
       this.#machine = previousMachine;
       this.#creationAnchors = previousAnchors;
+      this.#groups = previousGroups;
+      this.#groupOf = previousIndex;
     }
   }
 
@@ -1809,10 +1884,16 @@ export class StateMachineEditorElement extends HTMLElement {
    */
   #placeLabels(machine: StateMachine): StateMachine {
     let next = machine;
-    for (const transition of machine.transitions) {
-      const offset = this.#freeLabelOffset(next, transition);
+    // Placed per card rather than per edge: a decision's members share one, and
+    // nudging each of them in turn would walk that single card across the canvas.
+    for (const group of groupTransitions(machine)) {
+      const leader = group.transitions[0];
+      if (leader === undefined) {
+        continue;
+      }
+      const offset = this.#freeLabelOffset(next, leader);
       if (offset.x !== 0 || offset.y !== 0) {
-        next = updateTransition(next, transition.id, { labelOffset: offset });
+        next = setDecisionLabelOffset(next, leader.id, offset);
       }
     }
     return next;
@@ -1877,6 +1958,7 @@ export class StateMachineEditorElement extends HTMLElement {
   // -- rendering ------------------------------------------------------------
 
   #render(): void {
+    this.#indexGroups(this.#machine);
     this.#renderStates();
     this.#renderStartNode();
     this.#renderTransitions();
@@ -2396,30 +2478,103 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   #renderTransitions(): void {
+    this.#renderEdgePaths();
+    this.#renderCards();
+  }
+
+  /**
+   * The curves, one per transition. They outlive the cards: a decision draws
+   * one card for several edges, and every one of those edges still needs a line
+   * of its own to reach the state it lands on.
+   */
+  #renderEdgePaths(): void {
     const alive = new Set<string>();
     for (const transition of this.#machine.transitions) {
       alive.add(transition.id);
-      const view =
-        this.#transitionViews.get(transition.id) ?? this.#createTransitionView(transition.id);
-      this.#transitionViews.set(transition.id, view);
-      this.#updateTransitionView(view, transition);
+      const path = this.#edgePaths.get(transition.id) ?? this.#createEdgePath(transition.id);
+      this.#edgePaths.set(transition.id, path);
+      path.setAttribute('d', this.#pathGeometryFor(transition).path);
+      path.classList.toggle('is-selected', this.#isSelectedTransition(transition.id));
     }
-    for (const [id, view] of this.#transitionViews) {
+    for (const [id, path] of this.#edgePaths) {
       if (!alive.has(id)) {
-        view.path.remove();
-        view.card.remove();
-        this.#transitionViews.delete(id);
+        path.remove();
+        this.#edgePaths.delete(id);
         this.#renameEditors.delete(id);
+        if (this.#expandedRow === id) {
+          this.#expandedRow = undefined;
+        }
       }
     }
   }
 
-  #createTransitionView(transitionId: string): TransitionView {
-    const path = createSvgElement('path', {
+  #createEdgePath(transitionId: string): SVGPathElement {
+    return createSvgElement('path', {
       className: 'edge',
       parent: this.#edgeLayer,
       attrs: { 'marker-end': 'url(#sme-arrow)', part: 'edge', 'data-transition-id': transitionId },
     });
+  }
+
+  /**
+   * One card per group. A group of one is the edge card this component has
+   * always drawn; a group of several is the decision card, and swapping between
+   * the two is a rebuild rather than a patch — they share no structure.
+   */
+  #renderCards(): void {
+    const alive = new Set<string>();
+    for (const group of this.#groups) {
+      alive.add(group.key);
+      let entry = this.#cardViews.get(group.key);
+      if (entry !== undefined && (entry.kind === 'decision') !== isDecision(group)) {
+        this.#destroyCard(entry);
+        this.#cardViews.delete(group.key);
+        entry = undefined;
+      }
+      if (entry === undefined) {
+        entry = this.#createCard(group);
+        this.#cardViews.set(group.key, entry);
+      }
+      if (entry.kind === 'decision') {
+        this.#updateDecisionView(entry.view, group);
+        continue;
+      }
+      const transition = group.transitions[0];
+      if (transition !== undefined) {
+        this.#updateTransitionView(entry.view, transition);
+      }
+    }
+    for (const [key, entry] of this.#cardViews) {
+      if (!alive.has(key)) {
+        this.#destroyCard(entry);
+        this.#cardViews.delete(key);
+      }
+    }
+  }
+
+  #createCard(group: TransitionGroup): CardView {
+    if (isDecision(group)) {
+      return { kind: 'decision', view: this.#createDecisionView(group) };
+    }
+    const transitionId = group.transitions[0]?.id ?? group.key;
+    return { kind: 'single', transitionId, view: this.#createTransitionView(transitionId) };
+  }
+
+  #destroyCard(entry: CardView): void {
+    if (entry.kind === 'decision') {
+      entry.view.reorder.destroy();
+      entry.view.card.remove();
+      return;
+    }
+    entry.view.card.remove();
+    this.#renameEditors.delete(entry.transitionId);
+  }
+
+  #isSelectedTransition(transitionId: string): boolean {
+    return this.#selection?.kind === 'transition' && this.#selection.id === transitionId;
+  }
+
+  #createTransitionView(transitionId: string): TransitionView {
     const card = createElement('div', {
       className: 'edge-card',
       parent: this.#world,
@@ -2506,7 +2661,6 @@ export class StateMachineEditorElement extends HTMLElement {
     });
 
     return {
-      path,
       card,
       name,
       actions,
@@ -2522,9 +2676,7 @@ export class StateMachineEditorElement extends HTMLElement {
 
   #updateTransitionView(view: TransitionView, transition: Transition): void {
     const geometry = this.#geometryFor(transition);
-    view.path.setAttribute('d', geometry.path);
-    const selected = this.#selection?.kind === 'transition' && this.#selection.id === transition.id;
-    view.path.classList.toggle('is-selected', selected);
+    const selected = this.#isSelectedTransition(transition.id);
     view.card.classList.toggle('is-selected', selected);
     // The curve is bent to pass through the card, so the label point is the card.
     view.card.style.left = `${geometry.label.x}px`;
@@ -2562,6 +2714,446 @@ export class StateMachineEditorElement extends HTMLElement {
     view.guard.textContent = guarded ? text.guard({ guard }) : '';
     view.guard.title = guarded ? text.guardTitle({ guard }) : '';
     view.meta.hidden = trigger === null && !guarded;
+  }
+
+  // -- decision cards -------------------------------------------------------
+
+  /**
+   * The card several edges leaving one state under one action share.
+   *
+   * The header behaves exactly like a single edge's — it names the action and it
+   * is what the card is dragged by — and the outcomes sit under it as a list,
+   * numbered in the order the engine tries them.
+   */
+  #createDecisionView(group: TransitionGroup): DecisionView {
+    const key = group.key;
+    const card = createElement('div', {
+      className: 'edge-card edge-card--decision',
+      parent: this.#world,
+      attrs: { part: 'transition', 'data-group-key': key },
+    });
+    const header = createElement('div', { className: 'edge-card__header', parent: card });
+    const action = createElement('span', {
+      className: 'edge-card__name decision__action',
+      parent: header,
+    });
+    const count = createElement('span', { className: 'decision__count', parent: header });
+    const list = createElement('ol', { className: 'decision', parent: card });
+    const reorder = new ReorderController({
+      list,
+      rowSelector: '.decision__row',
+      handleSelector: '.decision__handle',
+      onReorder: (from, to) => this.#reorderDecision(key, from, to, true),
+      onDrop: () => this.#endDecisionReorder(),
+    });
+
+    card.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      const leader = this.#groupByKey(key)?.transitions[0];
+      if (leader !== undefined) {
+        this.#setSelection({ kind: 'transition', id: leader.id });
+      }
+    });
+    header.addEventListener('pointerdown', (event) => {
+      const leader = this.#groupByKey(key)?.transitions[0];
+      if (leader !== undefined) {
+        this.#onLabelPointerDown(event, leader.id);
+      }
+    });
+
+    return { card, header, action, count, list, reorder, rows: new Map() };
+  }
+
+  #groupByKey(key: string): TransitionGroup | undefined {
+    return this.#groups.find((group) => group.key === key);
+  }
+
+  #updateDecisionView(view: DecisionView, group: TransitionGroup): void {
+    const point = this.#cardPointFor(group);
+    view.card.style.left = `${point.x}px`;
+    view.card.style.top = `${point.y}px`;
+    view.card.classList.toggle(
+      'is-selected',
+      group.transitions.some((transition) => this.#isSelectedTransition(transition.id)),
+    );
+    view.card.classList.toggle('is-creation', group.from === null);
+    const text = this.#strings;
+    const name = group.triggerName ?? '';
+    const count = group.transitions.length;
+    view.action.textContent = text.transition.trigger({ name });
+    view.action.title = text.transition.triggerTitle({ name });
+    view.count.textContent = text.decision.outcomes({ count });
+    view.card.setAttribute('aria-label', text.decision.label({ action: name, count }));
+    view.header.style.cursor = this.#readOnly ? 'default' : 'grab';
+
+    const rows = decisionRows(group);
+    const alive = new Set<string>();
+    rows.forEach((row, index) => {
+      const id = row.transition.id;
+      alive.add(id);
+      const rowView = view.rows.get(id) ?? this.#createDecisionRow(view, id);
+      view.rows.set(id, rowView);
+      this.#updateDecisionRow(rowView, row, index, rows.length);
+    });
+    for (const [id, rowView] of view.rows) {
+      if (!alive.has(id)) {
+        rowView.root.remove();
+        view.rows.delete(id);
+      }
+    }
+    this.#orderDecisionRows(view, rows);
+  }
+
+  /**
+   * Walks the list once and moves only what is out of place, so a row holding
+   * focus — a guard being typed into, a handle being driven from the keyboard —
+   * is left exactly where it stands whenever the order has not changed.
+   */
+  #orderDecisionRows(view: DecisionView, rows: readonly DecisionRow[]): void {
+    let cursor = view.list.firstElementChild;
+    for (const row of rows) {
+      const rowView = view.rows.get(row.transition.id);
+      if (rowView === undefined) {
+        continue;
+      }
+      if (cursor === rowView.root) {
+        cursor = cursor.nextElementSibling;
+        continue;
+      }
+      view.list.insertBefore(rowView.root, cursor);
+    }
+  }
+
+  #createDecisionRow(view: DecisionView, transitionId: string): DecisionRowView {
+    const text = this.#strings;
+    const root = createElement('li', {
+      className: 'decision__row',
+      parent: view.list,
+      attrs: { 'data-transition-id': transitionId },
+    });
+    const line = createElement('div', { className: 'decision__line', parent: root });
+    const handle = createIconButton(this.#icons, 'dragHandle', {
+      className: 'decision__handle',
+      parent: line,
+      attrs: { title: text.decision.reorderTitle },
+    });
+    handle.addEventListener('keydown', (event) => this.#onDecisionHandleKey(event, transitionId));
+    const order = createElement('span', { className: 'decision__order', parent: line });
+    const summary = createButton({
+      className: 'decision__summary',
+      parent: line,
+      attrs: { 'aria-expanded': 'false' },
+    });
+    const outcome = createElement('span', { className: 'decision__outcome', parent: summary });
+    const target = createElement('span', { className: 'decision__target', parent: summary });
+    const flag = createElement('span', { className: 'decision__flag', parent: line });
+    summary.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#toggleDecisionRow(transitionId);
+    });
+
+    const panel = createElement('div', { className: 'decision__panel', parent: root });
+    panel.hidden = true;
+    const nameInput = this.#createRowField(panel, 'name', text.decision.fieldName, undefined);
+    const guardInput = this.#createRowField(
+      panel,
+      'guard',
+      text.properties.fieldGuard,
+      text.properties.guardPlaceholder,
+    );
+    const permissionInput = this.#createRowField(
+      panel,
+      'permission',
+      text.properties.fieldPermission,
+      text.properties.permissionPlaceholder,
+    );
+    nameInput.addEventListener('change', () => {
+      const value = nameInput.value.trim();
+      const current = findTransition(this.#machine, transitionId);
+      if (current === undefined || value.length === 0 || value === current.name) {
+        return;
+      }
+      this.#commit(updateTransition(this.#machine, transitionId, { name: value }), {
+        kind: 'transition-rename',
+        transitionId,
+      });
+    });
+    guardInput.addEventListener('change', () => {
+      if (findTransition(this.#machine, transitionId)?.guard === guardInput.value) {
+        return;
+      }
+      this.#commit(setTransitionGuard(this.#machine, transitionId, guardInput.value), {
+        kind: 'transition-guard',
+        transitionId,
+      });
+    });
+    permissionInput.addEventListener('change', () => {
+      if (
+        findTransition(this.#machine, transitionId)?.requiredPermission === permissionInput.value
+      ) {
+        return;
+      }
+      this.#commit(setTransitionPermission(this.#machine, transitionId, permissionInput.value), {
+        kind: 'transition-permission',
+        transitionId,
+      });
+    });
+
+    const hooks = createElement('div', { className: 'hooks', parent: panel });
+    const chips = new Map<SideEffectPhase, ChipView>();
+    for (const phase of SIDE_EFFECT_PHASES) {
+      const hookRow = createElement('div', { className: 'hook', parent: hooks });
+      createElement('span', {
+        className: 'hook__label',
+        parent: hookRow,
+        text: this.#strings.phase[phase],
+      });
+      const chip = createChip(hookRow);
+      chip.button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void this.openSideEffects({ kind: 'transition', transitionId, phase });
+      });
+      chips.set(phase, chip);
+    }
+
+    const tools = createElement('div', {
+      className: 'decision__tools',
+      parent: panel,
+      attrs: { role: 'toolbar' },
+    });
+    const propertiesButton = createIconButton(this.#icons, 'properties', {
+      className: 'icon-button decision__properties',
+      parent: tools,
+      attrs: {
+        'aria-label': text.transition.properties,
+        title: text.transition.properties,
+      },
+    });
+    propertiesButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void this.openProperties({ kind: 'transition', id: transitionId });
+    });
+    const removeButton = createIconButton(this.#icons, 'remove', {
+      className: 'icon-button decision__remove',
+      parent: tools,
+      attrs: { 'aria-label': text.transition.remove },
+    });
+    removeButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.#commit(removeTransition(this.#machine, transitionId), {
+        kind: 'transition-remove',
+        transitionId,
+      });
+    });
+
+    root.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      this.#setSelection({ kind: 'transition', id: transitionId });
+    });
+
+    return {
+      root,
+      handle,
+      order,
+      summary,
+      outcome,
+      target,
+      flag,
+      panel,
+      nameInput,
+      guardInput,
+      permissionInput,
+      chips,
+      propertiesButton,
+      removeButton,
+    };
+  }
+
+  /** A labelled text field of the panel a decision row opens. */
+  #createRowField(
+    parent: ParentNode,
+    field: string,
+    label: string,
+    placeholder: string | undefined,
+  ): HTMLInputElement {
+    const row = createElement('label', { className: 'decision__field', parent });
+    createElement('span', { className: 'decision__field-label', parent: row, text: label });
+    const attrs: Record<string, string> = { 'data-field': field };
+    if (placeholder !== undefined) {
+      attrs['placeholder'] = placeholder;
+    }
+    return createElement('input', { className: 'decision__input', parent: row, attrs });
+  }
+
+  #updateDecisionRow(view: DecisionRowView, row: DecisionRow, index: number, total: number): void {
+    const text = this.#strings;
+    const transition = row.transition;
+    const expanded = this.#expandedRow === transition.id;
+    const outcome = row.isFallback ? text.decision.fallback : transition.guard;
+    const targetName = findState(this.#machine, transition.to)?.name ?? transition.to;
+
+    view.root.setAttribute('data-index', String(index));
+    view.root.classList.toggle('is-fallback', row.isFallback);
+    view.root.classList.toggle('is-dead', row.isDead);
+    view.root.classList.toggle('is-expanded', expanded);
+    view.root.classList.toggle('is-selected', this.#isSelectedTransition(transition.id));
+
+    if (row.isFallback) {
+      if (!hasIcon(view.order, 'fallback')) {
+        setIcon(view.order, this.#icons, 'fallback');
+      }
+      view.order.title = text.decision.fallbackTitle;
+    } else {
+      clearIcon(view.order);
+      view.order.textContent = String(row.order);
+      view.order.title = '';
+    }
+
+    view.outcome.textContent = outcome;
+    view.outcome.title = row.isFallback
+      ? text.decision.fallbackTitle
+      : text.transition.guardTitle({ guard: transition.guard });
+    view.target.textContent = text.decision.target({ name: targetName });
+    view.target.title = text.decision.targetTitle({ name: targetName });
+    view.flag.hidden = !row.isDead;
+    view.flag.textContent = row.isDead ? text.decision.dead : '';
+    view.flag.title = row.isDead ? text.decision.deadTitle : '';
+
+    view.summary.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    view.summary.setAttribute(
+      'aria-label',
+      text.decision.rowLabel({
+        outcome,
+        target: text.decision.target({ name: targetName }),
+        index: row.order,
+        total,
+        expanded,
+      }),
+    );
+    view.handle.disabled = this.#readOnly;
+    view.handle.setAttribute(
+      'aria-label',
+      text.decision.reorderLabel({ outcome, index: index + 1, total }),
+    );
+
+    view.panel.hidden = !expanded;
+    view.panel.setAttribute('aria-label', text.decision.fieldsLabel({ name: transition.name }));
+    this.#writeRowField(view.nameInput, transition.name, text.transition.nameLabel);
+    this.#writeRowField(view.guardInput, transition.guard, text.properties.guardLabel);
+    this.#writeRowField(
+      view.permissionInput,
+      transition.requiredPermission,
+      text.properties.fieldPermission,
+    );
+    view.removeButton.hidden = this.#readOnly;
+    for (const phase of SIDE_EFFECT_PHASES) {
+      const chip = view.chips.get(phase);
+      if (chip !== undefined) {
+        this.#updateChip(chip, { kind: 'transition', transitionId: transition.id, phase });
+      }
+    }
+  }
+
+  /**
+   * Writes a field of the open panel. A field the caret is in is left alone:
+   * every commit re-renders, and half typed text must survive its own edit.
+   */
+  #writeRowField(input: HTMLInputElement, value: string, label: string): void {
+    input.setAttribute('aria-label', label);
+    input.readOnly = this.#readOnly;
+    if (this.#shadow.activeElement !== input) {
+      input.value = value;
+    }
+  }
+
+  #toggleDecisionRow(transitionId: string): void {
+    this.#expandedRow = this.#expandedRow === transitionId ? undefined : transitionId;
+    this.#setSelection({ kind: 'transition', id: transitionId });
+    this.#render();
+  }
+
+  /** Opens a row and puts the caret in its name — a decision's rename gesture. */
+  #expandDecisionRow(transitionId: string): void {
+    this.#expandedRow = transitionId;
+    this.#render();
+    const view = this.#decisionRowView(transitionId);
+    view?.nameInput.focus();
+    view?.nameInput.select();
+  }
+
+  #decisionRowView(transitionId: string): DecisionRowView | undefined {
+    for (const entry of this.#cardViews.values()) {
+      if (entry.kind === 'decision') {
+        const row = entry.view.rows.get(transitionId);
+        if (row !== undefined) {
+          return row;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Moves one outcome. Every frame of a drag is transient, so the whole gesture
+   * folds into the single step {@link #endDecisionReorder} records on drop; a
+   * keyboard move is one step on its own.
+   */
+  #reorderDecision(key: string, from: number, to: number, transient: boolean): void {
+    if (this.#readOnly) {
+      return;
+    }
+    const group = this.#groupByKey(key);
+    if (group === undefined) {
+      return;
+    }
+    const rows = decisionRows(group);
+    const moved = rows[from]?.transition;
+    const target = rows[to]?.transition;
+    if (moved === undefined || target === undefined || moved.id === target.id) {
+      return;
+    }
+    const index = group.transitions.findIndex((candidate) => candidate.id === target.id);
+    this.#reordering = moved.id;
+    this.#commit(
+      moveDecisionRow(this.#machine, moved.id, index),
+      { kind: 'transition-reorder', transitionId: moved.id },
+      transient,
+    );
+    if (!transient) {
+      this.#reordering = undefined;
+    }
+  }
+
+  /** Files the drag that just ended as one undoable step. */
+  #endDecisionReorder(): void {
+    const transitionId = this.#reordering;
+    this.#reordering = undefined;
+    if (transitionId !== undefined) {
+      this.#commit(this.#machine, { kind: 'transition-reorder', transitionId }, false);
+    }
+  }
+
+  #onDecisionHandleKey(event: KeyboardEvent, transitionId: string): void {
+    if (!event.altKey || this.#readOnly) {
+      return;
+    }
+    const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+    if (delta === 0) {
+      return;
+    }
+    const group = this.#groupOf.get(transitionId);
+    if (group === undefined) {
+      return;
+    }
+    const rows = decisionRows(group);
+    const from = rows.findIndex((row) => row.transition.id === transitionId);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= rows.length) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    this.#reorderDecision(group.key, from, to, false);
   }
 
   /** How many siblings a transition fans against, and which one it is. */
@@ -2604,19 +3196,61 @@ export class StateMachineEditorElement extends HTMLElement {
     if (transition.labelOffset.x === 0 && transition.labelOffset.y === 0) {
       return auto;
     }
+    // Where the user dragged the card to: the automatic point plus their offset.
+    return this.#bendThrough(transition, {
+      x: auto.label.x + transition.labelOffset.x,
+      y: auto.label.y + transition.labelOffset.y,
+    });
+  }
+
+  /** The edge redrawn so its curve passes through a point the card holds. */
+  #bendThrough(transition: Transition, through: Point): EdgeGeometry {
     const sourceRect = this.#sourceRect(transition);
     const target = findState(this.#machine, transition.to);
     if (sourceRect === undefined || target === undefined) {
-      return auto;
+      return EMPTY_GEOMETRY;
     }
-    // Where the user dragged the card to: the automatic point plus their offset.
-    const through = {
-      x: auto.label.x + transition.labelOffset.x,
-      y: auto.label.y + transition.labelOffset.y,
-    };
     return transition.from === transition.to
       ? bendSelfEdgeThrough(sourceRect, this.#fanIndexOf(transition), through)
       : bendEdgeThrough(sourceRect, this.#rectFor(target), through);
+  }
+
+  /**
+   * Where the card standing for `group` sits.
+   *
+   * `labelOffset` is per edge and a decision has one card, so the group takes
+   * the first member's — and dragging writes that answer back to all of them,
+   * through {@link setDecisionLabelOffset}.
+   */
+  #cardPointFor(group: TransitionGroup): Point {
+    const leader = group.transitions[0];
+    return leader === undefined ? { x: 0, y: 0 } : this.#geometryFor(leader).label;
+  }
+
+  /**
+   * The curve one edge is drawn as. Every member of a decision is bent through
+   * the single card they share, so the lines meet at it and fan out from there
+   * to the states they land on.
+   */
+  #pathGeometryFor(transition: Transition): EdgeGeometry {
+    const group = this.#groupOf.get(transition.id);
+    if (group === undefined || !isDecision(group)) {
+      return this.#geometryFor(transition);
+    }
+    return this.#bendThrough(transition, this.#cardPointFor(group));
+  }
+
+  /** Rebuilds the group index. Called wherever the machine in force changes. */
+  #indexGroups(machine: StateMachine): void {
+    const groups = groupTransitions(machine);
+    const index = new Map<string, TransitionGroup>();
+    for (const group of groups) {
+      for (const transition of group.transitions) {
+        index.set(transition.id, group);
+      }
+    }
+    this.#groups = groups;
+    this.#groupOf = index;
   }
 
   /**
@@ -2625,8 +3259,7 @@ export class StateMachineEditorElement extends HTMLElement {
    * twice the card height to keep neighbours from covering each other.
    */
   #labelSpacing(): number {
-    const [view] = this.#transitionViews.values();
-    const height = view?.card.offsetHeight ?? 0;
+    const height = this.#anyCard()?.offsetHeight ?? 0;
     return Math.max((height + 16) * 2, FALLBACK_LABEL_SPACING);
   }
 
@@ -2859,7 +3492,7 @@ export class StateMachineEditorElement extends HTMLElement {
       if (offset !== undefined) {
         this.#drag = { ...drag, moved: true };
         this.#commit(
-          updateTransition(this.#machine, drag.transitionId, { labelOffset: offset }),
+          setDecisionLabelOffset(this.#machine, drag.transitionId, offset),
           { kind: 'transition-move', transitionId: drag.transitionId },
           true,
         );
@@ -2913,7 +3546,7 @@ export class StateMachineEditorElement extends HTMLElement {
       this.#endDrag();
       if (offset !== undefined) {
         this.#commit(
-          updateTransition(this.#machine, drag.transitionId, { labelOffset: offset }),
+          setDecisionLabelOffset(this.#machine, drag.transitionId, offset),
           { kind: 'transition-move', transitionId: drag.transitionId },
           false,
         );
@@ -3091,12 +3724,26 @@ export class StateMachineEditorElement extends HTMLElement {
     });
   }
 
+  /**
+   * Renaming an edge that belongs to a decision opens its row instead of
+   * swapping a label for an input: the name is a field of that panel, and the
+   * card's own headline is the action every row of it shares.
+   */
   #renameTransition(transitionId: string): void {
-    const view = this.#transitionViews.get(transitionId);
     const transition = findTransition(this.#machine, transitionId);
-    if (transition === undefined || view === undefined || this.#readOnly) {
+    if (transition === undefined || this.#readOnly) {
       return;
     }
+    const group = this.#groupOf.get(transitionId);
+    if (group !== undefined && isDecision(group)) {
+      this.#expandDecisionRow(transitionId);
+      return;
+    }
+    const entry = this.#cardViews.get(group?.key ?? '');
+    if (entry === undefined || entry.kind !== 'single') {
+      return;
+    }
+    const view = entry.view;
     this.#startRename({
       id: transitionId,
       label: view.name,

@@ -61,6 +61,10 @@ export interface EditorIcons {
   readonly dragHandle: Icon;
   /** Marks the button holding a side effect's JSON parameters. */
   readonly params: Icon;
+  /** Opens a row of a decision card in place, to edit the edge behind it. */
+  readonly expand: Icon;
+  /** Marks the unguarded row of a decision card — the outcome it falls back to. */
+  readonly fallback: Icon;
   /** Moves a transition earlier among its siblings. */
   readonly moveUp: Icon;
   /** Moves a transition later among its siblings. */
@@ -92,6 +96,8 @@ export const DEFAULT_ICONS: EditorIcons = {
   add: '+',
   dragHandle: '⠿',
   params: '{ }',
+  expand: '⌄',
+  fallback: '⌄',
   moveUp: '↑',
   moveDown: '↓',
 };

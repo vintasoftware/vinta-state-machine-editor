@@ -91,6 +91,8 @@ verbatim out of a static directory, use the single-file build instead — see
 | Rename | Tap the **✎** button in the card's rail (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
 | Edit properties | Press **⚙** in a state or transition card's rail, or call `openProperties(ref)` |
 | Reorder the edges leaving a state | Open a transition's **⚙** and use **↑** / **↓** under *Order* |
+| Reorder the outcomes of one action | Drag the **⠿** grip on a decision card's row, or focus it and press `Alt` + `↑`/`↓` |
+| Edit one outcome | Click its row on the decision card — name, guard, permission and side effects open in place |
 | Open a side effect list | Click any chip |
 | Reorder side effects | Drag the **⠿** handle in the dialog, or focus it and press `Alt` + `↑`/`↓` |
 | Turn a side effect off | Uncheck the box on its row in the dialog — it stays attached and configured |
@@ -322,7 +324,50 @@ they held in the array, so nothing else shifts and every other relative order su
 does through every other model helper, all of which rebuild with `map`/`filter`.
 
 The UI exposes it as **↑** / **↓** under *Order* in a transition's properties dialog, with a
-`2 of 3` readout naming the state the group leaves.
+`2 of 3` readout naming the state the group leaves — and, for the edges that share an action, as
+the rows of the decision card below.
+
+### Decisions: several edges, one action
+
+When two or more transitions share a `from` **and** a `trigger.id`, they are not several
+unrelated edges: they are one decision the engine resolves by trying each in turn and taking the
+first whose guard holds. The editor draws them as a single card.
+
+```text
+┌──────────────────────────────────────────────┐
+│ ⚡ finish                          4 outcomes │
+├──────────────────────────────────────────────┤
+│ 1  reason is timeout            →  Timed out │
+│ 2  failed == 0                  →  Completed │
+│ 3  succeeded > 0                →  Partial   │
+│ ──────────────────────────────────────────── │
+│ ⌄  else                         →  Failed    │
+└──────────────────────────────────────────────┘
+```
+
+- **Nothing is stored to make it work.** A group is derived from `from` and `trigger.id`;
+  `groupTransitions(machine)` reads them all, `findGroupOf(machine, id)` reads one.
+- **A group of one is the card this component has always drawn.** A graph that does not use the
+  feature looks exactly as it did.
+- **The row number is the evaluation order** — position among the group's members, which is
+  position in `transitions`.
+- **An edge with an empty guard is the fallback**, drawn as `else`, ruled off and pinned to the
+  bottom. Only the first one is reachable: anything evaluated after it is struck through and
+  marked *unreachable*, because an unguarded edge always matches.
+- **Rows reorder** by dragging the grip, or with `Alt` + `Arrow Up` / `Arrow Down` on it. One drag
+  is one undo step. `moveDecisionRow(machine, transitionId, index)` does the same on a plain
+  machine, and edges leaving the same state under a *different* action keep their slots.
+- **A row opens in place** onto that edge's name, guard, required permission, `before` / `after`
+  side effects, properties dialog and remove button.
+
+Reorders arrive as `transition-reorder`, and everything a row edits arrives as the change it
+always did (`transition-rename`, `transition-guard`, `transition-permission`, …).
+
+> **One card, one position.** `labelOffset` is stored per edge. The group takes the **first
+> member's**, and dragging the card writes that answer back to every member — so a host
+> reconciling the document should expect all the edges of a decision to carry the same
+> `labelOffset`. `setDecisionLabelOffset(machine, transitionId, offset)` does it on a plain
+> machine.
 
 ### Host-owned data
 
@@ -877,8 +922,10 @@ the JSON parameter fields.
 | `link` | → | The handle dragged from one card to another, and from the start bar |
 | `initial` / `final` | ▶ ◉ | The role pills on a state card |
 | `add` | + | Leads `Creation`, `Add side effect`, `Add item` and `Add field` |
-| `dragHandle` | ⠿ | The grip a side effect is reordered by |
+| `dragHandle` | ⠿ | The grip a side effect or a decision row is reordered by |
 | `params` | `{ }` | The button holding a side effect's JSON parameters |
+| `expand` | ⌄ | Opens one row of a decision card onto the edge behind it |
+| `fallback` | ⌄ | Marks the unguarded row of a decision card |
 | `moveUp` / `moveDown` | ↑ ↓ | Transition order, in the properties dialog |
 
 An icon that leads a label keeps that label: replacing `initial` turns `▶ Initial` into
@@ -1021,6 +1068,7 @@ import { DEFAULT_STRINGS, STRING_GROUPS } from 'vinta-state-machine-editor';
 | `color` | The six palette colours, keyed by the model value |
 | `rename` | The inline name editor and its two buttons |
 | `transition` | An edge card: tools, the trigger and guard lines |
+| `decision` | The card several edges under one action share, and its rows |
 | `startNode` | The bar every creation edge leaves from |
 | `source` | What to call a transition's source — including a name's quotation marks |
 | `chip` | The side effect chips on a card |

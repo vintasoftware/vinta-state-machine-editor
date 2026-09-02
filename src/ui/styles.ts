@@ -708,6 +708,174 @@ export const editorStyles: string = `
   .edge-card .hooks { padding: 6px 8px 8px; }
   .edge-card .hook { grid-template-columns: 46px 1fr; }
 
+  /*
+   * Several edges leaving one state under one action are one decision, so they
+   * share one card. It is wider than a lone edge's: every row carries a guard
+   * and the state it lands on, and eliding both to nothing tells nobody
+   * anything.
+   */
+  .edge-card--decision { width: 268px; }
+
+  .decision__action { flex: 1; min-width: 0; color: var(--sme-accent); }
+
+  .decision__count {
+    flex: none;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    color: var(--sme-text-muted);
+  }
+
+  .decision {
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+  }
+
+  .decision__row { position: relative; }
+
+  .decision__line {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px 2px 4px;
+    min-width: 0;
+  }
+
+  .decision__row.is-selected > .decision__line { background: var(--sme-accent-soft); }
+
+  /*
+   * The fallback is the outcome nothing else claimed, so it is ruled off from
+   * the guards above it rather than merely sorted below them.
+   */
+  .decision__row.is-fallback { border-top: 1px solid var(--sme-border); margin-top: 3px; padding-top: 3px; }
+
+  /* Unreachable: a row above matches everything, so this one is never consulted. */
+  .decision__row.is-dead .decision__outcome,
+  .decision__row.is-dead .decision__target,
+  .decision__row.is-dead .decision__order { opacity: 0.5; text-decoration: line-through; }
+
+  .decision__handle {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 20px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--sme-text-muted);
+    cursor: grab;
+  }
+
+  .decision__handle:hover:not(:disabled) { background: var(--sme-surface-muted); color: var(--sme-text); }
+  .decision__handle:disabled { cursor: default; opacity: 0.35; }
+  .decision.is-reordering .decision__handle { cursor: grabbing; }
+
+  .decision__order {
+    flex: none;
+    box-sizing: border-box;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 15px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--sme-text-muted);
+    background: var(--sme-surface);
+    box-shadow: inset 0 0 0 1px var(--sme-border);
+  }
+
+  .decision__summary {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 4px;
+    border-radius: 6px;
+    text-align: left;
+    font-size: 11px;
+  }
+
+  .decision__summary:hover { background: var(--sme-surface-muted); }
+
+  .decision__outcome {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--sme-text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .decision__row.is-fallback .decision__outcome {
+    font-family: var(--sme-font);
+    font-style: italic;
+  }
+
+  .decision__target {
+    flex: none;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .decision__flag {
+    flex: none;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 8.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--sme-danger);
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
+
+  /* The edge's own fields, opened in place so the row keeps its context. */
+  .decision__panel {
+    display: grid;
+    gap: 5px;
+    margin: 2px 8px 6px 22px;
+    padding: 7px 8px 8px;
+    border-radius: 8px;
+    background: var(--sme-surface-muted);
+  }
+
+  .decision__field { display: grid; gap: 2px; }
+
+  .decision__field-label {
+    font-size: 9.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sme-text-muted);
+  }
+
+  .decision__input {
+    min-width: 0;
+    font: inherit;
+    font-size: 11px;
+    color: inherit;
+    background: var(--sme-surface);
+    border: 1px solid var(--sme-border);
+    border-radius: 6px;
+    padding: 3px 6px;
+  }
+
+  .decision__input:read-only { opacity: 0.7; }
+  .decision__panel .hooks { padding: 2px 0 0; }
+  .decision__panel .hook { grid-template-columns: 40px 1fr; }
+
+  .decision__tools { display: flex; justify-content: flex-end; gap: 2px; }
+  .decision__remove:hover { color: var(--sme-danger); }
+
   .toolbar {
     position: absolute;
     top: 12px;
@@ -770,6 +938,10 @@ export const editorStyles: string = `
     .hook { grid-template-columns: 84px 1fr; gap: 10px; }
     .toolbar button { min-width: 40px; height: 40px; }
     .edge-card { width: 210px; }
+    .edge-card--decision { width: 300px; }
+    .decision__handle { width: 26px; height: 30px; font-size: 13px; }
+    .decision__summary { padding: 6px 4px; font-size: 12px; }
+    .decision__input { padding: 6px 8px; font-size: 12px; }
   }
 
   .empty-state {

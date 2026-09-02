@@ -25,6 +25,12 @@ export interface ReorderOptions {
   /** Selector matching the drag handle inside a row. */
   readonly handleSelector: string;
   readonly onReorder: (from: number, to: number) => void;
+  /**
+   * Called once when the gesture ends, whatever it moved. A list backed by a
+   * draft has nothing to do here; one backed by the document uses it to fold the
+   * whole drag into a single undoable step.
+   */
+  readonly onDrop?: (() => void) | undefined;
 }
 
 function readIndex(element: Element): number | undefined {
@@ -116,5 +122,6 @@ export class ReorderController {
     doc.removeEventListener('pointermove', this.#onPointerMove);
     doc.removeEventListener('pointerup', this.#onPointerUp);
     doc.removeEventListener('pointercancel', this.#onPointerUp);
+    this.#options.onDrop?.();
   }
 }

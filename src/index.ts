@@ -56,6 +56,16 @@ export {
   duplicateTransition,
 } from './model/clipboard.js';
 export { StateMachineError } from './model/errors.js';
+export type { DecisionRow, TransitionGroup } from './model/groups.js';
+export {
+  decisionRows,
+  findGroupOf,
+  groupKeyOf,
+  groupTransitions,
+  isDecision,
+  moveDecisionRow,
+  setDecisionLabelOffset,
+} from './model/groups.js';
 export type { History, HistoryEntry, HistoryStep } from './model/history.js';
 export {
   canRedo,

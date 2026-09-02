@@ -119,6 +119,43 @@ export interface EditorStrings {
     readonly guardTitle: (params: { readonly guard: string }) => string;
   };
 
+  /**
+   * The card several edges leaving one state under one action are drawn as.
+   * They are one decision with several outcomes, tried top to bottom.
+   */
+  readonly decision: {
+    /** How many outcomes the action can land on. */
+    readonly outcomes: (params: { readonly count: number }) => string;
+    /** Accessible name of the whole card. */
+    readonly label: (params: { readonly action: string; readonly count: number }) => string;
+    /** The unguarded row, which matches whatever the guards above did not. */
+    readonly fallback: string;
+    readonly fallbackTitle: string;
+    /** Marks a row the engine can never reach, because a fallback precedes it. */
+    readonly dead: string;
+    readonly deadTitle: string;
+    /** Where one row lands, drawn after its guard. */
+    readonly target: (params: { readonly name: string }) => string;
+    readonly targetTitle: (params: { readonly name: string }) => string;
+    /** The row's own control, which opens the edge's fields underneath it. */
+    readonly rowLabel: (params: {
+      readonly outcome: string;
+      readonly target: string;
+      readonly index: number;
+      readonly total: number;
+      readonly expanded: boolean;
+    }) => string;
+    readonly reorderLabel: (params: {
+      readonly outcome: string;
+      readonly index: number;
+      readonly total: number;
+    }) => string;
+    readonly reorderTitle: string;
+    /** The panel a row opens, naming the edge it edits. */
+    readonly fieldsLabel: (params: { readonly name: string }) => string;
+    readonly fieldName: string;
+  };
+
   /** The UML initial pseudostate every creation transition leaves from. */
   readonly startNode: {
     /** Written down the bar, so nobody has to guess what it is. */
@@ -399,6 +436,25 @@ export const DEFAULT_STRINGS: EditorStrings = {
     guardTitle: ({ guard }) => `Guard: ${guard}`,
   },
 
+  decision: {
+    outcomes: ({ count }) => `${count} outcome${count === 1 ? '' : 's'}`,
+    label: ({ action, count }) =>
+      `${action}: ${count} outcome${count === 1 ? '' : 's'}, tried in order.`,
+    fallback: 'else',
+    fallbackTitle: 'No guard — runs when none of the rows above matched',
+    dead: 'unreachable',
+    deadTitle: 'Never reached: a row above has no guard, so it always matches first',
+    target: ({ name }) => `→ ${name}`,
+    targetTitle: ({ name }) => `Goes to ${name}`,
+    rowLabel: ({ outcome, target, index, total, expanded }) =>
+      `${expanded ? 'Hide' : 'Edit'} outcome ${index} of ${total}: ${outcome} ${target}`,
+    reorderLabel: ({ outcome, index, total }) =>
+      `Reorder ${outcome}. Position ${index} of ${total}. Use Alt with arrow keys to move.`,
+    reorderTitle: 'Drag to reorder, or press Alt + Arrow Up/Down',
+    fieldsLabel: ({ name }) => `Fields of “${name}”`,
+    fieldName: 'Name',
+  },
+
   startNode: {
     label: 'Create',
     title: 'Every transition leaving here creates a record',
@@ -627,6 +683,7 @@ export function mergeStrings(overrides: StringOverrides | undefined): EditorStri
     color: mergeGroup(DEFAULT_STRINGS.color, overrides.color),
     rename: mergeGroup(DEFAULT_STRINGS.rename, overrides.rename),
     transition: mergeGroup(DEFAULT_STRINGS.transition, overrides.transition),
+    decision: mergeGroup(DEFAULT_STRINGS.decision, overrides.decision),
     startNode: mergeGroup(DEFAULT_STRINGS.startNode, overrides.startNode),
     source: mergeGroup(DEFAULT_STRINGS.source, overrides.source),
     chip: mergeGroup(DEFAULT_STRINGS.chip, overrides.chip),
