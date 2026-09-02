@@ -228,6 +228,21 @@ export interface EditorStrings {
     readonly countsNone: string;
   };
 
+  /**
+   * Advisory stripes on the card that has the problem. The backend checks all
+   * of these again at publish time; these say *where*, while the person who
+   * caused one is still looking at it. None of them ever blocks an edit.
+   */
+  readonly issue: {
+    /** Accessible name of the stripe list on a card. */
+    readonly label: string;
+    readonly noFallback: string;
+    readonly noJoinEdge: string;
+    readonly terminalHasExit: string;
+    /** A guard the host's own validator refused, carrying its message. */
+    readonly guard: (params: { readonly message: string }) => string;
+  };
+
   /** The UML initial pseudostate every creation transition leaves from. */
   readonly startNode: {
     /** Written down the bar, so nobody has to guess what it is. */
@@ -594,6 +609,14 @@ export const DEFAULT_STRINGS: EditorStrings = {
     countsNone: 'Counts towards nothing',
   },
 
+  issue: {
+    label: 'Problems with this card',
+    noFallback: 'No fallback — if every guard fails the record is stuck here.',
+    noJoinEdge: 'Nothing leaves this state when the work finishes.',
+    terminalHasExit: 'Terminal states cannot be left, so these edges never fire.',
+    guard: ({ message }) => message,
+  },
+
   startNode: {
     label: 'Create',
     title: 'Every transition leaving here creates a record',
@@ -824,6 +847,7 @@ export function mergeStrings(overrides: StringOverrides | undefined): EditorStri
     rename: mergeGroup(DEFAULT_STRINGS.rename, overrides.rename),
     transition: mergeGroup(DEFAULT_STRINGS.transition, overrides.transition),
     decision: mergeGroup(DEFAULT_STRINGS.decision, overrides.decision),
+    issue: mergeGroup(DEFAULT_STRINGS.issue, overrides.issue),
     waiting: mergeGroup(DEFAULT_STRINGS.waiting, overrides.waiting),
     startNode: mergeGroup(DEFAULT_STRINGS.startNode, overrides.startNode),
     source: mergeGroup(DEFAULT_STRINGS.source, overrides.source),

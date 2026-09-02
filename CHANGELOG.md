@@ -153,6 +153,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `fanOut` icon (`↗`).
 
+- **Inline validation stripes.** The backend already refuses these at publish time; the stripes
+  say *where*, on the card that has the problem, while the person who caused it is still looking
+  at it:
+
+  | Where | Stripe |
+  | --- | --- |
+  | A decision card with no unguarded row | no fallback — if every guard fails the record is stuck here |
+  | A waiting state with no edge under its `join_action` | nothing leaves this state when the work finishes |
+  | A terminal state with an outgoing edge | terminal states cannot be left, so these edges never fire |
+  | A guard the host's `guardValidator` refuses | the guard's own error, on the card and on the decision row |
+
+  They are **advisory**: nothing here blocks an edit, refuses a document or rewrites anything, and
+  a graph is allowed to be halfway built.
+
+- Guard verdicts are cached by the expression itself, so a canvas full of cards asks the
+  `guardValidator` once per distinct guard rather than once per card per frame. A validator that
+  throws says nothing rather than putting its own crash on a card. Assigning a new validator
+  clears the cache.
+
+- New pure helpers `stateIssues(machine, state)` and `decisionIssues(group)`, a new `issue`
+  string group, and a `warning` icon (`⚠`).
+
 ### Changed
 
 - **The creation button moved out of the toggles row onto a line of its own**, and says what it

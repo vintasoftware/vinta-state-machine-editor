@@ -156,6 +156,8 @@ export {
   parseSideEffectDefinitions,
   parseStateMachine,
 } from './model/parse.js';
+export type { DecisionIssue, StateIssue } from './model/validation.js';
+export { decisionIssues, stateIssues } from './model/validation.js';
 export type {
   CountsAs,
   CountsAsHalf,

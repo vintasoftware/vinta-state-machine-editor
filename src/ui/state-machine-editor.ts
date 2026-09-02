@@ -99,6 +99,7 @@ import {
   updateTransition,
 } from '../model/machine.js';
 import { assertStateMachine } from '../model/parse.js';
+import { decisionIssues, type StateIssue, stateIssues } from '../model/validation.js';
 import {
   type CountsAsStatus,
   countsAsStatus,
@@ -112,6 +113,7 @@ import {
 import type {
   ActionProvider,
   ElementRef,
+  GuardValidation,
   GuardValidator,
   MachineChange,
   Point,
@@ -275,6 +277,8 @@ interface StateView {
   readonly bandRows: ReadonlyMap<BandField, BandRowView>;
   /** Inline complaint about a report pair that arrived with one half missing. */
   readonly bandError: HTMLElement;
+  /** Advisory stripes: what a publish would refuse, said where it happened. */
+  readonly stripes: HTMLElement;
   readonly waitingButton: HTMLButtonElement;
   readonly colorButton: HTMLButtonElement;
   readonly palette: HTMLElement;
@@ -312,6 +316,8 @@ interface TransitionView {
   readonly trigger: HTMLElement;
   readonly guard: HTMLElement;
   readonly chips: ReadonlyMap<SideEffectPhase, ChipView>;
+  /** Whatever the host's guard validator refuses, said on the card itself. */
+  readonly stripes: HTMLElement;
 }
 
 /** One outcome of a decision card, with the panel it opens underneath it. */
@@ -332,6 +338,8 @@ interface DecisionRowView {
   readonly chips: ReadonlyMap<SideEffectPhase, ChipView>;
   readonly propertiesButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
+  /** Whatever the host's guard validator refuses, said under the row itself. */
+  readonly stripes: HTMLElement;
 }
 
 /** Several edges leaving one state under one action, drawn as one card. */
@@ -343,6 +351,8 @@ interface DecisionView {
   readonly list: HTMLElement;
   readonly reorder: ReorderController;
   readonly rows: Map<string, DecisionRowView>;
+  /** Advisory stripes about the decision as a whole, chiefly a missing fallback. */
+  readonly stripes: HTMLElement;
 }
 
 /**
@@ -478,6 +488,16 @@ function createChip(parent: ParentNode): ChipView {
   return { button, label: createElement('span', { className: 'chip__label', parent: button }) };
 }
 
+/**
+ * A list of advisory stripes, appended to `parent`. Empty and hidden until a
+ * card has something to complain about.
+ */
+function createStripes(parent: ParentNode): HTMLElement {
+  const list = createElement('div', { className: 'stripes', parent, attrs: { role: 'list' } });
+  list.hidden = true;
+  return list;
+}
+
 function containsPoint(rect: Rect, point: Point): boolean {
   return (
     point.x >= rect.x &&
@@ -545,6 +565,8 @@ export class StateMachineEditorElement extends HTMLElement {
   #provider: SideEffectProvider | undefined;
   #actionProvider: ActionProvider | undefined;
   #guardValidator: GuardValidator | undefined;
+  /** What the host's validator said about each guard, keyed by the expression. */
+  readonly #guardChecks = new Map<string, GuardValidation | 'pending'>();
   /** The start bar, present only while the machine has a creation edge. */
   #startNode: StartNodeView | undefined;
   /** Slot each creation edge leaves the bar from. Rebuilt on every render. */
@@ -826,6 +848,9 @@ export class StateMachineEditorElement extends HTMLElement {
 
   set guardValidator(validator: GuardValidator | undefined) {
     this.#guardValidator = validator;
+    // The verdicts belong to the validator that gave them.
+    this.#guardChecks.clear();
+    this.#render();
   }
 
   get readOnly(): boolean {
@@ -2359,6 +2384,8 @@ export class StateMachineEditorElement extends HTMLElement {
       swatches.set(color, option);
     }
 
+    const stripes = createStripes(root);
+
     const roles = createElement('div', { className: 'node__roles', parent: root });
     const roleButtons = new Map<StateRole, HTMLButtonElement>();
     for (const role of ['initial', 'final'] as const) {
@@ -2465,6 +2492,7 @@ export class StateMachineEditorElement extends HTMLElement {
       band,
       bandRows,
       bandError,
+      stripes,
       waitingButton,
       colorButton,
       palette,
@@ -2514,6 +2542,82 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#updateStateRoles(view, state);
     this.#updateStateColor(view, state);
     this.#updateWaitingBand(view, state);
+    const text = this.#strings.issue;
+    const named: Readonly<Record<StateIssue, string>> = {
+      'no-join-edge': text.noJoinEdge,
+      'terminal-has-exit': text.terminalHasExit,
+    };
+    this.#writeStripes(
+      view.stripes,
+      stateIssues(this.#machine, state).map((issue) => named[issue]),
+    );
+  }
+
+  /**
+   * Rewrites a card's stripes, and only when they have actually changed: the
+   * render loop runs on every frame of a drag, and rebuilding four nodes per
+   * card per frame to say the same thing would be work for nothing.
+   */
+  #writeStripes(list: HTMLElement, messages: readonly string[]): void {
+    const written = messages.join('\n');
+    list.hidden = messages.length === 0;
+    if (list.getAttribute('data-messages') === written) {
+      return;
+    }
+    list.setAttribute('data-messages', written);
+    list.setAttribute('aria-label', this.#strings.issue.label);
+    list.replaceChildren();
+    for (const message of messages) {
+      const stripe = createElement('p', {
+        className: 'stripe',
+        parent: list,
+        attrs: { role: 'listitem' },
+      });
+      setIcon(
+        createElement('span', { className: 'stripe__icon', parent: stripe }),
+        this.#icons,
+        'warning',
+      );
+      createElement('span', { className: 'stripe__text', parent: stripe, text: message });
+    }
+  }
+
+  /**
+   * What the host's validator says about a guard, cached by the expression
+   * itself so a canvas full of cards asks once per distinct guard.
+   *
+   * The first sighting of an expression starts the check and reads as clean;
+   * the verdict lands later and redraws. Without a validator, guards are never
+   * checked — the expression language belongs to the host.
+   */
+  #guardErrorsFor(guard: string): readonly string[] {
+    const validator = this.#guardValidator;
+    if (validator === undefined || guard.trim().length === 0) {
+      return [];
+    }
+    const found = this.#guardChecks.get(guard);
+    if (found === undefined) {
+      this.#guardChecks.set(guard, 'pending');
+      void this.#checkGuard(validator, guard);
+      return [];
+    }
+    return found === 'pending' || found.ok ? [] : found.errors;
+  }
+
+  async #checkGuard(validator: GuardValidator, guard: string): Promise<void> {
+    let verdict: GuardValidation = { ok: true };
+    try {
+      verdict = await validator(guard);
+    } catch {
+      // A validator that threw has said nothing about the guard, and a stripe
+      // reading like the host's own error message would be a lie.
+      verdict = { ok: true };
+    }
+    if (this.#guardValidator !== validator) {
+      return;
+    }
+    this.#guardChecks.set(guard, verdict);
+    this.#render();
   }
 
   /**
@@ -3019,6 +3123,8 @@ export class StateMachineEditorElement extends HTMLElement {
       });
     });
 
+    const stripes = createStripes(card);
+
     return {
       card,
       name,
@@ -3030,6 +3136,7 @@ export class StateMachineEditorElement extends HTMLElement {
       trigger,
       guard,
       chips,
+      stripes,
     };
   }
 
@@ -3060,6 +3167,13 @@ export class StateMachineEditorElement extends HTMLElement {
         this.#updateChip(chip, { kind: 'transition', transitionId: transition.id, phase });
       }
     }
+    this.#writeStripes(view.stripes, this.#guardMessages(transition.guard));
+  }
+
+  /** The host's complaints about one guard, worded through the string set. */
+  #guardMessages(guard: string): readonly string[] {
+    const text = this.#strings.issue;
+    return this.#guardErrorsFor(guard).map((message) => text.guard({ message }));
   }
 
   #updateTransitionMeta(view: TransitionView, transition: Transition): void {
@@ -3121,7 +3235,9 @@ export class StateMachineEditorElement extends HTMLElement {
       }
     });
 
-    return { card, header, action, count, list, reorder, rows: new Map() };
+    const stripes = createStripes(card);
+
+    return { card, header, action, count, list, reorder, rows: new Map(), stripes };
   }
 
   #groupByKey(key: string): TransitionGroup | undefined {
@@ -3162,6 +3278,10 @@ export class StateMachineEditorElement extends HTMLElement {
       }
     }
     this.#orderDecisionRows(view, rows);
+    this.#writeStripes(
+      view.stripes,
+      decisionIssues(group).map(() => this.#strings.issue.noFallback),
+    );
   }
 
   /**
@@ -3309,6 +3429,8 @@ export class StateMachineEditorElement extends HTMLElement {
       });
     });
 
+    const stripes = createStripes(root);
+
     root.addEventListener('pointerdown', (event) => {
       event.stopPropagation();
       this.#setSelection({ kind: 'transition', id: transitionId });
@@ -3316,6 +3438,7 @@ export class StateMachineEditorElement extends HTMLElement {
 
     return {
       root,
+      stripes,
       handle,
       order,
       summary,
@@ -3418,6 +3541,7 @@ export class StateMachineEditorElement extends HTMLElement {
         this.#updateChip(chip, { kind: 'transition', transitionId: transition.id, phase });
       }
     }
+    this.#writeStripes(view.stripes, this.#guardMessages(transition.guard));
   }
 
   /**

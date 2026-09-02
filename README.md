@@ -497,6 +497,33 @@ draws it as one line of the same band:
 `countsAsStatus(state, isFinal)` is the pure helper behind it, and the outcome is editable under
 *Counts as* in the state's properties dialog.
 
+### Inline validation
+
+The backend refuses an invalid graph when a version is published. It has to — nothing stops a
+document arriving by another route — so these stripes are not a second gate; they say **where**,
+on the card that has the problem, while the person who caused it is still looking at it.
+
+| Where | Stripe |
+| --- | --- |
+| A decision card with no unguarded row | *No fallback — if every guard fails the record is stuck here.* |
+| A waiting state with no edge under its `join_action` | *Nothing leaves this state when the work finishes.* |
+| A terminal state with an outgoing edge | *Terminal states cannot be left, so these edges never fire.* |
+| A guard the host's `guardValidator` refuses | the validator's own message, on the card and on the decision row |
+
+They are **advisory**. Nothing here blocks an edit, refuses a document or rewrites anything: a
+graph is allowed to be halfway built, and a card that is complaining still renames, moves and
+deletes exactly as it did.
+
+```js
+stateIssues(machine, state); // ['no-join-edge']
+decisionIssues(group); // ['no-fallback']
+```
+
+Guard verdicts are cached by the expression itself, so a canvas full of cards asks the
+`guardValidator` once per distinct guard rather than once per card per frame; the first sighting
+reads as clean and the verdict redraws when it lands. A validator that throws says nothing — its
+own crash is not a fact about the guard. Assigning a new validator clears the cache and redraws.
+
 ### Host-owned data
 
 `StateMachine`, `StateNode`, `Transition` and `SideEffect` each carry a `data: JsonObject` that
@@ -1059,6 +1086,7 @@ the JSON parameter fields.
 | `initial` / `final` | ▶ ◉ | The role pills on a state card |
 | `waiting` | ⑂ | The role pill marking a state that waits for a batch |
 | `fanOut` | ↗ | The link following a fan-out into the child machine |
+| `warning` | ⚠ | Leads an advisory stripe on a card |
 | `add` | + | Leads `Creation`, `Add side effect`, `Add item` and `Add field` |
 | `dragHandle` | ⠿ | The grip a side effect or a decision row is reordered by |
 | `params` | `{ }` | The button holding a side effect's JSON parameters |
@@ -1207,6 +1235,7 @@ import { DEFAULT_STRINGS, STRING_GROUPS } from 'vinta-state-machine-editor';
 | `rename` | The inline name editor and its two buttons |
 | `transition` | An edge card: tools, the trigger and guard lines |
 | `decision` | The card several edges under one action share, and its rows |
+| `issue` | The advisory stripes on a card |
 | `waiting` | The batch a state waits on: the toggle, the band, the dialog's fields |
 | `startNode` | The bar every creation edge leaves from |
 | `source` | What to call a transition's source — including a name's quotation marks |

@@ -401,6 +401,35 @@ export const editorStyles: string = `
   .band__row--join .band__value { color: var(--sme-accent); }
   .band__row--counts.is-broken .band__value { color: var(--sme-danger); }
 
+  /*
+   * Advisory, never blocking: a warning stripe rules off the bottom of the card
+   * that has the problem, saying what a publish would refuse and no more. A
+   * graph is allowed to be halfway built, so nothing here stops an edit.
+   */
+  .stripes {
+    display: grid;
+    gap: 3px;
+    padding: 6px 10px;
+    border-top: 1px solid var(--sme-border);
+    background: color-mix(in srgb, var(--sme-danger) 10%, transparent);
+  }
+
+  .stripe {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.35;
+    color: var(--sme-danger);
+  }
+
+  .stripe__icon { flex: none; font-size: 10px; }
+  .stripe__text { min-width: 0; }
+
+  .edge-card > .stripes { padding: 5px 8px; }
+  .decision__row > .stripes { padding: 2px 8px 5px 22px; border-top: 0; background: none; }
+
   .band__error {
     margin: 3px 0 0;
     font-size: 10px;

@@ -59,6 +59,8 @@ export interface EditorIcons {
   readonly waiting: Icon;
   /** Follows a fan-out into the machine the child records are governed by. */
   readonly fanOut: Icon;
+  /** Leads an advisory stripe naming something wrong with a card. */
+  readonly warning: Icon;
   /** Leads a label that adds something, e.g. `+ Creation`. */
   readonly add: Icon;
   /** The grip a side effect is dragged by to reorder it. */
@@ -99,6 +101,7 @@ export const DEFAULT_ICONS: EditorIcons = {
   final: '◉',
   waiting: '⑂',
   fanOut: '↗',
+  warning: '⚠',
   add: '+',
   dragHandle: '⠿',
   params: '{ }',
