@@ -20,6 +20,12 @@ import {
   type IconOverrides,
   mergeIcons,
 } from './icons.js';
+import {
+  DEFAULT_STRINGS,
+  type EditorStrings,
+  mergeStrings,
+  type StringOverrides,
+} from './strings.js';
 
 export interface JsonFormOptions {
   /** Element the form is rendered into. Its contents are replaced. */
@@ -27,20 +33,11 @@ export interface JsonFormOptions {
   readonly onChange: (value: JsonObject) => void;
   /** Glyphs for the add and remove buttons. Anything left out keeps its default. */
   readonly icons?: IconOverrides | undefined;
+  /** Wording of the form's labels. Anything left out stays in English. */
+  readonly strings?: StringOverrides | undefined;
 }
 
 const INDENT_PX = 14;
-
-function summaryOf(value: JsonValue): string {
-  if (isJsonArray(value)) {
-    return value.length === 1 ? '1 item' : `${value.length} items`;
-  }
-  if (isJsonObject(value)) {
-    const count = Object.keys(value).length;
-    return count === 1 ? '1 field' : `${count} fields`;
-  }
-  return '';
-}
 
 /**
  * Nested form over an arbitrary JSON object: every entry exposes its key, its
@@ -52,11 +49,35 @@ export class JsonFormEditor {
   #value: JsonObject = {};
   #readOnly = false;
   #icons: EditorIcons = DEFAULT_ICONS;
+  #strings: EditorStrings = DEFAULT_STRINGS;
 
   constructor(options: JsonFormOptions) {
     this.#container = options.container;
     this.#onChange = options.onChange;
     this.#icons = mergeIcons(options.icons);
+    this.#strings = mergeStrings(options.strings);
+  }
+
+  /** The wording in force. Assigning a partial set leaves the rest in English. */
+  get strings(): EditorStrings {
+    return this.#strings;
+  }
+
+  set strings(overrides: StringOverrides | undefined) {
+    this.#strings = mergeStrings(overrides);
+    this.#render();
+  }
+
+  /** How many entries an object or array holds, for the row that collapses it. */
+  #summaryOf(value: JsonValue): string {
+    const json = this.#strings.json;
+    if (isJsonArray(value)) {
+      return json.itemCount({ count: value.length });
+    }
+    if (isJsonObject(value)) {
+      return json.fieldCount({ count: Object.keys(value).length });
+    }
+    return '';
   }
 
   /** The glyphs in force. Assigning a partial set leaves the rest at their defaults. */
@@ -109,7 +130,7 @@ export class JsonFormEditor {
 
     if (this.#readOnly) {
       if (depth === 0 && Object.keys(this.#value).length === 0) {
-        createElement('p', { className: 'jf-empty', parent, text: 'No parameters.' });
+        createElement('p', { className: 'jf-empty', parent, text: this.#strings.json.empty });
       }
       return;
     }
@@ -117,7 +138,7 @@ export class JsonFormEditor {
     const add = createIconButton(this.#icons, 'add', {
       className: 'jf-add',
       parent,
-      label: isJsonArray(value) ? 'Add item' : 'Add field',
+      label: isJsonArray(value) ? this.#strings.json.addItem : this.#strings.json.addField,
     });
     add.style.marginLeft = `${depth * INDENT_PX}px`;
     add.addEventListener('click', (event) => {
@@ -141,7 +162,7 @@ export class JsonFormEditor {
       const key = createElement('input', {
         className: 'jf-key',
         parent: row,
-        attrs: { 'aria-label': `Name of parameter ${label}` },
+        attrs: { 'aria-label': this.#strings.json.keyLabel({ label }) },
       });
       key.value = label;
       key.disabled = this.#readOnly;
@@ -152,14 +173,18 @@ export class JsonFormEditor {
         );
       });
     } else {
-      createElement('span', { className: 'jf-index', parent: row, text: `${label}:` });
+      createElement('span', {
+        className: 'jf-index',
+        parent: row,
+        text: this.#strings.json.indexLabel({ label }),
+      });
     }
 
     const type = jsonTypeOf(value);
     const typeSelect = createElement('select', {
       className: 'jf-type',
       parent: row,
-      attrs: { 'aria-label': `Type of ${label}` },
+      attrs: { 'aria-label': this.#strings.json.typeLabel({ label }) },
     });
     for (const option of JSON_TYPES) {
       const element = createElement('option', { text: option, parent: typeSelect });
@@ -180,7 +205,7 @@ export class JsonFormEditor {
       const remove = createIconButton(this.#icons, 'remove', {
         className: 'jf-remove',
         parent: row,
-        attrs: { 'aria-label': `Remove ${label}` },
+        attrs: { 'aria-label': this.#strings.json.removeLabel({ label }) },
       });
       remove.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -201,18 +226,26 @@ export class JsonFormEditor {
     type: JsonType,
   ): void {
     if (type === 'object' || type === 'array') {
-      createElement('span', { className: 'jf-summary', parent: row, text: summaryOf(value) });
+      createElement('span', {
+        className: 'jf-summary',
+        parent: row,
+        text: this.#summaryOf(value),
+      });
       return;
     }
     if (type === 'null') {
-      createElement('span', { className: 'jf-null', parent: row, text: 'null' });
+      createElement('span', {
+        className: 'jf-null',
+        parent: row,
+        text: this.#strings.json.nullValue,
+      });
       return;
     }
     if (type === 'boolean') {
       const select = createElement('select', {
         className: 'jf-value',
         parent: row,
-        attrs: { 'aria-label': `Value of ${label}` },
+        attrs: { 'aria-label': this.#strings.json.valueLabel({ label }) },
       });
       for (const option of ['true', 'false']) {
         const element = createElement('option', { text: option, parent: select });
@@ -229,7 +262,10 @@ export class JsonFormEditor {
     const input = createElement('input', {
       className: 'jf-value',
       parent: row,
-      attrs: { 'aria-label': `Value of ${label}`, type: type === 'number' ? 'number' : 'text' },
+      attrs: {
+        'aria-label': this.#strings.json.valueLabel({ label }),
+        type: type === 'number' ? 'number' : 'text',
+      },
     });
     input.value = typeof value === 'number' ? String(value) : String(value);
     input.disabled = this.#readOnly;

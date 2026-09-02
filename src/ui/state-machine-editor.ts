@@ -134,11 +134,16 @@ import type { OrderContext, PropertiesDraft } from './properties-dialog.js';
 import { PropertiesDialogElement } from './properties-dialog.js';
 import {
   countWithParams,
-  EMPTY_SIDE_EFFECTS_LABEL,
   formatSideEffectHead,
   formatSideEffectTitle,
 } from './side-effect-summary.js';
 import { SideEffectsDialogElement } from './side-effects-dialog.js';
+import {
+  DEFAULT_STRINGS,
+  type EditorStrings,
+  mergeStrings,
+  type StringOverrides,
+} from './strings.js';
 import { editorStyles } from './styles.js';
 import {
   applyTheme,
@@ -153,18 +158,19 @@ const FALLBACK_NODE_WIDTH = 248;
 const FALLBACK_NODE_HEIGHT = 152;
 const ZOOM_STEP = 1.25;
 const GRID_SIZE = 24;
-/** What an empty side effect chip offers, after its `add` icon. */
-const ADD_SIDE_EFFECT_LABEL = 'Add side effect';
 /**
  * What the theme toggle shows, keyed by the scheme in force. Both the icon and
  * the label name the scheme the press *switches to*, which is the thing the
  * user is deciding about.
  */
 const THEME_TOGGLE: Readonly<
-  Record<EditorTheme, { readonly icon: IconName; readonly label: string }>
+  Record<
+    EditorTheme,
+    { readonly icon: IconName; readonly label: (strings: EditorStrings) => string }
+  >
 > = {
-  dark: { icon: 'lightTheme', label: 'Switch to the light theme' },
-  light: { icon: 'darkTheme', label: 'Switch to the dark theme' },
+  dark: { icon: 'lightTheme', label: (strings) => strings.toolbar.themeLight },
+  light: { icon: 'darkTheme', label: (strings) => strings.toolbar.themeDark },
 };
 /** How long after the last viewport change the canvas is considered settled. */
 const TRANSFORM_SETTLE_MS = 180;
@@ -180,8 +186,6 @@ const START_BAR_WIDTH = 34;
 const START_BAR_SLOT = 38;
 /** Floor on the bar's height. Tall enough for the label to read, whatever it holds. */
 const START_BAR_MIN_HEIGHT = 120;
-/** Written down the bar, so nobody has to guess what the dot-like thing is. */
-const START_BAR_LABEL = 'Create';
 /** Clear space demanded between a creation card and both the bar and its target. */
 const CREATION_CARD_MARGIN = 56;
 /** Card size assumed before the DOM has been measured. */
@@ -189,8 +193,6 @@ const FALLBACK_LABEL_WIDTH = 186;
 const FALLBACK_LABEL_HEIGHT = 72;
 /** How far the search for a free spot may wander before giving up. */
 const PLACEMENT_RINGS = 6;
-/** Base name for a creation transition; made unique across the whole machine. */
-const CREATION_NAME = 'create';
 /** How far a pasted state starts out from the one it was copied from. */
 const PASTE_OFFSET = 24;
 
@@ -413,6 +415,10 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #pasteButton: HTMLButtonElement;
   readonly #organizeButton: HTMLButtonElement;
   readonly #themeButton: HTMLButtonElement;
+  readonly #toolbar: HTMLElement;
+  readonly #zoomOutButton: HTMLButtonElement;
+  readonly #zoomInButton: HTMLButtonElement;
+  readonly #fitButton: HTMLButtonElement;
   readonly #stateViews = new Map<string, StateView>();
   readonly #transitionViews = new Map<string, TransitionView>();
 
@@ -440,6 +446,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #readOnly = false;
   #theme: EditorTheme = DEFAULT_THEME;
   #icons: EditorIcons = DEFAULT_ICONS;
+  #strings: EditorStrings = DEFAULT_STRINGS;
   #drag: DragState | undefined;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
   /** State whose colour palette is open, if any. */
@@ -500,70 +507,44 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#emptyState = createElement('div', {
       className: 'empty-state',
       parent: this.#shadow,
-      text: 'No states yet — use “Add state” to start.',
     });
 
-    const toolbar = createElement('div', {
+    // The toolbar is built once, here. Its wording is written by
+    // `#applyStrings`, so a set assigned later reaches it without a rebuild.
+    this.#toolbar = createElement('div', {
       className: 'toolbar',
       parent: this.#shadow,
-      attrs: { part: 'toolbar', role: 'toolbar', 'aria-label': 'Editor tools' },
+      attrs: { part: 'toolbar', role: 'toolbar' },
     });
     this.#addStateButton = createButton({
       className: 'toolbar__add',
-      parent: toolbar,
-      text: 'Add state',
+      parent: this.#toolbar,
     });
     this.#undoButton = createIconButton(this.#icons, 'undo', {
       className: 'toolbar__history',
-      parent: toolbar,
-      attrs: { 'aria-label': 'Undo' },
+      parent: this.#toolbar,
     });
     this.#redoButton = createIconButton(this.#icons, 'redo', {
       className: 'toolbar__history',
-      parent: toolbar,
-      attrs: { 'aria-label': 'Redo' },
+      parent: this.#toolbar,
     });
-    this.#copyButton = createButton({
-      className: 'toolbar__copy',
-      parent: toolbar,
-      text: 'Copy',
-    });
-    this.#pasteButton = createButton({
-      className: 'toolbar__paste',
-      parent: toolbar,
-      text: 'Paste',
-    });
+    this.#copyButton = createButton({ className: 'toolbar__copy', parent: this.#toolbar });
+    this.#pasteButton = createButton({ className: 'toolbar__paste', parent: this.#toolbar });
     this.#organizeButton = createButton({
       className: 'toolbar__organize',
-      parent: toolbar,
-      text: 'Organize',
-      attrs: { 'aria-label': 'Organize layout' },
+      parent: this.#toolbar,
     });
-    const zoomOut = createIconButton(this.#icons, 'zoomOut', {
-      parent: toolbar,
-      attrs: { 'aria-label': 'Zoom out' },
-    });
-    this.#zoomLabel = createButton({
-      className: 'toolbar__zoom',
-      parent: toolbar,
-      text: '100%',
-      attrs: { 'aria-label': 'Reset zoom to 100%' },
-    });
-    const zoomIn = createIconButton(this.#icons, 'zoomIn', {
-      parent: toolbar,
-      attrs: { 'aria-label': 'Zoom in' },
-    });
-    const fit = createButton({
-      parent: toolbar,
-      text: 'Fit',
-      attrs: { 'aria-label': 'Zoom to fit' },
-    });
+    this.#zoomOutButton = createIconButton(this.#icons, 'zoomOut', { parent: this.#toolbar });
+    this.#zoomLabel = createButton({ className: 'toolbar__zoom', parent: this.#toolbar });
+    this.#zoomInButton = createIconButton(this.#icons, 'zoomIn', { parent: this.#toolbar });
+    this.#fitButton = createButton({ parent: this.#toolbar });
     // Last in the row: the theme is a property of the view, not of the machine,
     // and it stays available while the editor is read-only.
     this.#themeButton = createIconButton(this.#icons, THEME_TOGGLE[this.#theme].icon, {
       className: 'toolbar__theme',
-      parent: toolbar,
+      parent: this.#toolbar,
     });
+    this.#applyStrings();
 
     this.#addStateButton.addEventListener('click', () => {
       this.addState();
@@ -586,9 +567,9 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#themeButton.addEventListener('click', () => {
       this.toggleTheme();
     });
-    zoomOut.addEventListener('click', () => this.zoomOut());
-    zoomIn.addEventListener('click', () => this.zoomIn());
-    fit.addEventListener('click', () => this.zoomToFit());
+    this.#zoomOutButton.addEventListener('click', () => this.zoomOut());
+    this.#zoomInButton.addEventListener('click', () => this.zoomIn());
+    this.#fitButton.addEventListener('click', () => this.zoomToFit());
     this.#zoomLabel.addEventListener('click', () => this.setZoom(1));
 
     this.#viewportElement.addEventListener('pointerdown', this.#onTrackPointerDown, {
@@ -807,6 +788,82 @@ export class StateMachineEditorElement extends HTMLElement {
     }
   }
 
+  /**
+   * Every word the editor and its dialogs put in front of a person.
+   *
+   * Assigning a partial set replaces only what it names and leaves the rest in
+   * English, so a host translating one label does not have to restate the other
+   * hundred and fifty. Assigning `undefined` puts them all back.
+   *
+   * A string that never changes is a string; one with values filled into it is
+   * a function taking them, so there is no placeholder syntax to learn and the
+   * sentence can decide things a template cannot — plural forms above all.
+   *
+   * ```js
+   * editor.strings = {
+   *   toolbar: { addState: 'Adicionar estado' },
+   *   json: { itemCount: ({ count }) => t('items', { count }) },
+   * };
+   * ```
+   *
+   * The reading passes the whole set back, defaults included. The dialogs are
+   * handed it as they open, so it reaches their fields and rows too.
+   */
+  get strings(): EditorStrings {
+    return this.#strings;
+  }
+
+  set strings(overrides: StringOverrides | undefined) {
+    this.#strings = mergeStrings(overrides);
+    this.#applyStrings();
+    // Unlike an icon, a label is written onto whichever part of an element it
+    // belongs to — text here, `title` there, `aria-label` elsewhere — so there
+    // is nothing uniform to walk. The cards carry labels written when they were
+    // built, so they are thrown away and rebuilt from the new set instead.
+    this.#discardViews();
+    this.#render();
+    for (const dialog of [this.#dialog, this.#propertiesDialog, this.#confirmDialog]) {
+      if (dialog !== undefined) {
+        dialog.strings = this.#strings;
+      }
+    }
+  }
+
+  /** Writes the wording onto the parts built once, in the constructor. */
+  #applyStrings(): void {
+    const text = this.#strings.toolbar;
+    this.#emptyState.textContent = this.#strings.canvas.empty;
+    this.#toolbar.setAttribute('aria-label', text.label);
+    this.#addStateButton.textContent = text.addState;
+    this.#organizeButton.textContent = text.organize;
+    this.#organizeButton.setAttribute('aria-label', text.organizeLabel);
+    this.#zoomOutButton.setAttribute('aria-label', text.zoomOut);
+    this.#zoomInButton.setAttribute('aria-label', text.zoomIn);
+    this.#zoomLabel.setAttribute('aria-label', text.zoomReset);
+    this.#fitButton.textContent = text.fit;
+    this.#fitButton.setAttribute('aria-label', text.fitLabel);
+  }
+
+  /**
+   * Throws away every card, so the next render builds them again. Any open
+   * rename goes with them: its input lives inside the card it edits.
+   */
+  #discardViews(): void {
+    for (const view of this.#stateViews.values()) {
+      view.root.remove();
+      view.startMarker.remove();
+    }
+    this.#stateViews.clear();
+    for (const view of this.#transitionViews.values()) {
+      view.path.remove();
+      view.card.remove();
+    }
+    this.#transitionViews.clear();
+    this.#startNode?.root.remove();
+    this.#startNode = undefined;
+    this.#renameEditors.clear();
+  }
+
   /** Switches between the two schemes, which is what the toolbar's button does. */
   toggleTheme(): EditorTheme {
     const next = otherTheme(this.#theme);
@@ -835,7 +892,8 @@ export class StateMachineEditorElement extends HTMLElement {
   addState(options: { readonly name?: string; readonly position?: Point } = {}): StateNode {
     const position = options.position ?? this.#defaultStatePosition();
     const state = createState({
-      name: options.name ?? `State ${this.#machine.states.length + 1}`,
+      name:
+        options.name ?? this.#strings.seed.stateName({ index: this.#machine.states.length + 1 }),
       position,
     });
     this.#commit(addState(this.#machine, state), { kind: 'state-add', stateId: state.id });
@@ -851,7 +909,10 @@ export class StateMachineEditorElement extends HTMLElement {
    */
   addTransition(from: string | null, to: string, name?: string): Transition {
     const label =
-      name ?? (from === null ? uniqueTransitionName(this.#machine, CREATION_NAME) : 'transition');
+      name ??
+      (from === null
+        ? uniqueTransitionName(this.#machine, this.#strings.seed.creationName)
+        : this.#strings.seed.transitionName);
     const draft = createTransition({ from, to, name: label });
     // Placed against a machine that already holds it, so its own siblings and
     // its slot on the start bar are part of the geometry it is measured against.
@@ -1087,10 +1148,10 @@ export class StateMachineEditorElement extends HTMLElement {
     }
     const dialog = this.#ensureConfirmDialog();
     const confirmed = await dialog.open({
-      title: 'Organize the layout?',
-      message:
-        'Every card is moved onto the automatic layout. The positions on the canvas now — including the ones you dragged — are lost, though a single undo brings them back.',
-      confirmLabel: 'Organize',
+      title: this.#strings.organize.title,
+      message: this.#strings.organize.message,
+      confirmLabel: this.#strings.organize.confirm,
+      strings: this.#strings,
     });
     dialog.remove();
     if (!confirmed || !this.organize()) {
@@ -1106,7 +1167,7 @@ export class StateMachineEditorElement extends HTMLElement {
    */
   async openSideEffects(ref: SideEffectListRef): Promise<boolean> {
     const dialog = this.#ensureDialog();
-    const labels = describeSideEffectList(this.#machine, ref);
+    const labels = describeSideEffectList(this.#machine, ref, this.#strings);
     const result = await dialog.open({
       title: labels.title,
       description: labels.description,
@@ -1114,6 +1175,7 @@ export class StateMachineEditorElement extends HTMLElement {
       provider: this.#provider,
       readOnly: this.#readOnly,
       icons: this.#icons,
+      strings: this.#strings,
     });
     dialog.remove();
     if (result === null) {
@@ -1136,7 +1198,7 @@ export class StateMachineEditorElement extends HTMLElement {
       return false;
     }
     const dialog = this.#ensurePropertiesDialog();
-    const labels = describeElement(this.#machine, ref);
+    const labels = describeElement(this.#machine, ref, this.#strings);
     const result = await dialog.open({
       title: labels.title,
       description: labels.description,
@@ -1147,6 +1209,7 @@ export class StateMachineEditorElement extends HTMLElement {
       order: ref.kind === 'transition' ? this.#orderContextFor(ref.id) : undefined,
       readOnly: this.#readOnly,
       icons: this.#icons,
+      strings: this.#strings,
     });
     dialog.remove();
     if (result === null) {
@@ -1271,7 +1334,7 @@ export class StateMachineEditorElement extends HTMLElement {
     return {
       index: siblings.findIndex((candidate) => candidate.id === transitionId),
       total: siblings.length,
-      sourceLabel: describeSource(this.#machine, transition.from),
+      sourceLabel: describeSource(this.#machine, transition.from, this.#strings),
     };
   }
 
@@ -1758,7 +1821,7 @@ export class StateMachineEditorElement extends HTMLElement {
   /** Adds a copy of `state` and reports where it landed. */
   #pasteState(state: StateNode): ElementRef {
     const copy = duplicateState(state, {
-      name: uniqueStateName(this.#machine, copyName(state.name)),
+      name: uniqueStateName(this.#machine, copyName(state.name, this.#strings.seed.copySuffix)),
       position: this.#pastePosition(state.position),
     });
     this.#commit(addState(this.#machine, copy), { kind: 'state-add', stateId: copy.id });
@@ -1782,7 +1845,10 @@ export class StateMachineEditorElement extends HTMLElement {
   /** Adds a copy of `transition` between the same two states. */
   #pasteEdge(transition: Transition): ElementRef {
     const draft = duplicateTransition(transition, {
-      name: uniqueTransitionName(this.#machine, copyName(transition.name)),
+      name: uniqueTransitionName(
+        this.#machine,
+        copyName(transition.name, this.#strings.seed.copySuffix),
+      ),
       labelOffset: { x: 0, y: 0 },
     });
     // Placed against a machine that already holds it, exactly as a brand new
@@ -1833,8 +1899,9 @@ export class StateMachineEditorElement extends HTMLElement {
     if (!hasIcon(this.#themeButton, icon)) {
       setIcon(this.#themeButton, this.#icons, icon);
     }
-    this.#themeButton.setAttribute('aria-label', label);
-    this.#themeButton.title = label;
+    const text = label(this.#strings);
+    this.#themeButton.setAttribute('aria-label', text);
+    this.#themeButton.title = text;
     for (const dialog of [this.#dialog, this.#propertiesDialog, this.#confirmDialog]) {
       if (dialog !== undefined) {
         dialog.theme = this.#theme;
@@ -1850,16 +1917,24 @@ export class StateMachineEditorElement extends HTMLElement {
   #renderClipboardButtons(): void {
     const selection = this.#selection;
     const entry = this.#clipboard;
+    const text = this.#strings.toolbar;
+    const kinds = this.#strings.kind;
+    const copyLabel =
+      selection === null ? text.copy : text.copyKind({ kind: kinds[selection.kind] });
     this.#copyButton.disabled = selection === null;
-    this.#copyButton.setAttribute(
-      'aria-label',
-      selection === null ? 'Copy' : `Copy ${selection.kind}`,
-    );
-    this.#copyButton.title = `${selection === null ? 'Copy' : `Copy ${selection.kind}`} (${shortcutHint('C')})`;
-    const pasteLabel = entry === null ? 'Paste' : `Paste ${entry.kind}`;
+    this.#copyButton.textContent = text.copy;
+    this.#copyButton.setAttribute('aria-label', copyLabel);
+    this.#copyButton.title = this.#shortcutLabel(copyLabel, 'C');
+    const pasteLabel = entry === null ? text.paste : text.pasteKind({ kind: kinds[entry.kind] });
     this.#pasteButton.disabled = this.#readOnly || !canPaste(this.#machine, entry);
+    this.#pasteButton.textContent = text.paste;
     this.#pasteButton.setAttribute('aria-label', pasteLabel);
-    this.#pasteButton.title = `${pasteLabel} (${shortcutHint('V')})`;
+    this.#pasteButton.title = this.#shortcutLabel(pasteLabel, 'V');
+  }
+
+  /** A control's tooltip: what it does, then how to reach it from the keyboard. */
+  #shortcutLabel(label: string, key: string, shift = false): string {
+    return this.#strings.toolbar.shortcut({ label, shortcut: shortcutHint(key, shift) });
   }
 
   /** Keeps the undo/redo pair disabled and named after what they would do. */
@@ -1869,10 +1944,10 @@ export class StateMachineEditorElement extends HTMLElement {
       ['redo', this.#redoButton, pendingRedo(this.#history)],
     ];
     for (const [command, button, change] of pending) {
-      const label = historyLabel(command === 'undo' ? 'Undo' : 'Redo', change);
+      const label = historyLabel(command, change, this.#strings);
       button.disabled = this.#readOnly || change === undefined;
       button.setAttribute('aria-label', label);
-      button.title = `${label} (${shortcutHint('Z', command === 'redo')})`;
+      button.title = this.#shortcutLabel(label, 'Z', command === 'redo');
     }
   }
 
@@ -1882,7 +1957,9 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#viewportElement.style.setProperty('--sme-grid-size', `${GRID_SIZE * scale}px`);
     this.#viewportElement.style.setProperty('--sme-grid-offset-x', `${x % (GRID_SIZE * scale)}px`);
     this.#viewportElement.style.setProperty('--sme-grid-offset-y', `${y % (GRID_SIZE * scale)}px`);
-    this.#zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+    this.#zoomLabel.textContent = this.#strings.toolbar.zoomLevel({
+      percent: Math.round(scale * 100),
+    });
   }
 
   #renderStates(): void {
@@ -1925,7 +2002,10 @@ export class StateMachineEditorElement extends HTMLElement {
     view.root.style.height = `${rect.height}px`;
     view.root.setAttribute(
       'aria-label',
-      `${START_BAR_LABEL}: ${creation.length} creation transition${creation.length === 1 ? '' : 's'}`,
+      this.#strings.startNode.summary({
+        label: this.#strings.startNode.label,
+        count: creation.length,
+      }),
     );
     view.linkHandle.hidden = this.#readOnly;
     // Before the transitions render, so each one can read its own slot.
@@ -1936,21 +2016,18 @@ export class StateMachineEditorElement extends HTMLElement {
     const root = createElement('div', {
       className: 'start-node',
       parent: this.#world,
-      attrs: {
-        part: 'start-node',
-        title: 'Every transition leaving here creates a record',
-      },
+      attrs: { part: 'start-node', title: this.#strings.startNode.title },
     });
     // Written down the bar rather than across it, so naming it costs no width.
     createElement('span', {
       className: 'start-node__label',
       parent: root,
-      text: START_BAR_LABEL,
+      text: this.#strings.startNode.label,
     });
     const linkHandle = createIconButton(this.#icons, 'link', {
       className: 'node__link start-node__link',
       parent: root,
-      attrs: { 'aria-label': 'Drag to a state to create a creation transition' },
+      attrs: { 'aria-label': this.#strings.startNode.link },
     });
     linkHandle.addEventListener('pointerdown', (event) => this.#onLinkPointerDown(event, null));
     return { root, linkHandle };
@@ -1991,12 +2068,18 @@ export class StateMachineEditorElement extends HTMLElement {
     const renameButton = createIconButton(this.#icons, 'rename', {
       className: 'icon-button node__rename',
       parent: actions,
-      attrs: { 'aria-label': 'Rename state', title: 'Rename (F2)' },
+      attrs: {
+        'aria-label': this.#strings.state.rename,
+        title: this.#strings.rename.title,
+      },
     });
     const propertiesButton = createIconButton(this.#icons, 'properties', {
       className: 'icon-button node__properties',
       parent: actions,
-      attrs: { 'aria-label': 'State properties', title: 'Properties' },
+      attrs: {
+        'aria-label': this.#strings.state.properties,
+        title: this.#strings.state.properties,
+      },
     });
     propertiesButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -2005,14 +2088,18 @@ export class StateMachineEditorElement extends HTMLElement {
     const removeButton = createIconButton(this.#icons, 'remove', {
       className: 'icon-button node__remove',
       parent: actions,
-      attrs: { 'aria-label': 'Remove state' },
+      attrs: { 'aria-label': this.#strings.state.remove },
     });
     const hooks = createElement('div', { className: 'hooks', parent: root });
     const chips = new Map<HookKey, ChipView>();
     for (const key of HOOK_KEYS) {
       const ref = hookRef(stateId, key);
       const row = createElement('div', { className: 'hook', parent: hooks });
-      createElement('span', { className: 'hook__label', parent: row, text: shortHookLabel(ref) });
+      createElement('span', {
+        className: 'hook__label',
+        parent: row,
+        text: shortHookLabel(ref, this.#strings),
+      });
       const chip = createChip(row);
       chip.button.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2023,15 +2110,19 @@ export class StateMachineEditorElement extends HTMLElement {
     const palette = createElement('div', {
       className: 'node__palette',
       parent: root,
-      attrs: { role: 'listbox', 'aria-label': `Colour of ${stateId}` },
+      attrs: {
+        role: 'listbox',
+        'aria-label': this.#strings.state.paletteLabel({ name: stateId }),
+      },
     });
     palette.hidden = true;
     const swatches = new Map<StateColor, HTMLButtonElement>();
     for (const color of STATE_COLORS) {
+      const label = this.#strings.color[color];
       const option = createButton({
         className: `palette__option palette__option--${color}`,
         parent: palette,
-        attrs: { role: 'option', 'data-color': color, title: color, 'aria-label': color },
+        attrs: { role: 'option', 'data-color': color, title: label, 'aria-label': label },
       });
       option.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2046,7 +2137,7 @@ export class StateMachineEditorElement extends HTMLElement {
       const button = createIconButton(this.#icons, role, {
         className: `node__role node__role--${role}`,
         parent: roles,
-        label: role === 'initial' ? 'Initial' : 'Final',
+        label: role === 'initial' ? this.#strings.state.roleInitial : this.#strings.state.roleFinal,
         attrs: { 'aria-pressed': 'false' },
       });
       button.addEventListener('click', (event) => {
@@ -2061,8 +2152,8 @@ export class StateMachineEditorElement extends HTMLElement {
     const creationButton = createIconButton(this.#icons, 'add', {
       className: 'node__create',
       parent: roles,
-      label: 'Creation',
-      attrs: { title: 'Add a transition that creates a record in this state' },
+      label: this.#strings.state.creationAdd,
+      attrs: { title: this.#strings.state.creationTitle },
     });
     creationButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -2085,7 +2176,7 @@ export class StateMachineEditorElement extends HTMLElement {
     const linkHandle = createIconButton(this.#icons, 'link', {
       className: 'node__link',
       parent: root,
-      attrs: { 'aria-label': 'Drag to another state to create a transition' },
+      attrs: { 'aria-label': this.#strings.state.link },
     });
 
     root.addEventListener('pointerdown', (event) => {
@@ -2142,7 +2233,7 @@ export class StateMachineEditorElement extends HTMLElement {
     // The rename editor carries its own save and cancel, so the rail would only
     // repeat the tools it disables — it steps aside for the length of the edit.
     view.actions.hidden = editing;
-    view.actions.setAttribute('aria-label', `Tools for “${state.name}”`);
+    view.actions.setAttribute('aria-label', this.#strings.card.toolsLabel({ name: state.name }));
     view.renameButton.hidden = this.#readOnly || editing;
     // Properties stay reachable read-only, exactly like the side effect chips.
     view.propertiesButton.hidden = editing;
@@ -2164,10 +2255,12 @@ export class StateMachineEditorElement extends HTMLElement {
     const open = this.#paletteFor === state.id && !this.#readOnly;
     view.colorButton.hidden = this.#readOnly;
     view.colorButton.setAttribute('aria-expanded', open ? 'true' : 'false');
-    view.colorButton.setAttribute('aria-label', `Colour: ${state.color}. Pick another.`);
-    view.colorButton.title = `Colour: ${state.color}`;
+    const text = this.#strings.state;
+    const color = this.#strings.color[state.color];
+    view.colorButton.setAttribute('aria-label', text.colorLabel({ color }));
+    view.colorButton.title = text.colorTitle({ color });
     view.palette.hidden = !open;
-    view.palette.setAttribute('aria-label', `Colour of “${state.name}”`);
+    view.palette.setAttribute('aria-label', text.paletteLabel({ name: state.name }));
     for (const [color, option] of view.swatches) {
       const selected = color === state.color;
       option.setAttribute('aria-selected', selected ? 'true' : 'false');
@@ -2214,11 +2307,14 @@ export class StateMachineEditorElement extends HTMLElement {
       button.classList.toggle('is-on', on);
       button.setAttribute('aria-pressed', on ? 'true' : 'false');
       button.disabled = this.#readOnly;
-      const verb = on ? 'Unmark' : 'Mark';
-      button.setAttribute(
-        'aria-label',
-        `${verb} “${state.name}” as ${role === 'initial' ? 'an initial' : 'a final'} state`,
-      );
+      // Four whole sentences rather than a verb glued to a noun: which word
+      // moves where when the role changes is the sentence's business, and in
+      // several languages it is not the first one.
+      const named = { name: state.name };
+      const text = this.#strings.state;
+      const initialLabel = on ? text.unmarkInitial(named) : text.markInitial(named);
+      const finalLabel = on ? text.unmarkFinal(named) : text.markFinal(named);
+      button.setAttribute('aria-label', role === 'initial' ? initialLabel : finalLabel);
     }
 
     // The flag and the creation edges are independent: marking a state initial
@@ -2227,7 +2323,7 @@ export class StateMachineEditorElement extends HTMLElement {
     view.creationButton.disabled = this.#readOnly;
     view.creationButton.setAttribute(
       'aria-label',
-      `Add a creation transition into “${state.name}”`,
+      this.#strings.state.creationLabel({ name: state.name }),
     );
 
     // A short arrow into the left border: the usual way of drawing a start
@@ -2271,25 +2367,29 @@ export class StateMachineEditorElement extends HTMLElement {
     const button = chip.button;
     // Only the offer to add one leads with an icon; a list that has something in
     // it leads with the first side effect's name, and read-only says so plainly.
+    const addLabel = this.#strings.chip.add;
     if (effects.length === 0 && !this.#readOnly) {
-      if (!hasIcon(chip.label, 'add', ADD_SIDE_EFFECT_LABEL)) {
-        setIcon(chip.label, this.#icons, 'add', ADD_SIDE_EFFECT_LABEL);
+      if (!hasIcon(chip.label, 'add', addLabel)) {
+        setIcon(chip.label, this.#icons, 'add', addLabel);
       }
     } else {
       clearIcon(chip.label);
-      chip.label.textContent = formatSideEffectHead(effects, EMPTY_SIDE_EFFECTS_LABEL);
+      chip.label.textContent = formatSideEffectHead(effects, undefined, this.#strings);
     }
     button.classList.toggle('is-filled', effects.length > 0);
-    button.title = formatSideEffectTitle(effects);
-    const labels = describeSideEffectList(this.#machine, ref);
+    button.title = formatSideEffectTitle(effects, this.#strings);
+    const labels = describeSideEffectList(this.#machine, ref, this.#strings);
     // Both markers are drawn in CSS, outside the line the name is elided on, so
     // neither takes room from it.
     const withParams = countWithParams(effects);
     button.toggleAttribute('data-has-params', withParams > 0);
     button.setAttribute(
       'aria-label',
-      `${labels.description} ${effects.length} side effect${effects.length === 1 ? '' : 's'}` +
-        `${withParams > 0 ? `, ${withParams} with parameters` : ''}. Open list.`,
+      this.#strings.chip.label({
+        description: labels.description,
+        count: effects.length,
+        withParams,
+      }),
     );
     button.setAttribute('data-count', String(effects.length));
     button.toggleAttribute('data-many', effects.length > 1);
@@ -2337,12 +2437,18 @@ export class StateMachineEditorElement extends HTMLElement {
     const renameButton = createIconButton(this.#icons, 'rename', {
       className: 'icon-button edge-card__rename',
       parent: actions,
-      attrs: { 'aria-label': 'Rename transition', title: 'Rename (F2)' },
+      attrs: {
+        'aria-label': this.#strings.transition.rename,
+        title: this.#strings.rename.title,
+      },
     });
     const propertiesButton = createIconButton(this.#icons, 'properties', {
       className: 'icon-button edge-card__properties',
       parent: actions,
-      attrs: { 'aria-label': 'Transition properties', title: 'Properties' },
+      attrs: {
+        'aria-label': this.#strings.transition.properties,
+        title: this.#strings.transition.properties,
+      },
     });
     propertiesButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -2351,7 +2457,7 @@ export class StateMachineEditorElement extends HTMLElement {
     const removeButton = createIconButton(this.#icons, 'remove', {
       className: 'icon-button edge-card__remove',
       parent: actions,
-      attrs: { 'aria-label': 'Remove transition' },
+      attrs: { 'aria-label': this.#strings.transition.remove },
     });
     /*
      * The name keeps the headline: it is the edge's identity, it is always
@@ -2366,7 +2472,11 @@ export class StateMachineEditorElement extends HTMLElement {
     const chips = new Map<SideEffectPhase, ChipView>();
     for (const phase of ['before', 'after'] as const) {
       const row = createElement('div', { className: 'hook', parent: hooks });
-      createElement('span', { className: 'hook__label', parent: row, text: phase });
+      createElement('span', {
+        className: 'hook__label',
+        parent: row,
+        text: this.#strings.phase[phase],
+      });
       const chip = createChip(row);
       chip.button.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2424,7 +2534,10 @@ export class StateMachineEditorElement extends HTMLElement {
     const editing = this.#renameEditors.has(transition.id);
     view.name.hidden = editing;
     view.actions.hidden = editing;
-    view.actions.setAttribute('aria-label', `Tools for “${transition.name}”`);
+    view.actions.setAttribute(
+      'aria-label',
+      this.#strings.card.toolsLabel({ name: transition.name }),
+    );
     view.renameButton.hidden = this.#readOnly || editing;
     view.propertiesButton.hidden = editing;
     view.removeButton.hidden = this.#readOnly || editing;
@@ -2440,12 +2553,14 @@ export class StateMachineEditorElement extends HTMLElement {
   #updateTransitionMeta(view: TransitionView, transition: Transition): void {
     const trigger = transition.trigger;
     view.trigger.hidden = trigger === null;
-    view.trigger.textContent = trigger === null ? '' : `⚡ ${trigger.name}`;
-    view.trigger.title = trigger === null ? '' : `Trigger: ${trigger.name}`;
+    const text = this.#strings.transition;
+    view.trigger.textContent = trigger === null ? '' : text.trigger({ name: trigger.name });
+    view.trigger.title = trigger === null ? '' : text.triggerTitle({ name: trigger.name });
     const guarded = transition.guard.length > 0;
+    const guard = transition.guard;
     view.guard.hidden = !guarded;
-    view.guard.textContent = guarded ? `[${transition.guard}]` : '';
-    view.guard.title = guarded ? `Guard: ${transition.guard}` : '';
+    view.guard.textContent = guarded ? text.guard({ guard }) : '';
+    view.guard.title = guarded ? text.guardTitle({ guard }) : '';
     view.meta.hidden = trigger === null && !guarded;
   }
 
@@ -2966,7 +3081,7 @@ export class StateMachineEditorElement extends HTMLElement {
       id: stateId,
       label: view.name,
       current: state.name,
-      ariaLabel: 'State name',
+      ariaLabel: this.#strings.state.nameLabel,
       commit: (name) => {
         this.#commit(updateState(this.#machine, stateId, { name }), {
           kind: 'state-rename',
@@ -2986,7 +3101,7 @@ export class StateMachineEditorElement extends HTMLElement {
       id: transitionId,
       label: view.name,
       current: transition.name,
-      ariaLabel: 'Transition name',
+      ariaLabel: this.#strings.transition.nameLabel,
       commit: (name) => {
         this.#commit(updateTransition(this.#machine, transitionId, { name }), {
           kind: 'transition-rename',
@@ -3023,11 +3138,17 @@ export class StateMachineEditorElement extends HTMLElement {
     input.setAttribute('aria-label', options.ariaLabel);
     const save = createIconButton(this.#icons, 'confirm', {
       className: 'icon-button icon-button--confirm',
-      attrs: { 'aria-label': 'Save name', title: 'Save (Enter)' },
+      attrs: {
+        'aria-label': this.#strings.rename.save,
+        title: this.#strings.rename.saveTitle,
+      },
     });
     const cancel = createIconButton(this.#icons, 'cancel', {
       className: 'icon-button icon-button--cancel',
-      attrs: { 'aria-label': 'Cancel renaming', title: 'Cancel (Escape)' },
+      attrs: {
+        'aria-label': this.#strings.rename.cancel,
+        title: this.#strings.rename.cancelTitle,
+      },
     });
     editor.append(input, save, cancel);
 

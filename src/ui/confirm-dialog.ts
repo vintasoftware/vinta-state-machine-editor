@@ -1,4 +1,10 @@
 import { createButton, createElement, focusableElements, isHtmlElement } from './dom.js';
+import {
+  DEFAULT_STRINGS,
+  type EditorStrings,
+  mergeStrings,
+  type StringOverrides,
+} from './strings.js';
 import { dialogStyles } from './styles.js';
 import { applyTheme, type EditorTheme, themeOf } from './theme.js';
 
@@ -6,9 +12,14 @@ export interface ConfirmDialogOptions {
   readonly title: string;
   /** What the action is about to do, in the user's terms. */
   readonly message: string;
-  /** Wording of the button that goes ahead. Defaults to `Confirm`. */
+  /** Wording of the button that goes ahead. Defaults to `dialog.confirm`. */
   readonly confirmLabel?: string;
   readonly cancelLabel?: string;
+  /**
+   * Wording for the two buttons. Anything left out keeps its default; left out
+   * entirely, whatever was assigned to `strings` stands.
+   */
+  readonly strings?: StringOverrides | undefined;
 }
 
 type ConfirmResolver = (confirmed: boolean) => void;
@@ -32,6 +43,7 @@ export class ConfirmDialogElement extends HTMLElement {
   readonly #cancelButton: HTMLButtonElement;
 
   #resolve: ConfirmResolver | undefined;
+  #strings: EditorStrings = DEFAULT_STRINGS;
   #previouslyFocused: Element | null = null;
 
   constructor() {
@@ -62,13 +74,11 @@ export class ConfirmDialogElement extends HTMLElement {
     this.#cancelButton = createButton({
       className: 'button',
       parent: footer,
-      text: 'Cancel',
       attrs: { 'data-confirm': 'cancel' },
     });
     this.#confirmButton = createButton({
       className: 'button button--primary',
       parent: footer,
-      text: 'Confirm',
       attrs: { 'data-confirm': 'confirm' },
     });
 
@@ -92,16 +102,32 @@ export class ConfirmDialogElement extends HTMLElement {
   }
 
   /**
+   * The wording of the two buttons. The editor hands its own down when it opens
+   * the dialog; a host driving the dialog on its own sets it here. Assigning a
+   * partial set leaves every other string in English.
+   */
+  get strings(): EditorStrings {
+    return this.#strings;
+  }
+
+  set strings(overrides: StringOverrides | undefined) {
+    this.#strings = mergeStrings(overrides);
+  }
+
+  /**
    * Opens the modal; resolves `true` only if the user pressed the confirm
    * button. Cancelling, Escape and a click on the backdrop all resolve `false`,
    * so a caller never has to tell one refusal from another.
    */
   open(options: ConfirmDialogOptions): Promise<boolean> {
     this.#previouslyFocused = this.ownerDocument.activeElement;
+    if (options.strings !== undefined) {
+      this.#strings = mergeStrings(options.strings);
+    }
     this.#title.textContent = options.title;
     this.#message.textContent = options.message;
-    this.#confirmButton.textContent = options.confirmLabel ?? 'Confirm';
-    this.#cancelButton.textContent = options.cancelLabel ?? 'Cancel';
+    this.#confirmButton.textContent = options.confirmLabel ?? this.#strings.dialog.confirm;
+    this.#cancelButton.textContent = options.cancelLabel ?? this.#strings.dialog.cancel;
     // Focus lands on Cancel: the destructive button should be pressed on
     // purpose, not by the Enter that opened the dialog.
     this.#cancelButton.focus();

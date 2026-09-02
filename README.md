@@ -573,6 +573,7 @@ isUnpositioned(machine); // what the automatic pass tests for
 | `guardValidator` | `(expression) => MaybePromise<{ ok: true } \| { ok: false, errors }>` | Called on every guard edit; errors render inline. Absent means no validation. |
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
 | `icons` | `Partial<EditorIcons> \| undefined` | Glyphs for the buttons and handles. A partial set replaces only what it names; reading it back gives the whole set, defaults filled in — see [Icons](#icons). |
+| `strings` | `StringOverrides \| undefined` | Every word the editor says, grouped (`toolbar`, `state`, `dialog`, …). A partial set replaces only what it names and leaves the rest in English; reading it back gives the whole set — see [Translation](#translation). |
 | `theme` | `'dark' \| 'light'` | Reflected to the `theme` attribute, which is what the CSS keys off. Defaults to `'dark'`; a value the element does not know reads back as the default. Never taken from the operating system — see [Theming](#theming). |
 | `selection` | `{ kind: 'state' \| 'transition', id } \| null` | Survives a `value` assignment that keeps the selected element; becomes `null` if that element is gone, and only that drop emits `state-machine-selection-change`. |
 | `viewport` | `{ x, y, scale }` | Pan/zoom state; assignable to restore a saved view. |
@@ -899,6 +900,183 @@ in CSS, which can hold text and nothing else. It follows `--sme-params-marker`:
 state-machine-editor { --sme-params-marker: '{…}'; }
 ```
 
+## Translation
+
+Every word the editor and its dialogs put in front of a person comes out of one object, and a host
+replaces as much of it as it likes through the `strings` property. There is no locale registry and
+no dependency: picking a language is the host's job, exactly as picking a theme is.
+
+Strings are grouped by where they belong, and a partial set replaces only what it names — in the
+group it names, and in every other group:
+
+```ts
+editor.strings = {
+  toolbar: { addState: 'Adicionar estado' },
+  state: { remove: 'Remover estado' },
+  organize: { confirm: 'Organizar' },
+};
+editor.strings.toolbar.paste; // 'Paste' — still English
+editor.strings.dialog.save; // 'Save' — a group left alone keeps all of it
+```
+
+Reading `strings` back gives the whole set with the defaults filled in; assigning `undefined` puts
+them all back. A key a group does not have is ignored, so a translation file that has fallen behind
+the package cannot smuggle anything in.
+
+### Two kinds of string
+
+A string that never changes is a **string**. One that has values filled into it is a **function**
+taking them:
+
+```ts
+editor.strings = {
+  state: {
+    remove: 'Remover estado',
+    creationLabel: ({ name }) => `Adicionar uma transição de criação para “${name}”`,
+  },
+  properties: {
+    orderReadout: ({ index, total }) => `${index} de ${total}`,
+  },
+};
+```
+
+There is deliberately no placeholder syntax. A `{name}` mini-language would be a second thing to
+learn and a second thing to escape — and it could not express the cases below anyway. The
+parameters are named and **typed**, so your editor completes them and the compiler catches a
+misspelling.
+
+### What that buys you
+
+**Plurals.** Polish and Russian need three forms, Arabic six, and no template syntax without a
+library behind it is going to pick between them. A function hands the decision to your own
+`Intl.PluralRules`, or to the i18n library you already run:
+
+```ts
+const plural = new Intl.PluralRules('ru');
+const FORMS = { one: 'элемент', few: 'элемента', many: 'элементов', other: 'элементов' };
+
+editor.strings = {
+  json: { itemCount: ({ count }) => `${count} ${FORMS[plural.select(count)]}` },
+};
+```
+
+**Word order.** Nothing is assembled by gluing a verb to a noun, because where the verb goes is the
+sentence's business — English puts it first, Japanese last. The undo control hands its change to a
+function rather than appending it:
+
+```ts
+editor.strings = {
+  toolbar: { undoChange: ({ change }) => `${change} を元に戻す` },
+  change: { 'state-add': '状態の追加' },
+};
+// aria-label: 状態の追加 を元に戻す
+```
+
+**Branches the sentence should own.** A row's parameters toggle receives `expanded` as a boolean
+rather than being two separate keys the component has already chosen between, and the parameters
+badge receives `count: 0` rather than having an empty variant of its own:
+
+```ts
+editor.strings = {
+  row: {
+    paramsLabel: ({ name, count, expanded }) =>
+      `${expanded ? 'Ocultar' : 'Editar'} ${count} par. de ${name}`,
+  },
+  params: { badge: ({ count }) => (count === 0 ? '{ }' : `{ } ${count}`) },
+};
+```
+
+The same applies to the quotation marks a name is wrapped in (`source.state`) and to the words the
+model's own enums read as in prose — `phase.before`, `trigger.enter`, `kind.transition` and
+`color.success` are groups keyed by the model value, so nothing is looked up by a string name.
+
+### Loading a translation as data
+
+The strings that take no values are plain data, so they round-trip through JSON — which is what
+lets the bulk of a translation come straight from whatever backend you already run. The
+parametrized ones are functions, so they live in code beside it:
+
+```ts
+const response = await fetch(`/i18n/editor.${locale}.json`);
+const flat = await response.json();
+editor.strings = { ...flat, json: { ...flat.json, itemCount: countItems } };
+```
+
+### The groups
+
+`STRING_GROUPS` lists them, and `DEFAULT_STRINGS` holds the English, which is the practical
+starting point for a translation file:
+
+```ts
+import { DEFAULT_STRINGS, STRING_GROUPS } from 'vinta-state-machine-editor';
+```
+
+| Group | Covers |
+| --- | --- |
+| `toolbar` | Add state, undo/redo, copy/paste, organize, zoom, fit, theme |
+| `canvas` | The empty canvas |
+| `kind` | `state` / `transition`, as the copy and paste labels name them |
+| `card` | The tool rail above a state card and an edge card alike |
+| `state` | A state card: tools, roles, the colour button |
+| `color` | The six palette colours, keyed by the model value |
+| `rename` | The inline name editor and its two buttons |
+| `transition` | An edge card: tools, the trigger and guard lines |
+| `startNode` | The bar every creation edge leaves from |
+| `source` | What to call a transition's source — including a name's quotation marks |
+| `chip` | The side effect chips on a card |
+| `phase` / `trigger` / `triggerVerb` | `before`/`after`, `enter`/`leave`, and the same as verbs |
+| `sideEffect` | A side effect in prose: disabled, collapsed, in a tooltip |
+| `sideEffects` | The side effects dialog, and the headings it opens with |
+| `row` | One row of that dialog |
+| `params` | The JSON parameters panel a row opens |
+| `properties` | The properties dialog: every field, hint and status message |
+| `change` | One per kind of change, for the undo and redo labels |
+| `dialog` | Save, cancel, close, confirm |
+| `organize` | The organize question |
+| `json` | The nested parameter form, and the parser's own complaints |
+| `seed` | See below |
+
+Within a group a string is named after what it **means**, not where it sits, so replacing one
+covers every place it is used: one `card.toolsLabel` names the rail above a state card and above an
+edge card.
+
+Strings can be set at any time. The toolbar is relabelled where it stands; the cards are rebuilt,
+which costs nothing at setup, and the dialogs are handed the new set as they open. They also take a
+`strings` property of their own, for a host driving one directly:
+
+```ts
+const dialog = new SideEffectsDialogElement();
+dialog.strings = { sideEffects: { empty: 'Nenhum efeito ainda.' } };
+```
+
+### Four strings that write into the machine
+
+The `seed` group is not labels drawn over the data — these are the names new elements are **born
+with**, and they are saved into the machine your host round-trips. Translating them translates the
+data, which is usually what a localized editor wants:
+
+```ts
+editor.strings = {
+  seed: { stateName: ({ index }) => `Estado ${index}`, copySuffix: 'cópia' },
+};
+editor.addState().name; // 'Estado 1'
+```
+
+If your backend keys off the name `create` for creation transitions, leave `seed.creationName`
+alone; everything else in the group is safe to translate.
+
+### What is not covered
+
+- **Validation issues from `parseStateMachine`** — `machine.states[0].name must be a non-empty
+  string` and friends describe *your* payload, name its field paths, and are meant for whoever
+  wrote it. They stay in English.
+- **`JSON.parse`'s own syntax errors** in the JSON parameters tab. They name the position the text
+  broke at, which is the useful part, and translating them is the runtime's job. The three
+  structural complaints around them — `json.invalid`, `json.notJsonValues`, `json.notObject` — are
+  yours.
+- **Right-to-left layout.** `dir` is a CSS concern, not a wording one; nothing here stops you
+  setting it on the host element, but the stylesheet does not yet mirror.
+
 ## Styling
 
 Both schemes are built out of the same CSS custom properties, all overridable from the host:
@@ -983,7 +1161,10 @@ with latency, a read-only toggle, a live event log and the live JSON value.
 - Biome fails the build on `noUnsafeTypeAssertion` (bans every `as` except `as const`),
   `noExplicitAny`, `noNonNullAssertion` and `noTsIgnore`.
 - [`test/source-hygiene.test.ts`](test/source-hygiene.test.ts) parses every file in `src/`, blanks
-  out comments and literals, and fails if a type assertion, `any` or `!` assertion sneaks in.
+  out comments and literals, and fails if a type assertion, `any` or `!` assertion sneaks in. It
+  also scans `src/ui/` for a user-facing label written straight into a `text:`, `title`,
+  `aria-label`, `placeholder` or `textContent`, so a new control cannot quietly land back in
+  English — see [Translation](#translation).
 
 Untrusted input (the `value` property, the provider payload) goes through runtime validators in
 [`src/model/parse.ts`](src/model/parse.ts) that narrow `unknown` with real checks instead of casts.

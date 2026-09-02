@@ -75,3 +75,80 @@ describe('source hygiene', () => {
     expect(report).toBe('');
   });
 });
+
+/*
+ * Every word a person reads comes out of the string set, so a host can replace
+ * the lot. That is easy to undo by accident: a new button, a literal typed
+ * straight into its `text:` or `aria-label`, and one label is quietly back in
+ * English for everybody. The scan below is what stops that.
+ */
+
+/** Where a user-facing label is written, in the shapes `createElement` takes. */
+const LABEL_SITES: readonly { readonly rule: string; readonly pattern: RegExp }[] = [
+  { rule: 'literal `text:`', pattern: /\btext:\s*['"`]/ },
+  { rule: 'literal `label:`', pattern: /\blabel:\s*['"`]/ },
+  { rule: 'literal `title`', pattern: /\btitle:\s*['"`]|\.title\s*=\s*['"`]/ },
+  { rule: 'literal `aria-label`', pattern: /'aria-label':\s*['"`]/ },
+  { rule: 'literal `placeholder`', pattern: /\bplaceholder:\s*['"`]/ },
+  { rule: 'literal `textContent`', pattern: /\.textContent\s*=\s*['"`]/ },
+];
+
+/**
+ * Whether `literal` — quotes included — is text a person reads.
+ *
+ * A value that is entirely interpolated or punctuation is not: the row
+ * ordinals and the `{ }` badge among them.
+ */
+function isProse(literal: string): boolean {
+  return /[A-Za-z]{2}/.test(literal.slice(1, -1).replaceAll(/\$\{[^}]*\}/g, ''));
+}
+
+/** Files that legitimately hold English: the defaults, and the words beside them. */
+const ALLOWED = new Set(['strings.ts', 'labels.ts', 'side-effect-summary.ts', 'json.ts']);
+
+function scanLabels(file: string): readonly Violation[] {
+  if (ALLOWED.has(file.split('/').pop() ?? '')) {
+    return [];
+  }
+  const violations: Violation[] = [];
+  readFileSync(file, 'utf8')
+    .split('\n')
+    .forEach((text, index) => {
+      for (const { rule, pattern } of LABEL_SITES) {
+        const found = pattern.exec(text);
+        if (found === null) {
+          continue;
+        }
+        // The pattern stops at the opening quote; take the whole literal to
+        // decide whether it is prose or a stray `''`.
+        const literal = /(['"`])(?:\\.|(?!\1)[^\\])*\1/.exec(text.slice(found.index));
+        if (literal === null || !isProse(literal[0])) {
+          continue;
+        }
+        violations.push({ file, line: index + 1, rule, text: text.trim() });
+      }
+    });
+  return violations;
+}
+
+describe('user-facing strings', () => {
+  it('tells prose from punctuation', () => {
+    expect(isProse("'Add state'")).toBe(true);
+    expect(isProse("''")).toBe(false);
+    expect(isProse("'{ }'")).toBe(false);
+    // Spelled out so this line is not itself a template placeholder.
+    expect(isProse(['`', '$', '{index + 1}', '`'].join(''))).toBe(false);
+  });
+
+  it('leaves no label written straight into the DOM outside the string set', () => {
+    const violations = sourceFiles(join(SOURCE_ROOT, 'ui')).flatMap(scanLabels);
+    const report = violations
+      .map(
+        (violation) =>
+          `${violation.file}:${violation.line} — ${violation.rule}: ${violation.text}\n` +
+          '    Add a key to EditorStrings and read it off the set instead.',
+      )
+      .join('\n');
+    expect(report).toBe('');
+  });
+});

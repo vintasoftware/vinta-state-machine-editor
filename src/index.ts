@@ -48,6 +48,7 @@ export {
 export { insertItem, moveItem } from './model/array.js';
 export type { ClipboardEntry } from './model/clipboard.js';
 export {
+  COPY_SUFFIX,
   canPaste,
   copyElement,
   copyName,
@@ -68,11 +69,12 @@ export {
   undoHistory,
 } from './model/history.js';
 export { createId } from './model/id.js';
-export type { JsonPath, JsonTextResult, JsonType } from './model/json.js';
+export type { JsonPath, JsonTextMessages, JsonTextResult, JsonType } from './model/json.js';
 export {
   appendEntry,
   coerceTo,
   countParams,
+  DEFAULT_JSON_TEXT_MESSAGES,
   defaultValueFor,
   emptyParams,
   formatJson,
@@ -174,6 +176,7 @@ export type { JsonFormOptions } from './ui/json-form.js';
 export { JsonFormEditor } from './ui/json-form.js';
 // JsonTextEditor is deliberately not re-exported: a static export here would pull
 // CodeMirror into every bundle, defeating the dialog's dynamic import of it.
+export type { SideEffectListLabels } from './ui/labels.js';
 export {
   describeElement,
   describeSideEffectList,
@@ -204,8 +207,25 @@ export {
   listHasParams,
 } from './ui/side-effect-summary.js';
 export type { SideEffectsDialogOptions } from './ui/side-effects-dialog.js';
-export { formatParamsBadge, SideEffectsDialogElement } from './ui/side-effects-dialog.js';
+export {
+  DEFAULT_ADD_PLACEHOLDER,
+  formatParamsBadge,
+  SideEffectsDialogElement,
+} from './ui/side-effects-dialog.js';
 export { StateMachineEditorElement } from './ui/state-machine-editor.js';
+export type {
+  EditorStrings,
+  ElementKind,
+  GroupOverrides,
+  StringGroup,
+  StringOverrides,
+} from './ui/strings.js';
+export {
+  DEFAULT_STRINGS,
+  isStringGroup,
+  mergeStrings,
+  STRING_GROUPS,
+} from './ui/strings.js';
 export type { EditorTheme } from './ui/theme.js';
 export {
   applyTheme,

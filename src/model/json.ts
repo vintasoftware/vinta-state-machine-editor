@@ -197,8 +197,37 @@ export type JsonTextResult =
   | { readonly ok: true; readonly value: JsonObject }
   | { readonly ok: false; readonly error: string };
 
-/** Parses text the user typed in the JSON tab. Parameters must be a JSON object. */
-export function parseParamsText(text: string): JsonTextResult {
+/**
+ * What {@link parseParamsText} says when the text does not parse.
+ *
+ * Passed in rather than looked up, so this module stays free of the UI: the
+ * side effects dialog hands down whatever the host's string set holds.
+ */
+export interface JsonTextMessages {
+  /** Fallback for a parser error that carried no message of its own. */
+  readonly invalid: string;
+  readonly notJsonValues: string;
+  readonly notObject: string;
+}
+
+/** English, used when the caller names nothing. */
+export const DEFAULT_JSON_TEXT_MESSAGES: JsonTextMessages = {
+  invalid: 'Invalid JSON.',
+  notJsonValues: 'Parameters must contain only JSON values.',
+  notObject: 'Parameters must be a JSON object, for example {"to": "user"}.',
+};
+
+/**
+ * Parses text the user typed in the JSON tab. Parameters must be a JSON object.
+ *
+ * A syntax error keeps the message `JSON.parse` produced: it names the position
+ * the text broke at, which is the useful part, and it is the runtime's to
+ * translate rather than ours.
+ */
+export function parseParamsText(
+  text: string,
+  messages: JsonTextMessages = DEFAULT_JSON_TEXT_MESSAGES,
+): JsonTextResult {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
     return { ok: true, value: {} };
@@ -207,14 +236,14 @@ export function parseParamsText(text: string): JsonTextResult {
   try {
     parsed = JSON.parse(trimmed);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Invalid JSON.' };
+    return { ok: false, error: error instanceof Error ? error.message : messages.invalid };
   }
   const value = toJsonValue(parsed);
   if (value === undefined) {
-    return { ok: false, error: 'Parameters must contain only JSON values.' };
+    return { ok: false, error: messages.notJsonValues };
   }
   if (!isJsonObject(value)) {
-    return { ok: false, error: 'Parameters must be a JSON object, for example {"to": "user"}.' };
+    return { ok: false, error: messages.notObject };
   }
   return { ok: true, value };
 }

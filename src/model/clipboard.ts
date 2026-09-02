@@ -25,20 +25,28 @@ export type ClipboardEntry =
   | { readonly kind: 'state'; readonly state: StateNode }
   | { readonly kind: 'transition'; readonly transition: Transition };
 
-/** What a copy is called, before an existing `copy` suffix and numbering. */
-const COPY_SUFFIX = 'copy';
+/** What a copy is called, before an existing suffix and numbering. */
+export const COPY_SUFFIX = 'copy';
 
-/** A trailing ` copy`, with or without its number. */
-const COPY_PATTERN = /\s+copy(\s+\d+)?$/;
+/** Everything `RegExp` reads as syntax, so a suffix can be any words at all. */
+const REGEXP_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+
+/** A trailing ` <suffix>`, with or without its number. */
+function copyPattern(suffix: string): RegExp {
+  return new RegExp(`\\s+${suffix.replace(REGEXP_SPECIAL, '\\$&')}(\\s+\\d+)?$`);
+}
 
 /**
  * What to call a copy of `name`. A suffix already there is replaced rather than
  * stacked, so a copy of “Draft copy” is “Draft copy 2” and never
  * “Draft copy copy” — the number itself is left to `uniqueName`, which is the
  * part that knows what is taken.
+ *
+ * `suffix` is the word appended, which a localized editor translates: the
+ * result is a name saved into the machine, not a label drawn over one.
  */
-export function copyName(name: string): string {
-  return `${name.replace(COPY_PATTERN, '')} ${COPY_SUFFIX}`;
+export function copyName(name: string, suffix: string = COPY_SUFFIX): string {
+  return `${name.replace(copyPattern(suffix), '')} ${suffix}`;
 }
 
 /** Takes the element addressed by `ref`, or `undefined` when it is gone. */

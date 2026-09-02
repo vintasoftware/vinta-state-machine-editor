@@ -13,6 +13,12 @@ import {
   type IconOverrides,
   mergeIcons,
 } from './icons.js';
+import {
+  DEFAULT_STRINGS,
+  type EditorStrings,
+  mergeStrings,
+  type StringOverrides,
+} from './strings.js';
 import { dialogStyles } from './styles.js';
 import { applyTheme, type EditorTheme, themeOf } from './theme.js';
 
@@ -48,11 +54,14 @@ export interface PropertiesDialogOptions {
    * out entirely, whatever was assigned to `icons` stands.
    */
   readonly icons?: IconOverrides | undefined;
+  /**
+   * Wording of the fields and their hints. Anything left out stays in English;
+   * left out entirely, whatever was assigned to `strings` stands.
+   */
+  readonly strings?: StringOverrides | undefined;
 }
 
 type DialogResolver = (result: PropertiesDraft | null) => void;
-
-const NO_TRIGGER_LABEL = 'No trigger';
 
 export function emptyPropertiesDraft(): PropertiesDraft {
   return { trigger: null, guard: '', requiredPermission: '', description: '', orderIndex: -1 };
@@ -111,6 +120,7 @@ export class PropertiesDialogElement extends HTMLElement {
   #resolve: DialogResolver | undefined;
   #readOnly = false;
   #icons: EditorIcons = DEFAULT_ICONS;
+  #strings: EditorStrings = DEFAULT_STRINGS;
   #previouslyFocused: Element | null = null;
   /** Bumped on every guard edit, so a slow validator cannot overwrite a newer verdict. */
   #guardToken = 0;
@@ -139,12 +149,9 @@ export class PropertiesDialogElement extends HTMLElement {
     this.#status = createElement('p', { className: 'status', parent: this.#panel });
 
     const footer = createElement('footer', { className: 'footer', parent: this.#panel });
-    this.#cancelButton = createButton({ className: 'button', parent: footer, text: 'Cancel' });
-    this.#saveButton = createButton({
-      className: 'button button--primary',
-      parent: footer,
-      text: 'Save',
-    });
+    // Both are written on open(), which is when the wording in force is known.
+    this.#cancelButton = createButton({ className: 'button', parent: footer });
+    this.#saveButton = createButton({ className: 'button button--primary', parent: footer });
 
     this.#cancelButton.addEventListener('click', () => this.#finish(null));
     this.#saveButton.addEventListener('click', () => this.#finish(this.#draft));
@@ -183,6 +190,19 @@ export class PropertiesDialogElement extends HTMLElement {
     this.#icons = mergeIcons(overrides);
   }
 
+  /**
+   * The wording of the fields. The editor hands its own down when it opens the
+   * dialog; a host driving the dialog on its own sets it here. Assigning a
+   * partial set leaves every other string in English.
+   */
+  get strings(): EditorStrings {
+    return this.#strings;
+  }
+
+  set strings(overrides: StringOverrides | undefined) {
+    this.#strings = mergeStrings(overrides);
+  }
+
   /** Opens the modal; resolves with the edited values, or `null` when cancelled. */
   open(options: PropertiesDialogOptions): Promise<PropertiesDraft | null> {
     this.#previouslyFocused = this.ownerDocument.activeElement;
@@ -191,10 +211,16 @@ export class PropertiesDialogElement extends HTMLElement {
     if (options.icons !== undefined) {
       this.#icons = mergeIcons(options.icons);
     }
+    if (options.strings !== undefined) {
+      this.#strings = mergeStrings(options.strings);
+    }
     this.#title.textContent = options.title;
     this.#subtitle.textContent = options.description;
+    this.#saveButton.textContent = this.#strings.dialog.save;
     this.#saveButton.hidden = this.#readOnly;
-    this.#cancelButton.textContent = this.#readOnly ? 'Close' : 'Cancel';
+    this.#cancelButton.textContent = this.#readOnly
+      ? this.#strings.dialog.close
+      : this.#strings.dialog.cancel;
     this.#setStatus('');
     this.#renderFields(options);
     this.#cancelButton.focus();
@@ -219,17 +245,20 @@ export class PropertiesDialogElement extends HTMLElement {
 
   /** A picker when the host supplies a catalog, plain text when it does not. */
   #renderTrigger(options: PropertiesDialogOptions): void {
-    const { control } = createField(this.#body, 'Trigger', {
+    const text = this.#strings.properties;
+    const { control } = createField(this.#body, text.fieldTrigger, {
       name: 'trigger',
-      ...(options.actionProvider === undefined
-        ? { hint: 'No action catalog was provided, so the trigger is free text.' }
-        : {}),
+      ...(options.actionProvider === undefined ? { hint: text.triggerHint } : {}),
     });
     if (options.actionProvider === undefined) {
       const input = createElement('input', {
         className: 'field__input',
         parent: control,
-        attrs: { 'aria-label': 'Trigger', 'data-field': 'trigger', placeholder: 'e.g. pay' },
+        attrs: {
+          'aria-label': text.fieldTrigger,
+          'data-field': 'trigger',
+          placeholder: text.triggerPlaceholder,
+        },
       });
       input.value = this.#draft.trigger?.name ?? '';
       input.readOnly = this.#readOnly;
@@ -241,7 +270,7 @@ export class PropertiesDialogElement extends HTMLElement {
     const select = createElement('select', {
       className: 'field__input',
       parent: control,
-      attrs: { 'aria-label': 'Trigger', 'data-field': 'trigger' },
+      attrs: { 'aria-label': text.fieldTrigger, 'data-field': 'trigger' },
     });
     select.disabled = this.#readOnly;
     this.#renderTriggerOptions(select, []);
@@ -266,7 +295,11 @@ export class PropertiesDialogElement extends HTMLElement {
   #renderTriggerOptions(select: HTMLSelectElement, definitions: readonly ActionDefinition[]): void {
     select.replaceChildren();
     const current = this.#draft.trigger;
-    createElement('option', { text: NO_TRIGGER_LABEL, attrs: { value: '' }, parent: select });
+    createElement('option', {
+      text: this.#strings.properties.triggerNone,
+      attrs: { value: '' },
+      parent: select,
+    });
     const known = definitions.map((definition) => definition.id);
     const extra =
       current !== null && !known.includes(current.id)
@@ -283,11 +316,14 @@ export class PropertiesDialogElement extends HTMLElement {
   }
 
   async #loadActions(provider: ActionProvider, select: HTMLSelectElement): Promise<void> {
-    this.#setStatus('Loading actions…');
+    this.#setStatus(this.#strings.properties.actionsLoading);
     try {
       const result = parseActionDefinitions(await provider());
       if (!result.ok) {
-        this.#setStatus(`Invalid action catalog: ${result.errors.join(' ')}`, true);
+        this.#setStatus(
+          this.#strings.properties.actionsInvalid({ errors: result.errors.join(' ') }),
+          true,
+        );
         return;
       }
       if (!select.isConnected) {
@@ -297,20 +333,21 @@ export class PropertiesDialogElement extends HTMLElement {
       this.#setStatus('');
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      this.#setStatus(`Could not load actions: ${reason}`, true);
+      this.#setStatus(this.#strings.properties.actionsLoadFailed({ reason }), true);
     }
   }
 
   #renderGuard(validator: GuardValidator | undefined): void {
-    const { control } = createField(this.#body, 'Guard', { name: 'guard' });
+    const text = this.#strings.properties;
+    const { control } = createField(this.#body, text.fieldGuard, { name: 'guard' });
     const input = createElement('textarea', {
       className: 'field__input field__input--area',
       parent: control,
       attrs: {
-        'aria-label': 'Guard expression',
+        'aria-label': text.guardLabel,
         'data-field': 'guard',
         rows: '2',
-        placeholder: 'Condition the host evaluates',
+        placeholder: text.guardPlaceholder,
       },
     });
     input.value = this.#draft.guard;
@@ -348,14 +385,15 @@ export class PropertiesDialogElement extends HTMLElement {
   }
 
   #renderPermission(): void {
-    const { control } = createField(this.#body, 'Required permission', { name: 'permission' });
+    const text = this.#strings.properties;
+    const { control } = createField(this.#body, text.fieldPermission, { name: 'permission' });
     const input = createElement('input', {
       className: 'field__input',
       parent: control,
       attrs: {
-        'aria-label': 'Required permission',
+        'aria-label': text.fieldPermission,
         'data-field': 'permission',
-        placeholder: 'e.g. orders.pay',
+        placeholder: text.permissionPlaceholder,
       },
     });
     input.value = this.#draft.requiredPermission;
@@ -366,11 +404,12 @@ export class PropertiesDialogElement extends HTMLElement {
   }
 
   #renderDescription(): void {
-    const { control } = createField(this.#body, 'Description', { name: 'description' });
+    const label = this.#strings.properties.fieldDescription;
+    const { control } = createField(this.#body, label, { name: 'description' });
     const input = createElement('textarea', {
       className: 'field__input field__input--area',
       parent: control,
-      attrs: { 'aria-label': 'Description', 'data-field': 'description', rows: '3' },
+      attrs: { 'aria-label': label, 'data-field': 'description', rows: '3' },
     });
     input.value = this.#draft.description;
     input.readOnly = this.#readOnly;
@@ -384,23 +423,27 @@ export class PropertiesDialogElement extends HTMLElement {
    * among its siblings and everything else keeps its place.
    */
   #renderOrder(order: OrderContext): void {
-    const { control } = createField(this.#body, 'Order', {
+    const text = this.#strings.properties;
+    const { control } = createField(this.#body, text.fieldOrder, {
       name: 'order',
-      hint: `Edges leaving ${order.sourceLabel} are evaluated in this order.`,
+      hint: text.orderHint({ source: order.sourceLabel }),
     });
     const readout = createElement('span', { className: 'order__readout', parent: control });
     const up = createIconButton(this.#icons, 'moveUp', {
       className: 'order__move order__move--up',
       parent: control,
-      attrs: { 'aria-label': 'Move earlier' },
+      attrs: { 'aria-label': text.moveUp },
     });
     const down = createIconButton(this.#icons, 'moveDown', {
       className: 'order__move order__move--down',
       parent: control,
-      attrs: { 'aria-label': 'Move later' },
+      attrs: { 'aria-label': text.moveDown },
     });
     const refresh = (): void => {
-      readout.textContent = `${this.#draft.orderIndex + 1} of ${order.total}`;
+      readout.textContent = text.orderReadout({
+        index: this.#draft.orderIndex + 1,
+        total: order.total,
+      });
       up.disabled = this.#readOnly || this.#draft.orderIndex <= 0;
       down.disabled = this.#readOnly || this.#draft.orderIndex >= order.total - 1;
     };

@@ -1,9 +1,11 @@
 import { formatJsonInline, hasParams } from '../model/json.js';
 import type { SideEffect } from '../types.js';
+import { DEFAULT_STRINGS, type EditorStrings } from './strings.js';
 
+/** What an empty list reads as, in English. Translated hosts override `chip.empty`. */
 export const EMPTY_SIDE_EFFECTS_LABEL = 'No side effects';
 
-/** Suffix marking a side effect that stays attached but does not run. */
+/** Suffix marking a side effect that stays attached but does not run, in English. */
 export const DISABLED_MARKER = '(off)';
 
 /**
@@ -16,13 +18,14 @@ export const DISABLED_MARKER = '(off)';
  */
 export function formatSideEffectHead(
   effects: readonly SideEffect[],
-  emptyLabel: string = EMPTY_SIDE_EFFECTS_LABEL,
+  emptyLabel?: string,
+  strings: EditorStrings = DEFAULT_STRINGS,
 ): string {
   const [first] = effects;
   if (first === undefined) {
-    return emptyLabel;
+    return emptyLabel ?? strings.chip.empty;
   }
-  return first.enabled ? first.name : `${first.name} ${DISABLED_MARKER}`;
+  return first.enabled ? first.name : strings.sideEffect.disabled({ name: first.name });
 }
 
 /**
@@ -35,13 +38,14 @@ export function formatSideEffectHead(
  */
 export function formatSideEffectSummary(
   effects: readonly SideEffect[],
-  emptyLabel: string = EMPTY_SIDE_EFFECTS_LABEL,
+  emptyLabel?: string,
+  strings: EditorStrings = DEFAULT_STRINGS,
 ): string {
-  const head = formatSideEffectHead(effects, emptyLabel);
+  const head = formatSideEffectHead(effects, emptyLabel, strings);
   if (effects.length <= 1) {
     return head;
   }
-  return `${head} and ${effects.length - 1} more`;
+  return strings.sideEffect.summary({ head, count: effects.length - 1 });
 }
 
 /** Whether any side effect in the list carries parameters. */
@@ -63,15 +67,21 @@ export function countDisabled(effects: readonly SideEffect[]): number {
  * Accessible label describing the whole list, used as the chip's `title`.
  * Parameters are appended inline so the tooltip shows what each one receives.
  */
-export function formatSideEffectTitle(effects: readonly SideEffect[]): string {
+export function formatSideEffectTitle(
+  effects: readonly SideEffect[],
+  strings: EditorStrings = DEFAULT_STRINGS,
+): string {
   if (effects.length === 0) {
-    return EMPTY_SIDE_EFFECTS_LABEL;
+    return strings.chip.empty;
   }
   return effects
-    .map((effect, index) => {
-      const params = hasParams(effect.params) ? ` ${formatJsonInline(effect.params)}` : '';
-      const disabled = effect.enabled ? '' : ' — disabled';
-      return `${index + 1}. ${effect.name}${params}${disabled}`;
-    })
+    .map((effect, index) =>
+      strings.sideEffect.titleEntry({
+        index: index + 1,
+        name: effect.name,
+        params: hasParams(effect.params) ? ` ${formatJsonInline(effect.params)}` : '',
+        disabled: !effect.enabled,
+      }),
+    )
     .join('\n');
 }

@@ -182,8 +182,17 @@ export function typeCode(root: ParentNode, text: string): void {
 }
 
 /** Waits for the lazily loaded CodeMirror chunk to mount. */
-export async function waitForCodeEditor(root: ParentNode, tries = 50): Promise<EditorView> {
-  for (let attempt = 0; attempt < tries; attempt += 1) {
+/**
+ * Waits for the JSON tab's CodeMirror to appear.
+ *
+ * The budget is wall-clock rather than a count of ticks: the panel reaches
+ * CodeMirror through a dynamic import, and on a cold cache that is Vite
+ * transforming a chunk, which takes however long it takes. Counting ticks made
+ * this pass or fail on whether the module graph happened to be warm.
+ */
+export async function waitForCodeEditor(root: ParentNode, timeoutMs = 5000): Promise<EditorView> {
+  const deadline = Date.now() + timeoutMs;
+  do {
     const dom = root.querySelector('.cm-editor');
     if (dom instanceof HTMLElement) {
       const view = EditorView.findFromDOM(dom);
@@ -194,6 +203,6 @@ export async function waitForCodeEditor(root: ParentNode, tries = 50): Promise<E
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
-  }
+  } while (Date.now() < deadline);
   throw new Error('CodeMirror editor did not mount.');
 }
