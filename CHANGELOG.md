@@ -7,6 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-01
+
+### Added
+
+- **Every word the editor says is the host's to replace**, through a `strings` property. There is
+  no locale registry and no dependency added: picking a language is the host's job, exactly as
+  picking a theme is, and a page that speaks another one hands down its own set from whatever
+  translation machinery it already runs.
+
+  Strings are grouped by where they belong, and a partial set replaces only what it names — in the
+  group it names, and in every group it does not:
+
+  ```ts
+  editor.strings = {
+    toolbar: { addState: 'Adicionar estado' },
+    state: { remove: 'Remover estado' },
+  };
+  editor.strings.toolbar.paste; // 'Paste' — still English
+  editor.strings.dialog.save; // 'Save' — a group left alone keeps all of it
+  ```
+
+  Reading `strings` back gives the whole set with the defaults filled in; assigning `undefined`
+  puts them all back. A key a group does not have is ignored, so a translation file that has
+  fallen behind the package cannot smuggle anything into the set.
+
+- **A string that never varies is a string; one that takes values is a function.** There is
+  deliberately no `{placeholder}` syntax — it would be a second language to learn and a second
+  thing to escape, and it could not express what the sentences below need anyway. The parameters
+  are named and typed, so an editor completes them and the compiler catches a misspelling:
+
+  ```ts
+  editor.strings = {
+    properties: { orderReadout: ({ index, total }) => `${index} de ${total}` },
+    state: { creationLabel: ({ name }) => `Adicionar uma transição de criação para “${name}”` },
+  };
+  ```
+
+  That is what makes real plural rules possible. Polish and Russian need three forms and Arabic
+  six, and no template syntax without a library behind it is going to choose between them; a
+  function hands the decision to the host's own `Intl.PluralRules`, or to the i18n library it
+  already has:
+
+  ```ts
+  const plural = new Intl.PluralRules('ru');
+  const FORMS = { one: 'элемент', few: 'элемента', many: 'элементов', other: 'элементов' };
+
+  editor.strings = {
+    json: { itemCount: ({ count }) => `${count} ${FORMS[plural.select(count)]}` },
+  };
+  ```
+
+  It is also what keeps word order out of the component's hands. Nothing is built by gluing a verb
+  to a noun, because where the verb goes is the sentence's business — English puts it first,
+  Japanese last:
+
+  ```ts
+  editor.strings = {
+    toolbar: { undoChange: ({ change }) => `${change} を元に戻す` },
+    change: { 'state-add': '状態の追加' },
+  };
+  // aria-label: 状態の追加 を元に戻す
+  ```
+
+  The same reasoning decides where a branch lives. A row's parameters toggle receives `expanded`
+  as a boolean rather than being two keys the component has already chosen between, the parameters
+  badge receives `count: 0` rather than having an empty variant of its own, and a name's quotation
+  marks belong to `source.state` rather than to the component.
+
+- **Twenty-four groups**, listed by `STRING_GROUPS`, with the English in `DEFAULT_STRINGS` —
+  the practical starting point for a translation. `toolbar`, `canvas`, `kind`, `card`, `state`,
+  `color`, `rename`, `transition`, `startNode`, `source`, `chip`, `phase`, `trigger`,
+  `triggerVerb`, `sideEffect`, `sideEffects`, `row`, `params`, `properties`, `change`, `dialog`,
+  `organize`, `json` and `seed`. Five of them — `change`, `color`, `phase`, `trigger` and `kind` —
+  are keyed by the model's own values, so `strings.change[change.kind]` is a direct lookup rather
+  than a name to map through.
+
+  Within a group a string is named after what it means rather than where it sits, so replacing one
+  covers every place it is drawn: one `card.toolsLabel` names the tool rail above a state card and
+  above an edge card alike.
+
+  Strings can be set at any time. The toolbar is relabelled where it stands, the cards are rebuilt
+  — a one-time cost at setup — and the dialogs are handed the new set as they open. Each dialog
+  also takes a `strings` property of its own, for a host driving one directly.
+
+- **Four strings that write into the machine**, in a group of their own and marked as such. The
+  `seed` group holds the names new elements are born with — `stateName`, `transitionName`,
+  `creationName` and `copySuffix` — and those are saved into the machine the host round-trips, not
+  merely drawn over it. Translating them translates the data, which is usually what a localized
+  editor wants:
+
+  ```ts
+  editor.strings = { seed: { stateName: ({ index }) => `Estado ${index}` } };
+  editor.addState().name; // 'Estado 1'
+  ```
+
+  A host whose backend keys off the name `create` for creation transitions should leave
+  `seed.creationName` alone.
+
+- `mergeStrings`, `isStringGroup`, `DEFAULT_STRINGS` and `STRING_GROUPS`, with the
+  `EditorStrings`, `StringOverrides`, `GroupOverrides`, `StringGroup` and `ElementKind` types.
+
+- `parseParamsText` takes the three messages it can produce, so the JSON parameters tab reports a
+  malformed value in the host's language. `DEFAULT_JSON_TEXT_MESSAGES` holds the English and the
+  `JsonTextMessages` type describes the shape. `JSON.parse`'s own syntax errors are passed through
+  untouched: they name the position the text broke at, which is the useful part, and translating
+  them is the runtime's job.
+
+- `copyName` takes the suffix to append, so a pasted copy is named in the host's language. The
+  suffix already on a name is still replaced rather than stacked, and any characters `RegExp`
+  reads as syntax are escaped, so a suffix can be any words at all. `COPY_SUFFIX` holds the
+  English default.
+
+- The label helpers all take an optional trailing `EditorStrings`, so a host rendering its own
+  panel beside the canvas can describe an element in the same words the editor uses:
+  `describeSideEffectList`, `describeElement`, `describeSource`, `shortHookLabel`,
+  `formatSideEffectHead`, `formatSideEffectSummary`, `formatSideEffectTitle` and
+  `formatParamsBadge`. Left out, every one of them stays in English exactly as before.
+
+- `SideEffectListLabels` and `DEFAULT_ADD_PLACEHOLDER` are now exported.
+
+### Changed
+
+- **`historyLabel` takes `'undo' | 'redo'` where it used to take `'Undo' | 'Redo'`.** It used to
+  build `Undo add state` by lowercasing the first character of the change and appending it to the
+  verb, which is an English trick: German capitalizes nouns, and the word order is wrong in
+  Japanese. The verb is now a string of its own and the change is handed to a function, so both
+  are the translation's to place. Callers pass the lowercase form:
+
+  ```ts
+  historyLabel('undo', pendingUndo(history));
+  ```
+
+  The English output is unchanged, so a host that only renders the result needs no other edit.
+
+- The literals the editor used to draw are gone from the components and live in `DEFAULT_STRINGS`.
+  `EMPTY_SIDE_EFFECTS_LABEL`, `DISABLED_MARKER` and `START_NODE_LABEL` still export the same
+  English they always did, and remain the values the helpers fall back to.
+
+- Validation issues from `parseStateMachine` stay in English on purpose. They describe the host's
+  own payload and name its field paths — `machine.states[0].name must be a non-empty string` —
+  which makes them diagnostics for whoever wrote that payload rather than copy for whoever is
+  looking at the canvas.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added
@@ -436,7 +579,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vintasoftware/vinta-state-machine-editor/compare/v0.4.0...v0.5.0
