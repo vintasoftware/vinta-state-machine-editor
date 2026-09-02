@@ -177,6 +177,11 @@ export interface EditorStrings {
     /** Accessible name of the band itself. */
     readonly bandLabel: (params: { readonly name: string }) => string;
     readonly fansOut: string;
+    /** The fan-out line, which leaves for another machine rather than editing. */
+    readonly fansOutLink: (params: { readonly machine: string; readonly name: string }) => string;
+    readonly fansOutTitle: (params: { readonly machine: string }) => string;
+    /** Accessible name of the dashed stub drawn leaving the card. */
+    readonly stubLabel: (params: { readonly name: string; readonly machine: string }) => string;
     readonly joinsWith: string;
     readonly timeout: string;
     readonly countsAs: string;
@@ -530,6 +535,9 @@ export const DEFAULT_STRINGS: EditorStrings = {
     unmark: ({ name }) => `Unmark “${name}” as a state that waits for a batch`,
     bandLabel: ({ name }) => `The batch “${name}” waits for`,
     fansOut: 'Fans out to',
+    fansOutLink: ({ machine, name }) => `Open the machine “${machine}” that “${name}” fans out to`,
+    fansOutTitle: ({ machine }) => `Open ${machine}`,
+    stubLabel: ({ name, machine }) => `“${name}” starts records governed by ${machine}`,
     joinsWith: 'Joins with',
     timeout: 'Timeout',
     countsAs: 'Counts as',

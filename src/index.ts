@@ -4,6 +4,8 @@ import { SideEffectsDialogElement } from './ui/side-effects-dialog.js';
 import { StateMachineEditorElement } from './ui/state-machine-editor.js';
 
 export type {
+  FanOutDetail,
+  FanOutEvent,
   SelectionChangeDetail,
   SelectionChangeEvent,
   StateMachineChangeDetail,
@@ -13,6 +15,7 @@ export type {
   ThemeChangeEvent,
 } from './events.js';
 export {
+  FAN_OUT_EVENT,
   SELECTION_CHANGE_EVENT,
   STATE_MACHINE_CHANGE_EVENT,
   THEME_CHANGE_EVENT,

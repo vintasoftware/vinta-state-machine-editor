@@ -1,10 +1,12 @@
 import type {
+  FanOutEvent,
   SelectionChangeEvent,
   StateMachineChangeEvent,
   StateMachineEditorEventMap,
   ThemeChangeEvent,
 } from '../events.js';
 import {
+  FAN_OUT_EVENT,
   SELECTION_CHANGE_EVENT,
   STATE_MACHINE_CHANGE_EVENT,
   THEME_CHANGE_EVENT,
@@ -98,6 +100,7 @@ import {
 } from '../model/machine.js';
 import { assertStateMachine } from '../model/parse.js';
 import {
+  type CountsAsStatus,
   countsAsStatus,
   emptyWaitingConfig,
   parseDuration,
@@ -196,6 +199,9 @@ const TRANSFORM_SETTLE_MS = 180;
 /** Dropping a transition card this close to its edge snaps it back to automatic placement. */
 const LABEL_SNAP_DISTANCE = 16;
 const FALLBACK_LABEL_SPACING = 160;
+/** How far the dashed fan-out stub reaches past the card, and how far it drops. */
+const FAN_OUT_REACH = 52;
+const FAN_OUT_DROP = 34;
 /** How far the start arrow reaches left of an initial state, and how far down it sits. */
 const START_MARKER_REACH = 42;
 const START_MARKER_Y = 20;
@@ -275,6 +281,8 @@ interface StateView {
   readonly swatches: ReadonlyMap<StateColor, HTMLButtonElement>;
   /** Entry arrow drawn to the left of a state the machine can start in. */
   readonly startMarker: SVGGElement;
+  /** Dashed stub leaving a waiting card, so the fan-out reads as a direction. */
+  readonly fanOutStub: SVGGElement;
   readonly roleButtons: ReadonlyMap<StateRole, HTMLButtonElement>;
   readonly header: HTMLElement;
   readonly name: HTMLElement;
@@ -950,6 +958,7 @@ export class StateMachineEditorElement extends HTMLElement {
     for (const view of this.#stateViews.values()) {
       view.root.remove();
       view.startMarker.remove();
+      view.fanOutStub.remove();
     }
     this.#stateViews.clear();
     for (const path of this.#edgePaths.values()) {
@@ -1069,6 +1078,33 @@ export class StateMachineEditorElement extends HTMLElement {
   /** Replaces the whole fan-out configuration of a state. */
   setStateWaiting(stateId: string, config: WaitingConfig): void {
     this.#commit(setWaiting(this.#machine, stateId, config), { kind: 'state-data', stateId });
+  }
+
+  /**
+   * Asks the host to go to the machine a state fans out to, by emitting
+   * `state-machine-fan-out`. Returns `false` when the state names no machine.
+   *
+   * The canvas draws one version of one machine and a fan-out crosses into
+   * another, so the component says where the user wants to go and stops there:
+   * routing, permissions and what "that machine's editor" even means all belong
+   * to the page around it. This is what the band's **Fans out to** line does.
+   */
+  followFanOut(stateId: string): boolean {
+    const state = findState(this.#machine, stateId);
+    if (state === undefined) {
+      return false;
+    }
+    const childMachine = readWaiting(state).childMachine;
+    if (childMachine.length === 0) {
+      return false;
+    }
+    const event: FanOutEvent = new CustomEvent(FAN_OUT_EVENT, {
+      detail: { stateId, childMachine },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
+    return true;
   }
 
   /** Marks (or unmarks) a state as one that ends the machine. */
@@ -2121,6 +2157,7 @@ export class StateMachineEditorElement extends HTMLElement {
       if (!alive.has(id)) {
         view.root.remove();
         view.startMarker.remove();
+        view.fanOutStub.remove();
         this.#stateViews.delete(id);
         // Any open name editor left the DOM with the card it was inside.
         this.#renameEditors.delete(id);
@@ -2253,10 +2290,27 @@ export class StateMachineEditorElement extends HTMLElement {
       });
       const label = createElement('span', { className: 'band__label', parent: row });
       const value = createElement('span', { className: 'band__value', parent: row });
-      row.addEventListener('click', (event) => {
-        event.stopPropagation();
-        void this.openProperties({ kind: 'state', id: stateId });
-      });
+      /*
+       * The fan-out line leaves for another machine rather than editing this
+       * one, so it is a link and not a way into the dialog. The child machine
+       * is still editable from the card's own properties button.
+       */
+      if (field === 'child') {
+        setIcon(
+          createElement('span', { className: 'band__go', parent: row }),
+          this.#icons,
+          'fanOut',
+        );
+        row.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.followFanOut(stateId);
+        });
+      } else {
+        row.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void this.openProperties({ kind: 'state', id: stateId });
+        });
+      }
       bandRows.set(field, { root: row, label, value });
     }
     // Sits under the band's own lines: a half configured report is an invalid
@@ -2354,6 +2408,19 @@ export class StateMachineEditorElement extends HTMLElement {
       }
     });
 
+    /*
+     * A short dashed stub into empty space. The machine the work goes to is not
+     * on this canvas — one version of one machine is — so it points at nothing
+     * in particular on purpose: it says there is a direction, and the band's
+     * link says where.
+     */
+    const fanOutStub = createSvgElement('g', {
+      className: 'fan-out-stub',
+      parent: this.#edgeLayer,
+    });
+    createSvgElement('path', { className: 'fan-out-stub__line', parent: fanOutStub });
+    createSvgElement('circle', { className: 'fan-out-stub__end', parent: fanOutStub });
+
     const startMarker = createSvgElement('g', {
       className: 'start-marker',
       parent: this.#edgeLayer,
@@ -2413,6 +2480,7 @@ export class StateMachineEditorElement extends HTMLElement {
       creationButton,
       chips,
       startMarker,
+      fanOutStub,
       roleButtons,
     };
   }
@@ -2471,10 +2539,25 @@ export class StateMachineEditorElement extends HTMLElement {
     // one, and it still has something to say — so the band is not the toggle's.
     const status = countsAsStatus(state, isFinalState(this.#machine, state.id));
     view.band.hidden = !config.isWaiting && status.kind === 'none';
+    this.#updateFanOutStub(view, state, config);
     if (view.band.hidden) {
       return;
     }
     view.band.setAttribute('aria-label', text.bandLabel({ name: state.name }));
+    this.#updateBandRows(view, state, config, status);
+    view.bandError.hidden = status.kind !== 'broken';
+    view.bandError.textContent =
+      status.kind === 'broken' ? text.brokenError({ half: text.half[status.half] }) : '';
+  }
+
+  /** Writes the band's lines, and hides the ones this state has nothing to say on. */
+  #updateBandRows(
+    view: StateView,
+    state: StateNode,
+    config: WaitingConfig,
+    status: CountsAsStatus,
+  ): void {
+    const text = this.#strings.waiting;
     const counts = this.#countsAsLine(status);
     const lines: Readonly<Record<BandField, { readonly label: string; readonly value: string }>> = {
       child: { label: text.fansOut, value: config.isWaiting ? config.childMachine : '' },
@@ -2482,7 +2565,10 @@ export class StateMachineEditorElement extends HTMLElement {
         label: text.joinsWith,
         value: config.joinAction.length === 0 ? '' : text.action({ name: config.joinAction }),
       },
-      timeout: { label: text.timeout, value: config.isWaiting ? config.timeout : '' },
+      timeout: {
+        label: text.timeout,
+        value: config.isWaiting ? this.#formatTimeout(config.timeout) : '',
+      },
       counts: { label: text.countsAs, value: counts.value },
     };
     for (const [field, row] of view.bandRows) {
@@ -2492,21 +2578,59 @@ export class StateMachineEditorElement extends HTMLElement {
       if (!shown) {
         continue;
       }
-      const written = field === 'timeout' ? this.#formatTimeout(line.value) : line.value;
-      const missing = written.length === 0;
+      const missing = line.value.length === 0;
       row.label.textContent = line.label;
-      row.value.textContent = missing ? text.unset : written;
+      row.value.textContent = missing ? text.unset : line.value;
       row.root.classList.toggle('is-unset', missing);
       row.root.classList.toggle('is-broken', field === 'counts' && status.kind === 'broken');
-      row.root.title = counts.title.length > 0 && field === 'counts' ? counts.title : '';
-      row.root.setAttribute(
-        'aria-label',
-        text.rowLabel({ field: line.label, value: row.value.textContent, name: state.name }),
-      );
+      // The fan-out line goes somewhere rather than editing something, so it
+      // names where instead of what it holds.
+      const named =
+        field === 'child'
+          ? {
+              label: text.fansOutLink({ machine: config.childMachine, name: state.name }),
+              title: text.fansOutTitle({ machine: config.childMachine }),
+            }
+          : {
+              label: text.rowLabel({
+                field: line.label,
+                value: row.value.textContent ?? '',
+                name: state.name,
+              }),
+              title: field === 'counts' ? counts.title : '',
+            };
+      row.root.setAttribute('aria-label', named.label);
+      row.root.title = named.title;
     }
-    view.bandError.hidden = status.kind !== 'broken';
-    view.bandError.textContent =
-      status.kind === 'broken' ? text.brokenError({ half: text.half[status.half] }) : '';
+  }
+
+  /**
+   * The dashed stub leaving a waiting card. Drawn only where there is somewhere
+   * to go: a fan-out with no machine named has no direction to show.
+   */
+  #updateFanOutStub(view: StateView, state: StateNode, config: WaitingConfig): void {
+    const shown = config.isWaiting && config.childMachine.length > 0;
+    view.fanOutStub.style.display = shown ? '' : 'none';
+    if (!shown) {
+      return;
+    }
+    const rect = this.#rectFor(state);
+    const start = { x: rect.x + rect.width, y: rect.y + rect.height - 18 };
+    const end = { x: start.x + FAN_OUT_REACH, y: start.y + FAN_OUT_DROP };
+    const line = view.fanOutStub.firstElementChild;
+    const dot = view.fanOutStub.lastElementChild;
+    if (line !== null) {
+      line.setAttribute('d', `M ${start.x} ${start.y} Q ${end.x} ${start.y} ${end.x} ${end.y}`);
+    }
+    if (dot !== null) {
+      dot.setAttribute('cx', String(end.x));
+      dot.setAttribute('cy', String(end.y));
+      dot.setAttribute('r', '3.5');
+    }
+    view.fanOutStub.setAttribute(
+      'aria-label',
+      this.#strings.waiting.stubLabel({ name: state.name, machine: config.childMachine }),
+    );
   }
 
   /**
@@ -2519,7 +2643,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #bandRowShown(
     field: BandField,
     config: WaitingConfig,
-    status: ReturnType<typeof countsAsStatus>,
+    status: CountsAsStatus,
     value: string,
   ): boolean {
     if (field === 'counts') {
@@ -2535,7 +2659,7 @@ export class StateMachineEditorElement extends HTMLElement {
    * The report pair as one line. A final state can never be left, so its leave
    * half could never fire: the control drops it and says which half is left.
    */
-  #countsAsLine(status: ReturnType<typeof countsAsStatus>): {
+  #countsAsLine(status: CountsAsStatus): {
     readonly value: string;
     readonly title: string;
   } {

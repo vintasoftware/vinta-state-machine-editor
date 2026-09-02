@@ -218,6 +218,21 @@ export const editorStyles: string = `
 
   .node.is-final.is-selected { outline-color: var(--sme-accent); }
 
+  /*
+   * Points at nothing in particular: the machine it leads to is not this one.
+   * Dashed and in the accent rather than the edge colour, so it never reads as
+   * a transition that has lost its target.
+   */
+  .fan-out-stub__line {
+    fill: none;
+    stroke: var(--sme-accent);
+    stroke-width: 1.75;
+    stroke-dasharray: 5 4;
+    opacity: 0.7;
+  }
+
+  .fan-out-stub__end { fill: var(--sme-accent); opacity: 0.7; }
+
   .start-marker__dot { fill: var(--sme-text); }
   .start-marker__line { stroke: var(--sme-text); stroke-width: 1.75; }
 
@@ -376,6 +391,12 @@ export const editorStyles: string = `
     font-size: 11px;
     font-weight: 600;
   }
+
+  .band__row--child { grid-template-columns: 84px 1fr auto; }
+
+  .band__go { font-size: 10px; color: var(--sme-text-muted); }
+  .band__row--child:hover .band__go { color: var(--sme-accent); }
+  .band__row--child:hover .band__value { text-decoration: underline; }
 
   .band__row--join .band__value { color: var(--sme-accent); }
   .band__row--counts.is-broken .band__value { color: var(--sme-danger); }

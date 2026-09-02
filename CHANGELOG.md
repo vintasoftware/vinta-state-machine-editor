@@ -130,6 +130,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The band is drawn for a state that only reports, even when it waits for nothing itself.
 
+- **The fan-out leaves the card.** `FANS OUT TO` is a link that emits a new
+  `state-machine-fan-out` event — `{ stateId, childMachine }`, bubbling and composed — rather
+  than navigating itself. The canvas draws one version of one machine and a fan-out crosses into
+  another, so routing, permissions and what "that machine's editor" even means belong to the page
+  around it:
+
+  ```js
+  editor.addEventListener('state-machine-fan-out', (event) => {
+    location.href = '/admin/machines/' + event.detail.childMachine + '/';
+  });
+  ```
+
+  `editor.followFanOut(stateId)` does the same from code, and returns `false` when the state
+  names no machine. The child machine stays editable from the card's properties button.
+
+- **A short dashed stub is drawn leaving a waiting card**, so the fan-out reads as a direction
+  and not only as text. It points at empty space on purpose — the machine it leads to is not on
+  this canvas — and is drawn in the accent colour rather than the edge colour, so it never reads
+  as a transition that has lost its target. There is no stub where no child machine is named.
+  Inline subgraph expansion and drill-in breadcrumbs are deliberately out of scope.
+
+- New `fanOut` icon (`↗`).
+
 ### Changed
 
 - **The creation button moved out of the toggles row onto a line of its own**, and says what it

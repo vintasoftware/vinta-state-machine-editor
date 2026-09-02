@@ -57,6 +57,8 @@ export interface EditorIcons {
   readonly final: Icon;
   /** Marks a state that fans work out and waits for it — the batch it joins on. */
   readonly waiting: Icon;
+  /** Follows a fan-out into the machine the child records are governed by. */
+  readonly fanOut: Icon;
   /** Leads a label that adds something, e.g. `+ Creation`. */
   readonly add: Icon;
   /** The grip a side effect is dragged by to reorder it. */
@@ -96,6 +98,7 @@ export const DEFAULT_ICONS: EditorIcons = {
   initial: '▶',
   final: '◉',
   waiting: '⑂',
+  fanOut: '↗',
   add: '+',
   dragHandle: '⠿',
   params: '{ }',

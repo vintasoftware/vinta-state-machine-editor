@@ -100,6 +100,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Colour a state | Press the round swatch in the card's rail and pick one of the six |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
 | Mark a state as waiting on a batch | Toggle **⑂ Waiting** beside them — the card grows a band naming the fan-out |
+| Follow a fan-out | Click **FANS OUT TO** in the band — the editor emits `state-machine-fan-out` and the host navigates |
 | Remove | Click **✕** in the card's rail, or select it and press `Delete` |
 | Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
 | Copy / paste | Select a state or transition, then toolbar **Copy** / **Paste**, or `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V` |
@@ -425,6 +426,23 @@ It rides in four keys of `state.data`:
 - **The timeout is shown in whole units**: `PT2H` reads as `2h`, `P1DT6H30M` as `1d 6h 30m`, and
   anything the editor cannot read is shown exactly as it was written. Days down to seconds only —
   months and years depend on when you start counting.
+
+**The fan-out leaves the card.** `FANS OUT TO` is a link rather than a way into the dialog: it
+emits `state-machine-fan-out` and stops there, and a short dashed stub is drawn leaving the card
+into empty space so the fan-out reads as a direction and not only as text. The canvas draws one
+version of one machine, and nesting spans machines — routing is the page's business.
+
+```js
+editor.addEventListener('state-machine-fan-out', (event) => {
+  const { stateId, childMachine } = event.detail;
+  location.href = '/admin/machines/' + childMachine + '/';
+});
+```
+
+`editor.followFanOut(stateId)` does the same from code and returns `false` when the state names
+no machine. The child machine itself stays editable from the card's **⚙** properties button.
+There is deliberately no inline subgraph expansion and no drill-in breadcrumb: the canvas draws
+one version, and solving nesting properly is separate work.
 
 A waiting state is marked so it is findable while scanning a graph: a weave over its colour bar
 and a dashed left edge. `color` is deliberately left alone — it is the author's choice and it
@@ -761,14 +779,15 @@ scheme and returns it, which is what the toolbar's button calls.
 | `state-machine-change` | `{ value, change, transient }` — `change` says what happened (`state-move`, `side-effects-change`, …); `transient: true` marks the intermediate frames of a drag. |
 | `state-machine-selection-change` | `{ selection }` |
 | `state-machine-theme-change` | `{ theme }` — fires when the scheme actually changes, including the switch the toolbar's own button makes. Setting `theme` to the scheme already in force stays quiet. |
+| `state-machine-fan-out` | `{ stateId, childMachine }` — someone followed a waiting state's **Fans out to** link. The editor never navigates itself. |
 
-Both bubble and are `composed`, so they cross shadow boundaries.
+They all bubble and are `composed`, so they cross shadow boundaries.
 
 `change.kind` is one of `state-add`, `state-remove`, `state-rename`, `state-move`, `state-color`,
 `transition-add`, `transition-remove`, `transition-rename`, `transition-move`,
 `transition-trigger`, `transition-guard`, `transition-permission`, `transition-reorder`,
-`description`, `side-effects-change`, `initial-states-change`, `final-states-change`, `layout` and
-`replace`. `description` carries a `ref` (`{ kind, id }`) since both states and transitions have
+`description`, `side-effects-change`, `state-data`, `initial-states-change`,
+`final-states-change`, `layout` and `replace`. `description` carries a `ref` (`{ kind, id }`) since both states and transitions have
 one; every other transition kind carries a `transitionId`. `describeChange(change)` turns any of
 them into a label for an undo stack.
 
@@ -1039,6 +1058,7 @@ the JSON parameter fields.
 | `link` | → | The handle dragged from one card to another, and from the start bar |
 | `initial` / `final` | ▶ ◉ | The role pills on a state card |
 | `waiting` | ⑂ | The role pill marking a state that waits for a batch |
+| `fanOut` | ↗ | The link following a fan-out into the child machine |
 | `add` | + | Leads `Creation`, `Add side effect`, `Add item` and `Add field` |
 | `dragHandle` | ⠿ | The grip a side effect or a decision row is reordered by |
 | `params` | `{ }` | The button holding a side effect's JSON parameters |
