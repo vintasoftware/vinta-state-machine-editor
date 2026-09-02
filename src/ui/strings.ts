@@ -13,7 +13,7 @@
  * plural forms above all, which English gets wrong for most of the world.
  */
 
-import type { DurationParts } from '../model/waiting.js';
+import type { CountsAs, DurationParts } from '../model/waiting.js';
 import type { MachineChange, SideEffectPhase, StateColor, StateTrigger } from '../types.js';
 
 /** What the two halves of a copy or paste label are called in prose. */
@@ -179,6 +179,20 @@ export interface EditorStrings {
     readonly fansOut: string;
     readonly joinsWith: string;
     readonly timeout: string;
+    readonly countsAs: string;
+    /** What each outcome is called, mark included. */
+    readonly outcome: Readonly<Record<CountsAs, string>>;
+    /** The pair as it should be on a state that can be left: both halves. */
+    readonly pair: (params: { readonly outcome: string }) => string;
+    readonly pairTitle: string;
+    /** A final state can never be left, so the leave half is dropped. */
+    readonly enterOnly: (params: { readonly outcome: string }) => string;
+    readonly enterOnlyTitle: string;
+    /** One half where two were needed — an invalid graph. */
+    readonly broken: (params: { readonly outcome: string }) => string;
+    readonly brokenError: (params: { readonly half: string }) => string;
+    /** What each half of the pair is called, for that message. */
+    readonly half: Readonly<Record<'enter' | 'leave', string>>;
     /** What a row of the band reads when its key is not set. */
     readonly unset: string;
     /** A row of the band, which opens the state's properties. */
@@ -204,6 +218,9 @@ export interface EditorStrings {
     readonly fieldTimeout: string;
     readonly timeoutPlaceholder: string;
     readonly timeoutHint: string;
+    readonly fieldCounts: string;
+    readonly countsHint: string;
+    readonly countsNone: string;
   };
 
   /** The UML initial pseudostate every creation transition leaves from. */
@@ -515,6 +532,23 @@ export const DEFAULT_STRINGS: EditorStrings = {
     fansOut: 'Fans out to',
     joinsWith: 'Joins with',
     timeout: 'Timeout',
+    countsAs: 'Counts as',
+    outcome: {
+      success: '✓ success',
+      failure: '✗ failure',
+    },
+    pair: ({ outcome }) => outcome,
+    pairTitle: 'Reported on entering, and taken back on leaving',
+    enterOnly: ({ outcome }) => `${outcome} · on enter only`,
+    enterOnlyTitle:
+      'A final state can never be left, so nothing takes the report back — the leave half is dropped.',
+    broken: ({ outcome }) => `${outcome} · half configured`,
+    brokenError: ({ half }) =>
+      `Only the ${half} half of this report is here. The pair has to be whole on a state that can be left.`,
+    half: {
+      enter: 'enter',
+      leave: 'leave',
+    },
     unset: 'not set',
     rowLabel: ({ field, value, name }) => `${field}: ${value}. Edit the attributes of “${name}”.`,
     action: ({ name }) => `⚡ ${name}`,
@@ -546,6 +580,10 @@ export const DEFAULT_STRINGS: EditorStrings = {
     fieldTimeout: 'Timeout',
     timeoutPlaceholder: 'e.g. PT2H',
     timeoutHint: 'ISO 8601 duration. Left empty, the wait has no deadline.',
+    fieldCounts: 'Counts as',
+    countsHint:
+      'What entering this state reports to the batch its parent waits on. Stored once; the host turns it into the hooks that run.',
+    countsNone: 'Counts towards nothing',
   },
 
   startNode: {

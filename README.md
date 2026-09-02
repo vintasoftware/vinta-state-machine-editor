@@ -443,6 +443,42 @@ readWaiting(machine.states[0]); // { isWaiting: true, joinAction: 'import.finish
 
 Changes arrive as `state-data`.
 
+### Counting towards a parent's batch
+
+A child machine's state can count towards the batch its parent is waiting on. The engine runs
+that as a **pair** of hooks — one on enter, one on leave — but it is one concept, so the card
+draws it as one line of the same band:
+
+```text
+│ COUNTS AS     ✓ success             │
+```
+
+```jsonc
+"data": { "counts_as": "success" }   // "success" | "failure" | absent
+```
+
+- **The key is the truth.** The editor never inspects the effect lists or matches a
+  `definitionId` to decide any of this; the host translates `counts_as` into whatever hook rows
+  it needs.
+- **`◉ Final` drops the leave half**, and the control says so — `✓ success · on enter only`. A
+  state listed in `finalStateIds` can never be left (the engine refuses the move), so its
+  leave-side hook could never fire. Toggle `Final` back off and the pair is whole again.
+- **A half configured pair renders broken**, with the reason inline. To know that, the editor
+  needs one more key from the host:
+
+  ```jsonc
+  "data": { "counts_as": "success", "counts_as_partial": "enter" }
+  ```
+
+  `counts_as_partial` names the half the host found on its own. On a final state `"enter"` is
+  exactly right and nothing is flagged; anywhere else it is a half configured pair, and
+  `"leave"` alone is broken everywhere. Without `counts_as` the control is not drawn at all,
+  whatever `counts_as_partial` says.
+- The band appears for a state that only reports, even when it waits for nothing itself.
+
+`countsAsStatus(state, isFinal)` is the pure helper behind it, and the outcome is editable under
+*Counts as* in the state's properties dialog.
+
 ### Host-owned data
 
 `StateMachine`, `StateNode`, `Transition` and `SideEffect` each carry a `data: JsonObject` that
@@ -462,9 +498,10 @@ Absent parses as `{}`; a non-object is a validation error with a path
 (`machine.states[0].data must be a JSON object.`), exactly like `params`. The `create*` helpers
 accept one and default to `{}`; every other helper carries it through untouched.
 
-The one exception is the four keys of `state.data` that describe a
-[waiting state](#waiting-a-state-that-fans-work-out) — `is_waiting`, `join_action`,
-`child_machine` and `timeout`. Those the component does read, does render and does write, and
+The one exception is the six keys of `state.data` that describe a
+[waiting state](#waiting-a-state-that-fans-work-out) and the
+[report it makes](#counting-towards-a-parents-batch) — `is_waiting`, `join_action`,
+`child_machine`, `timeout`, `counts_as` and `counts_as_partial`. Those the component does read, does render and does write, and
 edits to them arrive as a `state-data` change. Every other key, and every other object's `data`,
 is carried through untouched and emits nothing; a host mutating one assigns `value`.
 

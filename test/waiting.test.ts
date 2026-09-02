@@ -63,6 +63,7 @@ describe('the waiting configuration in state.data', () => {
       joinAction: 'import.finish',
       childMachine: 'import_file.status',
       timeout: 'PT2H',
+      countsAs: '',
     });
   });
 
@@ -100,6 +101,7 @@ describe('the waiting configuration in state.data', () => {
       joinAction: 'import.finish',
       childMachine: '',
       timeout: '',
+      countsAs: '',
     });
     expect(next.states[0]?.data).toEqual({
       is_waiting: true,

@@ -378,6 +378,14 @@ export const editorStyles: string = `
   }
 
   .band__row--join .band__value { color: var(--sme-accent); }
+  .band__row--counts.is-broken .band__value { color: var(--sme-danger); }
+
+  .band__error {
+    margin: 3px 0 0;
+    font-size: 10px;
+    line-height: 1.35;
+    color: var(--sme-danger);
+  }
   .band__row.is-unset .band__value { font-weight: 400; font-style: italic; color: var(--sme-text-muted); }
 
   .hooks { display: grid; gap: 4px; padding: 8px 10px 10px; }

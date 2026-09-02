@@ -105,6 +105,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `waiting` string group, and a `waiting` icon (`⑂`).
 
+- **The report a child state makes to its parent's batch is one control**, in the same band:
+
+  ```text
+  │ COUNTS AS     ✓ success             │
+  ```
+
+  The engine runs it as a *pair* of hooks — one on enter, one on leave — but it is one concept,
+  and drawn as two unrelated chips in two different lanes nothing said they belonged together.
+
+  It is driven by `state.data.counts_as` (`"success"` | `"failure"` | absent), **never** by
+  matching a handler key in the effect lists. The Django side translates the key into the hook
+  rows; the editor stores the key and nothing else.
+
+- **Toggling `◉ Final` visibly drops the leave half**, live: the control reads
+  `✓ success · on enter only`. A state listed in `finalStateIds` can never be left — the engine
+  refuses the move — so its leave-side hook could never fire.
+
+- **A half configured pair renders broken**, struck in the danger colour with the reason inline
+  under the band. That needs one key from the host, `state.data.counts_as_partial`
+  (`"enter"` | `"leave"`), naming the half it found on its own: without it the editor would have
+  to go matching handler keys, which is exactly what it must not do. It is an error on any state
+  that can be left, and `"leave"` on its own is an error everywhere.
+
+- The band is drawn for a state that only reports, even when it waits for nothing itself.
+
 ### Changed
 
 - **The creation button moved out of the toggles row onto a line of its own**, and says what it
@@ -116,8 +141,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The role toggles wrap instead of clipping.** A pill is never squeezed below the width of the
   word inside it, so a translated set with a long word for *Waiting* pushes it onto a second line
   rather than showing `Wait…`.
-
-### Changed
 
 - **`state.data` is no longer entirely opaque.** The component now owns four keys inside it —
   and nothing else. Edits to them arrive as a new `state-data` change, and `updateState` takes a

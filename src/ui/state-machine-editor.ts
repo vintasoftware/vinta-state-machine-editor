@@ -98,6 +98,7 @@ import {
 } from '../model/machine.js';
 import { assertStateMachine } from '../model/parse.js';
 import {
+  countsAsStatus,
   emptyWaitingConfig,
   parseDuration,
   readWaiting,
@@ -229,9 +230,9 @@ const EMPTY_GEOMETRY: EdgeGeometry = {
 };
 
 /** The lines of the waiting band, top to bottom. */
-type BandField = 'child' | 'join' | 'timeout';
+type BandField = 'child' | 'join' | 'timeout' | 'counts';
 
-const BAND_FIELDS: readonly BandField[] = ['child', 'join', 'timeout'];
+const BAND_FIELDS: readonly BandField[] = ['child', 'join', 'timeout', 'counts'];
 
 type HookKey = `${StateTrigger}:${SideEffectPhase}`;
 
@@ -266,6 +267,8 @@ interface StateView {
   /** Structure, not side effects: the batch this state fans out and waits for. */
   readonly band: HTMLElement;
   readonly bandRows: ReadonlyMap<BandField, BandRowView>;
+  /** Inline complaint about a report pair that arrived with one half missing. */
+  readonly bandError: HTMLElement;
   readonly waitingButton: HTMLButtonElement;
   readonly colorButton: HTMLButtonElement;
   readonly palette: HTMLElement;
@@ -387,7 +390,8 @@ function sameWaiting(a: WaitingConfig, b: WaitingConfig): boolean {
     a.isWaiting === b.isWaiting &&
     a.joinAction === b.joinAction &&
     a.childMachine === b.childMachine &&
-    a.timeout === b.timeout
+    a.timeout === b.timeout &&
+    a.countsAs === b.countsAs
   );
 }
 
@@ -2255,6 +2259,10 @@ export class StateMachineEditorElement extends HTMLElement {
       });
       bandRows.set(field, { root: row, label, value });
     }
+    // Sits under the band's own lines: a half configured report is an invalid
+    // graph, and the place to say so is where the half is drawn.
+    const bandError = createElement('p', { className: 'band__error', parent: band });
+    bandError.hidden = true;
 
     const hooks = createElement('div', { className: 'hooks', parent: root });
     const chips = new Map<HookKey, ChipView>();
@@ -2389,6 +2397,7 @@ export class StateMachineEditorElement extends HTMLElement {
       bar,
       band,
       bandRows,
+      bandError,
       waitingButton,
       colorButton,
       palette,
@@ -2458,33 +2467,93 @@ export class StateMachineEditorElement extends HTMLElement {
     );
 
     view.root.classList.toggle('is-waiting', config.isWaiting);
-    view.band.hidden = !config.isWaiting;
-    if (!config.isWaiting) {
+    // A state that reports into its parent's batch is not itself waiting for
+    // one, and it still has something to say — so the band is not the toggle's.
+    const status = countsAsStatus(state, isFinalState(this.#machine, state.id));
+    view.band.hidden = !config.isWaiting && status.kind === 'none';
+    if (view.band.hidden) {
       return;
     }
     view.band.setAttribute('aria-label', text.bandLabel({ name: state.name }));
+    const counts = this.#countsAsLine(status);
     const lines: Readonly<Record<BandField, { readonly label: string; readonly value: string }>> = {
-      child: { label: text.fansOut, value: config.childMachine },
+      child: { label: text.fansOut, value: config.isWaiting ? config.childMachine : '' },
       join: {
         label: text.joinsWith,
         value: config.joinAction.length === 0 ? '' : text.action({ name: config.joinAction }),
       },
-      timeout: { label: text.timeout, value: this.#formatTimeout(config.timeout) },
+      timeout: { label: text.timeout, value: config.isWaiting ? config.timeout : '' },
+      counts: { label: text.countsAs, value: counts.value },
     };
     for (const [field, row] of view.bandRows) {
       const line = lines[field];
-      const missing = line.value.length === 0;
-      // The join is the only line worth drawing empty: see the doc comment.
-      row.root.hidden = missing && field !== 'join';
+      const shown = this.#bandRowShown(field, config, status, line.value);
+      row.root.hidden = !shown;
+      if (!shown) {
+        continue;
+      }
+      const written = field === 'timeout' ? this.#formatTimeout(line.value) : line.value;
+      const missing = written.length === 0;
       row.label.textContent = line.label;
-      row.value.textContent = missing ? text.unset : line.value;
+      row.value.textContent = missing ? text.unset : written;
       row.root.classList.toggle('is-unset', missing);
-      row.root.title = `${line.label}: ${row.value.textContent}`;
+      row.root.classList.toggle('is-broken', field === 'counts' && status.kind === 'broken');
+      row.root.title = counts.title.length > 0 && field === 'counts' ? counts.title : '';
       row.root.setAttribute(
         'aria-label',
         text.rowLabel({ field: line.label, value: row.value.textContent, name: state.name }),
       );
     }
+    view.bandError.hidden = status.kind !== 'broken';
+    view.bandError.textContent =
+      status.kind === 'broken' ? text.brokenError({ half: text.half[status.half] }) : '';
+  }
+
+  /**
+   * Whether a line of the band is drawn.
+   *
+   * A line with nothing in it is left out, with two exceptions: the join action,
+   * whose absence is the thing worth seeing — it is what closes the wait — and
+   * the report, which is only ever drawn when there is one.
+   */
+  #bandRowShown(
+    field: BandField,
+    config: WaitingConfig,
+    status: ReturnType<typeof countsAsStatus>,
+    value: string,
+  ): boolean {
+    if (field === 'counts') {
+      return status.kind !== 'none';
+    }
+    if (!config.isWaiting) {
+      return false;
+    }
+    return field === 'join' || value.length > 0;
+  }
+
+  /**
+   * The report pair as one line. A final state can never be left, so its leave
+   * half could never fire: the control drops it and says which half is left.
+   */
+  #countsAsLine(status: ReturnType<typeof countsAsStatus>): {
+    readonly value: string;
+    readonly title: string;
+  } {
+    const text = this.#strings.waiting;
+    if (status.kind === 'none') {
+      return { value: '', title: '' };
+    }
+    const outcome = text.outcome[status.countsAs];
+    if (status.kind === 'enter-only') {
+      return { value: text.enterOnly({ outcome }), title: text.enterOnlyTitle };
+    }
+    if (status.kind === 'broken') {
+      return {
+        value: text.broken({ outcome }),
+        title: text.brokenError({ half: text.half[status.half] }),
+      };
+    }
+    return { value: text.pair({ outcome }), title: text.pairTitle };
   }
 
   /** A timeout in whole units when it is a duration, and verbatim when it is not. */

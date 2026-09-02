@@ -153,11 +153,23 @@ export {
   parseSideEffectDefinitions,
   parseStateMachine,
 } from './model/parse.js';
-export type { DurationParts, WaitingConfig } from './model/waiting.js';
+export type {
+  CountsAs,
+  CountsAsHalf,
+  CountsAsStatus,
+  DurationParts,
+  WaitingConfig,
+} from './model/waiting.js';
 export {
+  COUNTS_AS,
+  countsAsStatus,
   emptyWaitingConfig,
+  isCountsAs,
+  isCountsAsHalf,
   isWaitingState,
   parseDuration,
+  readCountsAs,
+  readCountsAsPartial,
   readWaiting,
   setWaiting,
   toggleWaiting,

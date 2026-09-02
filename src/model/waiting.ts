@@ -22,7 +22,25 @@ export const WAITING_KEYS = {
   joinAction: 'join_action',
   childMachine: 'child_machine',
   timeout: 'timeout',
+  countsAs: 'counts_as',
+  countsAsPartial: 'counts_as_partial',
 } as const;
+
+/** How a child state reports back to the batch its parent is waiting on. */
+export type CountsAs = 'success' | 'failure';
+
+export const COUNTS_AS: readonly CountsAs[] = ['success', 'failure'];
+
+export function isCountsAs(value: unknown): value is CountsAs {
+  return COUNTS_AS.some((outcome) => outcome === value);
+}
+
+/** Which half of the report pair a document arrived carrying on its own. */
+export type CountsAsHalf = 'enter' | 'leave';
+
+export function isCountsAsHalf(value: unknown): value is CountsAsHalf {
+  return value === 'enter' || value === 'leave';
+}
 
 export interface WaitingConfig {
   /** Whether the state waits for a batch of child jobs to finish. */
@@ -33,10 +51,20 @@ export interface WaitingConfig {
   readonly childMachine: string;
   /** ISO 8601 duration the wait gives up after. Empty when unset. */
   readonly timeout: string;
+  /**
+   * What entering this state reports to the batch its parent waits on. Empty
+   * when the state counts towards nothing.
+   *
+   * It is stored as one key and rendered as one control, though the engine runs
+   * it as a *pair* of hooks — one on enter, one on leave. The editor never
+   * matches on those hook rows: the key is the truth, and the host translates
+   * it into whatever rows it needs.
+   */
+  readonly countsAs: CountsAs | '';
 }
 
 export function emptyWaitingConfig(): WaitingConfig {
-  return { isWaiting: false, joinAction: '', childMachine: '', timeout: '' };
+  return { isWaiting: false, joinAction: '', childMachine: '', timeout: '', countsAs: '' };
 }
 
 function readFlag(data: JsonObject, key: string): boolean {
@@ -56,7 +84,59 @@ export function readWaiting(state: StateNode): WaitingConfig {
     joinAction: readKey(data, WAITING_KEYS.joinAction),
     childMachine: readKey(data, WAITING_KEYS.childMachine),
     timeout: readKey(data, WAITING_KEYS.timeout),
+    countsAs: readCountsAs(state),
   };
+}
+
+/** The outcome this state reports, or `''` when it reports nothing. */
+export function readCountsAs(state: StateNode): CountsAs | '' {
+  const value = state.data[WAITING_KEYS.countsAs];
+  return isCountsAs(value) ? value : '';
+}
+
+/**
+ * The half of the pair the document arrived with, when the host found only one.
+ *
+ * Whether that is a problem depends on the state: a final state can never be
+ * left, so its leave hook could never fire and `enter` is the whole of the pair
+ * it is allowed to have. See {@link countsAsStatus}.
+ */
+export function readCountsAsPartial(state: StateNode): CountsAsHalf | '' {
+  const value = state.data[WAITING_KEYS.countsAsPartial];
+  return isCountsAsHalf(value) ? value : '';
+}
+
+/** What the report pair on a state adds up to. */
+export type CountsAsStatus =
+  | { readonly kind: 'none' }
+  /** Both halves, which is what a state that can be left needs. */
+  | { readonly kind: 'pair'; readonly countsAs: CountsAs }
+  /** The enter half alone — correct, and the only thing a final state can have. */
+  | { readonly kind: 'enter-only'; readonly countsAs: CountsAs }
+  /** One half where two were needed: an invalid graph the backend will refuse. */
+  | { readonly kind: 'broken'; readonly countsAs: CountsAs; readonly half: CountsAsHalf };
+
+/**
+ * Reads the pair, given whether the state ends the machine.
+ *
+ * A state listed in `finalStateIds` can never be left — the engine refuses the
+ * move — so its leave-side hook could never fire, and the pair is deliberately
+ * short by one. On any other state a half is a half-configured pair, which is
+ * an invalid graph rather than a shorthand.
+ */
+export function countsAsStatus(state: StateNode, isFinal: boolean): CountsAsStatus {
+  const countsAs = readCountsAs(state);
+  if (countsAs === '') {
+    return { kind: 'none' };
+  }
+  const half = readCountsAsPartial(state);
+  if (half === '') {
+    return isFinal ? { kind: 'enter-only', countsAs } : { kind: 'pair', countsAs };
+  }
+  if (half === 'enter' && isFinal) {
+    return { kind: 'enter-only', countsAs };
+  }
+  return { kind: 'broken', countsAs, half };
 }
 
 export function isWaitingState(state: StateNode): boolean {
@@ -104,6 +184,7 @@ export function setWaiting(
   data = withKey(data, WAITING_KEYS.joinAction, config.joinAction);
   data = withKey(data, WAITING_KEYS.childMachine, config.childMachine);
   data = withKey(data, WAITING_KEYS.timeout, config.timeout);
+  data = withKey(data, WAITING_KEYS.countsAs, config.countsAs);
   return updateState(machine, stateId, { data });
 }
 

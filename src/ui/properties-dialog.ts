@@ -1,5 +1,5 @@
 import { parseActionDefinitions } from '../model/parse.js';
-import { emptyWaitingConfig, type WaitingConfig } from '../model/waiting.js';
+import { COUNTS_AS, emptyWaitingConfig, isCountsAs, type WaitingConfig } from '../model/waiting.js';
 import type {
   ActionDefinition,
   ActionProvider,
@@ -447,6 +447,34 @@ export class PropertiesDialogElement extends HTMLElement {
     );
     childInput.addEventListener('input', () => {
       this.#patchWaiting({ childMachine: childInput.value.trim() });
+    });
+
+    const counts = createField(this.#body, text.fieldCounts, {
+      name: 'counts',
+      hint: text.countsHint,
+    });
+    const countsSelect = createElement('select', {
+      className: 'field__input',
+      parent: counts.control,
+      attrs: { 'aria-label': text.fieldCounts, 'data-field': 'counts-as' },
+    });
+    createElement('option', {
+      text: text.countsNone,
+      attrs: { value: '' },
+      parent: countsSelect,
+    });
+    for (const outcome of COUNTS_AS) {
+      createElement('option', {
+        text: text.outcome[outcome],
+        attrs: { value: outcome },
+        parent: countsSelect,
+      });
+    }
+    countsSelect.value = this.#draft.waiting.countsAs;
+    countsSelect.disabled = this.#readOnly;
+    countsSelect.addEventListener('change', () => {
+      const value = countsSelect.value;
+      this.#patchWaiting({ countsAs: isCountsAs(value) ? value : '' });
     });
 
     const timeout = createField(this.#body, text.fieldTimeout, {
