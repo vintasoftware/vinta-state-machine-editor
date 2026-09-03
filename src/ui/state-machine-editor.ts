@@ -2579,6 +2579,7 @@ export class StateMachineEditorElement extends HTMLElement {
     const text = this.#strings.issue;
     const named: Readonly<Record<StateIssue, string>> = {
       'no-join-edge': text.noJoinEdge,
+      'zero-timeout': text.zeroTimeout,
       'terminal-has-exit': text.terminalHasExit,
     };
     this.#writeStripes(

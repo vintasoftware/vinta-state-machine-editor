@@ -238,6 +238,7 @@ export interface EditorStrings {
     readonly label: string;
     readonly noFallback: string;
     readonly noJoinEdge: string;
+    readonly zeroTimeout: string;
     readonly terminalHasExit: string;
     /** A guard the host's own validator refused, carrying its message. */
     readonly guard: (params: { readonly message: string }) => string;
@@ -613,6 +614,7 @@ export const DEFAULT_STRINGS: EditorStrings = {
     label: 'Problems with this card',
     noFallback: 'No fallback — if every guard fails the record is stuck here.',
     noJoinEdge: 'Nothing leaves this state when the work finishes.',
+    zeroTimeout: 'A timeout of zero leaves the batch no time to finish.',
     terminalHasExit: 'Terminal states cannot be left, so these edges never fire.',
     guard: ({ message }) => message,
   },

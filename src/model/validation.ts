@@ -13,19 +13,31 @@
 import type { StateMachine, StateNode } from '../types.js';
 import { isDecision, type TransitionGroup } from './groups.js';
 import { isFinalState, outgoingTransitions } from './machine.js';
-import { readWaiting } from './waiting.js';
+import { isZeroDuration, parseDuration, readWaiting } from './waiting.js';
 
 /** What is wrong with one state. */
 export type StateIssue =
   /** It waits for a batch, but no edge leaving it answers the action that closes the wait. */
   | 'no-join-edge'
+  /** Its wait is given no time at all, so the batch has timed out before it starts. */
+  | 'zero-timeout'
   /** It ends the machine, and the engine refuses to leave it — so its edges are dead. */
   | 'terminal-has-exit';
+
+/** Every kind of state issue, so a host can switch over them exhaustively. */
+export const STATE_ISSUES: readonly StateIssue[] = [
+  'no-join-edge',
+  'zero-timeout',
+  'terminal-has-exit',
+];
 
 /** What is wrong with one decision card. */
 export type DecisionIssue =
   /** Every outcome is guarded, so a record whose guards all fail has nowhere to go. */
   'no-fallback';
+
+/** Every kind of decision issue, for the same reason. */
+export const DECISION_ISSUES: readonly DecisionIssue[] = ['no-fallback'];
 
 /**
  * Everything wrong with one state, in the order it is worth reading.
@@ -43,6 +55,10 @@ export function stateIssues(machine: StateMachine, state: StateNode): readonly S
     );
     if (!closes) {
       issues.push('no-join-edge');
+    }
+    const timeout = parseDuration(waiting.timeout);
+    if (timeout !== undefined && isZeroDuration(timeout)) {
+      issues.push('zero-timeout');
     }
   }
   if (isFinalState(machine, state.id) && outgoingTransitions(machine, state.id).length > 0) {

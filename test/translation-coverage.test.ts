@@ -89,6 +89,7 @@ const ISSUE: StringOverrides['issue'] = {
   label: marker('issue.label'),
   noFallback: marker('issue.noFallback'),
   noJoinEdge: marker('issue.noJoinEdge'),
+  zeroTimeout: marker('issue.zeroTimeout'),
   terminalHasExit: marker('issue.terminalHasExit'),
   guard: ({ message }) => `${marker('issue.guard')}${message}`,
 };
@@ -157,7 +158,7 @@ function everything(): StateMachine {
         id: 'stalled',
         name: 'Stalled',
         position: { x: 0, y: 600 },
-        data: { is_waiting: true },
+        data: { is_waiting: true, timeout: 'PT0S' },
       }),
       createState({ id: 'a', name: 'Landed', position: { x: 600, y: 0 } }),
       createState({ id: 'b', name: 'Missed', position: { x: 600, y: 200 } }),

@@ -84,6 +84,56 @@ describe('what is wrong with a state', () => {
     expect(stateIssues(machine, stateNamed(machine, 'processing'))).toEqual(['no-join-edge']);
   });
 
+  it('flags a wait given no time at all', () => {
+    const machine = machineWith({
+      states: [
+        createState({
+          id: 'processing',
+          name: 'Processing',
+          position: { x: 0, y: 0 },
+          data: { is_waiting: true, join_action: 'import.finish', timeout: 'PT0S' },
+        }),
+        createState({ id: 'done', name: 'Done', position: { x: 400, y: 0 } }),
+      ],
+      transitions: [
+        createTransition({
+          id: 't',
+          name: 'finish',
+          from: 'processing',
+          to: 'done',
+          trigger: FINISH,
+        }),
+      ],
+    });
+    expect(stateIssues(machine, stateNamed(machine, 'processing'))).toEqual(['zero-timeout']);
+  });
+
+  it('says nothing about a timeout it cannot read, or one with time in it', () => {
+    for (const timeout of ['PT2H', 'two hours', '']) {
+      const machine = machineWith({
+        states: [
+          createState({
+            id: 'processing',
+            name: 'Processing',
+            position: { x: 0, y: 0 },
+            data: { is_waiting: true, join_action: 'import.finish', timeout },
+          }),
+          createState({ id: 'done', name: 'Done', position: { x: 400, y: 0 } }),
+        ],
+        transitions: [
+          createTransition({
+            id: 't',
+            name: 'finish',
+            from: 'processing',
+            to: 'done',
+            trigger: FINISH,
+          }),
+        ],
+      });
+      expect(stateIssues(machine, stateNamed(machine, 'processing'))).toEqual([]);
+    }
+  });
+
   it('flags a terminal state with a way out', () => {
     const machine = machineWith({
       finalStateIds: ['done'],

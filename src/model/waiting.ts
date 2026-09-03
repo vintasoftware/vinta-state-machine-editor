@@ -258,20 +258,32 @@ function unit(value: string | undefined): number {
  * in which case the host's own text is shown as it was written.
  */
 export function parseDuration(text: string): DurationParts | undefined {
-  const trimmed = text.trim();
-  const found = DURATION.exec(trimmed);
-  // `P` alone matches the pattern and means nothing, so a match with no unit in
-  // it is no more a duration than a word would be.
-  if (found === null || trimmed === 'P' || trimmed === 'PT') {
+  const found = DURATION.exec(text.trim());
+  if (found === null) {
     return undefined;
   }
   const [, weeks, days, hours, minutes, seconds] = found;
-  const parts = {
+  // `P` and `PT` match the pattern and name no unit at all, which is no more a
+  // duration than a word would be. A duration that names a unit and sets it to
+  // zero — `PT0S`, `P0D` — is one, and a silly one: see `isZeroDuration`.
+  if ([weeks, days, hours, minutes, seconds].every((value) => value === undefined)) {
+    return undefined;
+  }
+  return {
     days: unit(weeks) * 7 + unit(days),
     hours: unit(hours),
     minutes: unit(minutes),
     seconds: unit(seconds),
   };
-  const total = parts.days + parts.hours + parts.minutes + parts.seconds;
-  return total === 0 && trimmed !== 'PT0S' ? undefined : parts;
+}
+
+/**
+ * A duration of no time at all.
+ *
+ * Almost certainly a mistake rather than a setting — a wait that gives the batch
+ * zero seconds to finish has already timed out — so the editor flags it rather
+ * than drawing `0s` as though it meant something.
+ */
+export function isZeroDuration(parts: DurationParts): boolean {
+  return parts.days === 0 && parts.hours === 0 && parts.minutes === 0 && parts.seconds === 0;
 }

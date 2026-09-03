@@ -5,6 +5,7 @@ import {
   createTransition,
   emptyWaitingConfig,
   isWaitingState,
+  isZeroDuration,
   parseDuration,
   readWaiting,
   type StateMachine,
@@ -227,10 +228,18 @@ describe('reading an ISO 8601 duration', () => {
 
   it('hands back nothing for what is not one', () => {
     expect(parseDuration('two hours')).toBeUndefined();
+    // These name no unit at all, which is not a duration.
     expect(parseDuration('P')).toBeUndefined();
     expect(parseDuration('PT')).toBeUndefined();
     // Months and years depend on when you start counting, so they are not read.
     expect(parseDuration('P1M')).toBeUndefined();
+  });
+
+  it('reads a duration that names a unit and sets it to zero', () => {
+    // Silly, but a duration — and the editor says so rather than hiding it.
+    expect(parseDuration('P0D')).toEqual({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+    expect(isZeroDuration({ days: 0, hours: 0, minutes: 0, seconds: 0 })).toBe(true);
+    expect(isZeroDuration({ days: 0, hours: 0, minutes: 1, seconds: 0 })).toBe(false);
   });
 });
 

@@ -157,7 +157,12 @@ export {
   parseStateMachine,
 } from './model/parse.js';
 export type { DecisionIssue, StateIssue } from './model/validation.js';
-export { decisionIssues, stateIssues } from './model/validation.js';
+export {
+  DECISION_ISSUES,
+  decisionIssues,
+  STATE_ISSUES,
+  stateIssues,
+} from './model/validation.js';
 export type {
   CountsAs,
   CountsAsHalf,
@@ -172,6 +177,7 @@ export {
   isCountsAs,
   isCountsAsHalf,
   isWaitingState,
+  isZeroDuration,
   parseDuration,
   readCountsAs,
   readCountsAsPartial,

@@ -28,6 +28,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listening for it keeps working — but it now needs a handler set for the link to be there to
   press. New exported types `FanOut` and `FanOutHandler`.
 
+- **A timeout of no time at all earns a warning stripe** — *a timeout of zero leaves the batch no
+  time to finish* — rather than being drawn as `0s` as though it meant something. `parseDuration`
+  now also reads `P0D` and its like, which it used to refuse; `isZeroDuration(parts)` tells them
+  apart.
+
+- `STATE_ISSUES` and `DECISION_ISSUES` list every issue code. `stateIssues` and `decisionIssues`
+  already returned unions rather than `string[]`, so an exhaustive switch has always type-checked;
+  these make that discoverable.
+
+### Documentation
+
+- The **six** keys the component reads out of `state.data` are listed in one table, saying who
+  writes each. `counts_as_partial` was documented in prose further down and easy to miss on a
+  skim; it now has a row of its own and a note saying the host has to *compute* it — the editor
+  never sees a hook row, so a payload without it renders a half configured pair as whole and a
+  lone leave half not at all.
+
+- That every edge of a decision carries the same `labelOffset` is stated as a **postcondition of
+  `setDecisionLabelOffset`** rather than an expectation on the host. The editor writes them all,
+  every time, so a host can store what it is given and never normalise.
+
 ### Fixed
 
 - **Switching `⑂ Waiting` off is now something a host can read.** It deleted `is_waiting`

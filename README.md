@@ -371,9 +371,13 @@ always did (`transition-rename`, `transition-guard`, `transition-permission`, �
 
 > **One card, one position.** `labelOffset` is stored per edge. The card sits at the **mean** of
 > the points its members' edges would each put a card at, plus the mean of their offsets, and
-> dragging it writes one offset back to every member — so a host reconciling the document should
-> expect all the edges of a decision to carry the same `labelOffset`.
-> `setDecisionLabelOffset(machine, transitionId, offset)` does it on a plain machine.
+> dragging it writes one offset back to every member.
+>
+> That every edge of a decision carries the same `labelOffset` is a **postcondition of
+> `setDecisionLabelOffset`**, not something a host is asked to arrange: the editor writes them
+> all, every time, so a host reconciling the document back into rows can store what it is given
+> and never has to normalise. `setDecisionLabelOffset(machine, transitionId, offset)` does the
+> same on a plain machine.
 >
 > A mean rather than the first member's answer, because the position must not depend on the order
 > of the members: the rows are dragged to reorder them, and anchoring on whichever edge sorts
@@ -401,7 +405,19 @@ drawn apart from them because a fan-out is not something that runs.
 └─────────────────────────────────────┘
 ```
 
-It rides in four keys of `state.data`:
+It rides in `state.data`, alongside the two keys of the
+[report a state makes](#counting-towards-a-parents-batch). These **six keys are the whole of what
+the component reads out of any `data` blob**; every other key of every object is carried through
+untouched.
+
+| Key | Type | Who writes it |
+| --- | --- | --- |
+| `is_waiting` | `true` \| `false` \| absent | The editor, from the **⑂ Waiting** toggle. Absent means the state has never been configured; `false` means someone turned it off. |
+| `join_action` | `string` | Either. An ActionType key, picked from the trigger catalog. |
+| `child_machine` | `string`, optional | Either. Display and linking only — the component never follows it. |
+| `timeout` | `string`, optional | Either. An ISO 8601 duration. |
+| `counts_as` | `"success"` \| `"failure"` \| absent | Either. What entering the state reports to its parent's batch. |
+| `counts_as_partial` | `"enter"` \| `"leave"` \| absent | **The host computes it.** See below. |
 
 ```jsonc
 "data": {
@@ -412,12 +428,20 @@ It rides in four keys of `state.data`:
 }
 ```
 
-- **A document without them renders exactly as it did before.** They are the only keys of `data`
-  the component reads, and it touches nothing else in the blob.
+> **`counts_as_partial` is the one key a host has to work out rather than store.** The editor
+> never sees a hook row, so it cannot tell a whole report pair from a half configured one unless
+> the host says which half it found. Leave it out and a pair missing its leave half renders as
+> whole, and a leave half on its own does not render at all — the editor has no way to know.
+> Details under [counting towards a parent's batch](#counting-towards-a-parents-batch).
+
+- **A document without them renders exactly as it did before.**
 - **A key of the wrong type is ignored**, not a validation error: `data` is the host's, and one
   bad value in it should not cost anybody their graph.
-- **Turning the wait off drops `is_waiting` and keeps the other three**, so a toggle pressed by
-  mistake costs nobody their setup. An empty value is removed rather than stored blank.
+- **Turning the wait off writes `is_waiting: false` and keeps the other three**, so a toggle
+  pressed by mistake costs nobody their setup — and a host can tell *stop waiting* apart from a
+  document that has never heard of fan-outs, which is what absence means. The key is left out
+  only for a state nothing has ever configured. An empty string value is removed rather than
+  stored blank, since there empty and absent do mean the same thing.
 - **The band's lines open the state's properties dialog**, which edits all four under a *Waiting
   for a batch* section. The join action is a picker when an `actionProvider` is set, free text
   when it is not.
@@ -425,7 +449,9 @@ It rides in four keys of `state.data`:
   worth seeing: it is what closes the wait.
 - **The timeout is shown in whole units**: `PT2H` reads as `2h`, `P1DT6H30M` as `1d 6h 30m`, and
   anything the editor cannot read is shown exactly as it was written. Days down to seconds only —
-  months and years depend on when you start counting.
+  months and years depend on when you start counting. A duration of no time at all (`PT0S`,
+  `P0D`) earns a warning stripe rather than being drawn as `0s`: a wait that gives the batch zero
+  seconds has timed out before it starts.
 
 **The fan-out leaves the card**, through a `fanOutHandler` you inject like `actionProvider` and
 `guardValidator`. The canvas draws one version of one machine, and nesting spans machines —
@@ -513,6 +539,7 @@ on the card that has the problem, while the person who caused it is still lookin
 | --- | --- |
 | A decision card with no unguarded row | *No fallback — if every guard fails the record is stuck here.* |
 | A waiting state with no edge under its `join_action` | *Nothing leaves this state when the work finishes.* |
+| A waiting state whose timeout is zero | *A timeout of zero leaves the batch no time to finish.* |
 | A terminal state with an outgoing edge | *Terminal states cannot be left, so these edges never fire.* |
 | A guard the host's `guardValidator` refuses | the validator's own message, on the card and on the decision row |
 
@@ -520,9 +547,12 @@ They are **advisory**. Nothing here blocks an edit, refuses a document or rewrit
 graph is allowed to be halfway built, and a card that is complaining still renames, moves and
 deletes exactly as it did.
 
-```js
-stateIssues(machine, state); // ['no-join-edge']
-decisionIssues(group); // ['no-fallback']
+Both return a union of string codes rather than plain `string[]`, so a host can switch over them
+exhaustively; `STATE_ISSUES` and `DECISION_ISSUES` list every member.
+
+```ts
+stateIssues(machine, state); // readonly StateIssue[] — ['no-join-edge']
+decisionIssues(group); // readonly DecisionIssue[] — ['no-fallback']
 ```
 
 Guard verdicts are cached by the expression itself, so a canvas full of cards asks the
