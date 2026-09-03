@@ -43,8 +43,8 @@
       <state-machine-editor id="editor"></state-machine-editor>
 
       <aside class="panel">
-        <section>
-          <h2>How to use it</h2>
+        <details class="help">
+          <summary>How to use it</summary>
           <ul class="hints">
             <li><b>Move</b> a state: drag its header.</li>
             <li><b>Colour</b>: press the round swatch in a state's header and pick from neutral, info, success, warning, danger or muted. The bar across the top of the card takes that colour.</li>
@@ -60,15 +60,19 @@
             <li><b>Theme</b>: the toolbar's <b>☀</b> / <b>☾</b> switches the canvas between dark and light. A host picks the one it opens in with the <code>theme</code> attribute — dark when it says nothing — and hears about every switch through <code>state-machine-theme-change</code>. The picker above and this page's own colours are wired to exactly that.</li>
             <li><b>Icons</b>: the picker above swaps every glyph the canvas draws through the <code>icons</code> property — plain strings for the emoji set, <code>&lt;svg&gt;</code> nodes built per button for the other. Nothing is rebuilt: each icon is redrawn where it stands, dialogs included. A partial set replaces only what it names, and the glyphs written into these hints are the defaults.</li>
             <li><b>Undo / redo</b>: the toolbar's <b>↶</b> / <b>↷</b>, or Ctrl/⌘ + Z and Ctrl/⌘ + Shift + Z. A whole drag, and a whole properties save, each count as one step.</li>
+            <li><b>Decisions</b>: several edges leaving one state under one action are drawn as a single card, tried top to bottom — see <b>⚡ import.finish</b> below <b>Processing items</b>. Drag a row's <b>⠿</b> (or Alt + ↑/↓) to change which is tried first, and click a row to edit that edge in place. The unguarded row is the <b>else</b>, and anything behind it is struck through: nothing can follow an edge that always matches.</li>
+            <li><b>Waiting</b>: <b>⑂ Waiting</b> on a state card says it fans work out to child records and waits for the batch. The band above the hook lanes names what it fans out to, the action that closes the wait and how long it is given; <b>Fans out to</b> is a link, and the page logs the <code>state-machine-fan-out</code> event rather than navigating.</li>
+            <li><b>Counts as</b>: a state that reports into its parent's batch shows it as one line of that band, from <code>state.data.counts_as</code>. Toggle <b>◉ Final</b> on <b>Paid</b> to watch the control drop its leave half — a final state can never be left, so that hook could never fire.</li>
+            <li><b>Warnings</b>: advisory stripes appear on the card that has the problem — a decision with no fallback, a wait nothing closes, a terminal state with a way out. <b>Paid</b> carries one on purpose, since <b>refund</b> leaves it. They never block an edit.</li>
           </ul>
-        </section>
+        </details>
 
-        <section>
+        <section class="events">
           <h2>Events <small id="event-count">0</small></h2>
           <ol class="log" id="log"></ol>
         </section>
 
-        <section class="grow">
+        <section class="value">
           <h2>Current value</h2>
           <pre class="json" id="json"></pre>
         </section>

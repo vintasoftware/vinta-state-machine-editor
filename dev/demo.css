@@ -98,42 +98,24 @@ state-machine-editor {
   border-right: 1px solid var(--border);
 }
 
-/* Narrow screens: stack the canvas above the panel instead of beside it. */
-@media (max-width: 900px) {
-  body {
-    height: auto;
-    min-height: 100vh;
-  }
-
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 62vh auto;
-  }
-
-  state-machine-editor {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .panel {
-    overflow: visible;
-  }
-
-  .topbar {
-    position: sticky;
-    top: 0;
-    z-index: 3;
-  }
-}
-
+/*
+ * Three regions that each scroll inside their own bounds, rather than one
+ * column that scrolls as a whole. The hints are the longest thing on the page
+ * and the least often read: left to grow they pushed the events and the value —
+ * the two panes you actually watch while using the canvas — off the bottom.
+ */
 .panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1.7fr);
   gap: 18px;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 16px;
   background: var(--surface);
+}
+
+.panel > * {
+  min-height: 0;
 }
 
 .panel section {
@@ -142,9 +124,35 @@ state-machine-editor {
   gap: 8px;
   min-height: 0;
 }
-.panel .grow {
-  flex: 1;
+
+/* Folded away by default, and capped when open so it still cannot take over. */
+.help > summary {
+  cursor: pointer;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  list-style: none;
 }
+
+.help > summary::-webkit-details-marker {
+  display: none;
+}
+
+.help > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+}
+
+.help[open] > summary::before {
+  content: "▾";
+}
+
+.help > summary:hover {
+  color: var(--text);
+}
+
 .panel h2 {
   margin: 0;
   font-size: 12px;
@@ -158,7 +166,9 @@ state-machine-editor {
 }
 
 .hints {
-  margin: 0;
+  margin: 8px 0 0;
+  max-height: 34vh;
+  overflow: auto;
   padding-left: 18px;
   font-size: 12.5px;
   line-height: 1.6;
@@ -166,10 +176,10 @@ state-machine-editor {
 }
 
 .log {
+  flex: 1;
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: 150px;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
@@ -195,4 +205,49 @@ state-machine-editor {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+/* Narrow screens: stack the canvas above the panel instead of beside it. */
+@media (max-width: 900px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 62vh auto;
+  }
+
+  state-machine-editor {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Stacked under the canvas there is no height to divide up: let it flow. */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .hints {
+    max-height: none;
+  }
+
+  .log {
+    flex: none;
+    max-height: 40vh;
+  }
+
+  .json {
+    flex: none;
+    max-height: 60vh;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
 }

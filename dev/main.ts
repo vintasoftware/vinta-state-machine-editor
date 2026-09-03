@@ -275,6 +275,23 @@ function exampleMachine(): StateMachine {
     onEnter: { before: [effect('audit-log', 'e-audit-3')], after: [] },
     onLeave: { before: [], after: [] },
   };
+  /*
+   * The outcomes of the batch, in a column to the right of the state that waits
+   * for it. A fan-out wants somewhere to fan *to*: pointed back at the columns
+   * above, the shared card lands in the middle of the traffic between them.
+   */
+  const imported = createState({
+    id: 'imported',
+    name: 'Items imported',
+    position: { x: 1640, y: 1140 },
+    color: 'success',
+  });
+  const importFailed = createState({
+    id: 'import_failed',
+    name: 'Import failed',
+    position: { x: 1640, y: 1660 },
+    color: 'danger',
+  });
 
   const submit = createTransition({ id: 'submit', name: 'submit', from: 'draft', to: 'pending' });
   const pay = {
@@ -338,7 +355,7 @@ function exampleMachine(): StateMachine {
     id: 'finish-completed',
     name: 'completed',
     from: 'processing',
-    to: 'paid',
+    to: 'imported',
     trigger: finish,
     guard: 'failed == 0',
   });
@@ -346,15 +363,15 @@ function exampleMachine(): StateMachine {
     id: 'finish-partial',
     name: 'partially done',
     from: 'processing',
-    to: 'pending',
+    to: 'imported',
     trigger: finish,
     guard: 'succeeded > 0',
   });
   const finishFailed = createTransition({
     id: 'finish-failed',
-    name: 'failed',
+    name: 'nothing landed',
     from: 'processing',
-    to: 'cancelled',
+    to: 'import_failed',
     trigger: finish,
   });
 
@@ -385,6 +402,8 @@ function exampleMachine(): StateMachine {
       draft,
       pending,
       processing,
+      imported,
+      importFailed,
       { ...paid, data: { counts_as: 'success' } },
       { ...cancelled, data: { counts_as: 'failure' } },
     ],
@@ -402,7 +421,7 @@ function exampleMachine(): StateMachine {
       finishFailed,
     ],
     initialStateIds: ['draft'],
-    finalStateIds: ['paid', 'cancelled'],
+    finalStateIds: ['paid', 'cancelled', 'imported', 'import_failed'],
     data: {},
   };
 }
