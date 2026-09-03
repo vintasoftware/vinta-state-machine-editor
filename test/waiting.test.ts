@@ -113,6 +113,7 @@ describe('the waiting configuration in state.data', () => {
   it('keeps the rest of the configuration when the wait is turned off', () => {
     const off = toggleWaiting(waitingMachine(), 'processing');
     expect(off.states[0]?.data).toEqual({
+      is_waiting: false,
       join_action: 'import.finish',
       child_machine: 'import_file.status',
       timeout: 'PT2H',
@@ -121,6 +122,93 @@ describe('the waiting configuration in state.data', () => {
     expect(state === undefined ? undefined : readWaiting(state)).toMatchObject({
       isWaiting: false,
       joinAction: 'import.finish',
+    });
+  });
+
+  /*
+   * Absence is what a document written before fan-outs existed looks like, so it
+   * cannot also mean "the user switched this off": a host reading the first as
+   * "leave the state alone" would silently drop the second. Asserting through
+   * `readWaiting` is not enough — it answers `false` either way, which is what
+   * let the deletion through in the first place.
+   */
+  it('writes the flag out as false rather than deleting it', () => {
+    const off = toggleWaiting(waitingMachine(), 'processing');
+    const data = off.states[0]?.data ?? {};
+    expect('is_waiting' in data).toBe(true);
+    expect(data['is_waiting']).toBe(false);
+  });
+
+  it('says false even when nothing else is left to notice', () => {
+    // The case a host cannot work around: the three settings were all empty, so
+    // switching off leaves no sibling key behind to read the absence against.
+    const machine: StateMachine = {
+      ...waitingMachine(),
+      states: [
+        createState({
+          id: 'processing',
+          name: 'Processing',
+          position: { x: 0, y: 0 },
+          data: { is_waiting: true },
+        }),
+        createState({ id: 'done', name: 'Done', position: { x: 0, y: 0 } }),
+      ],
+    };
+    expect(toggleWaiting(machine, 'processing').states[0]?.data).toEqual({ is_waiting: false });
+  });
+
+  it('stays quiet about a state that has never been configured', () => {
+    const machine: StateMachine = {
+      ...waitingMachine(),
+      states: [
+        createState({
+          id: 'processing',
+          name: 'Processing',
+          position: { x: 0, y: 0 },
+          data: { counts_as: 'success' },
+        }),
+        createState({ id: 'done', name: 'Done', position: { x: 0, y: 0 } }),
+      ],
+    };
+    const next = setWaiting(machine, 'processing', {
+      ...emptyWaitingConfig(),
+      countsAs: 'failure',
+    });
+    // Reporting into a parent's batch is not waiting for one: nothing here has
+    // ever been a fan-out, so there is no decision to record.
+    expect(next.states[0]?.data).toEqual({ counts_as: 'failure' });
+  });
+
+  it('records the decision once a setting has been filled in', () => {
+    const machine: StateMachine = {
+      ...waitingMachine(),
+      states: [
+        createState({ id: 'processing', name: 'Processing', position: { x: 0, y: 0 } }),
+        createState({ id: 'done', name: 'Done', position: { x: 0, y: 0 } }),
+      ],
+    };
+    const next = setWaiting(machine, 'processing', {
+      ...emptyWaitingConfig(),
+      joinAction: 'import.finish',
+    });
+    expect(next.states[0]?.data).toEqual({ is_waiting: false, join_action: 'import.finish' });
+  });
+
+  it('keeps saying false once it has said it', () => {
+    const machine: StateMachine = {
+      ...waitingMachine(),
+      states: [
+        createState({
+          id: 'processing',
+          name: 'Processing',
+          position: { x: 0, y: 0 },
+          data: { is_waiting: false },
+        }),
+        createState({ id: 'done', name: 'Done', position: { x: 0, y: 0 } }),
+      ],
+    };
+    expect(setWaiting(machine, 'processing', emptyWaitingConfig()).states[0]?.data).toEqual({
+      is_waiting: false,
     });
   });
 
@@ -208,7 +296,7 @@ describe('the waiting band on a state card', () => {
     expect(toggle.getAttribute('aria-pressed')).toBe('true');
     toggle.click();
     expect(changes).toEqual(['state-data']);
-    expect(editor.value.states[0]?.data['is_waiting']).toBeUndefined();
+    expect(editor.value.states[0]?.data['is_waiting']).toBe(false);
     expect(queryOne(root, '.node[data-state-id="processing"] .band').hidden).toBe(true);
     editor.undo();
     expect(editor.value.states[0]?.data['is_waiting']).toBe(true);

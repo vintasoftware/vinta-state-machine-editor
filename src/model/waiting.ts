@@ -155,8 +155,11 @@ function requireState(machine: StateMachine, stateId: string): StateNode {
  * Writes one key of the blob, dropping it when the value is empty rather than
  * storing a blank — a state that does not use a key should read back exactly as
  * a state that never heard of it.
+ *
+ * `false` is a value like any other and is written out. That matters: see
+ * {@link waitingFlagFor}.
  */
-function withKey(data: JsonObject, key: string, value: string | true | undefined): JsonObject {
+function withKey(data: JsonObject, key: string, value: string | boolean | undefined): JsonObject {
   const next: Record<string, JsonObject[string]> = { ...data };
   if (value === undefined || value === '') {
     delete next[key];
@@ -167,12 +170,40 @@ function withKey(data: JsonObject, key: string, value: string | true | undefined
 }
 
 /**
+ * What to write for `is_waiting`, given what the state said before.
+ *
+ * The flag is a **tri-state**, and it has to say which of the three it is,
+ * because absence already means something: it is what a document written before
+ * fan-outs existed looks like. A host reading such a document should leave the
+ * state alone. A host reading a state whose wait was *switched off* should stop
+ * waiting. Deleting the key on the way off made those two indistinguishable, and
+ * a host taking the safe reading — say nothing — never persisted the change.
+ *
+ * So an off wait writes `false` wherever there is a decision to record: the flag
+ * was already there, or the state carries a setting that only a fan-out puts
+ * there. The key is left out only for a state that has never been configured,
+ * which is the one case where silence is the truth.
+ */
+function waitingFlagFor(
+  before: JsonObject,
+  isWaiting: boolean,
+  configured: boolean,
+): boolean | undefined {
+  if (isWaiting) {
+    return true;
+  }
+  return Object.hasOwn(before, WAITING_KEYS.isWaiting) || configured ? false : undefined;
+}
+
+/**
  * Puts a fan-out configuration on a state.
  *
- * Turning the wait **off** drops `is_waiting` and leaves the other three keys
- * where they are, so a toggle pressed by mistake costs nobody their join action.
- * The keys that are set are written verbatim: the component neither validates
- * the action against a catalog nor parses the timeout to store it.
+ * Turning the wait **off** writes `is_waiting: false` and leaves the other three
+ * keys where they are, so a toggle pressed by mistake costs nobody their join
+ * action — and a host can tell the decision apart from a document that has never
+ * heard of fan-outs. The keys that are set are written verbatim: the component
+ * neither validates the action against a catalog nor parses the timeout to
+ * store it.
  */
 export function setWaiting(
   machine: StateMachine,
@@ -180,7 +211,15 @@ export function setWaiting(
   config: WaitingConfig,
 ): StateMachine {
   const state = requireState(machine, stateId);
-  let data = withKey(state.data, WAITING_KEYS.isWaiting, config.isWaiting ? true : undefined);
+  // A wait that is off but configured is still an answer, so the flag is
+  // written out rather than dropped — see `waitingFlagFor`.
+  const configured =
+    config.joinAction.length > 0 || config.childMachine.length > 0 || config.timeout.length > 0;
+  let data = withKey(
+    state.data,
+    WAITING_KEYS.isWaiting,
+    waitingFlagFor(state.data, config.isWaiting, configured),
+  );
   data = withKey(data, WAITING_KEYS.joinAction, config.joinAction);
   data = withKey(data, WAITING_KEYS.childMachine, config.childMachine);
   data = withKey(data, WAITING_KEYS.timeout, config.timeout);

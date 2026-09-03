@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Switching `⑂ Waiting` off is now something a host can read.** It deleted `is_waiting`
+  instead of writing `false`, and absence already means something else: it is what a document
+  written before fan-outs existed looks like. A host had no way to tell *stop waiting* from
+  *this document says nothing about fan-outs*, and one taking the safe reading of the two never
+  persisted the change at all.
+
+  An off wait now writes `is_waiting: false` wherever there is a decision to record — the flag
+  was already there, or the state carries a setting only a fan-out puts there. The key is left
+  out only for a state that has never been configured, which is the one case where silence is
+  the truth. The other three keys are still left alone, so a toggle pressed by mistake costs
+  nobody their join action.
+
+  `readWaiting` is unchanged and still reads an absent flag as not waiting, so **every 0.9.0
+  document renders identically** and no host has to do anything: one reading absence as off
+  keeps working, and one reading it as silence starts working.
+
 ## [0.9.0] - 2026-09-03
 
 ### Added
