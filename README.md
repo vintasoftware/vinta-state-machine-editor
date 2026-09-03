@@ -367,11 +367,16 @@ first whose guard holds. The editor draws them as a single card.
 Reorders arrive as `transition-reorder`, and everything a row edits arrives as the change it
 always did (`transition-rename`, `transition-guard`, `transition-permission`, …).
 
-> **One card, one position.** `labelOffset` is stored per edge. The group takes the **first
-> member's**, and dragging the card writes that answer back to every member — so a host
-> reconciling the document should expect all the edges of a decision to carry the same
-> `labelOffset`. `setDecisionLabelOffset(machine, transitionId, offset)` does it on a plain
-> machine.
+> **One card, one position.** `labelOffset` is stored per edge. The card sits at the **mean** of
+> the points its members' edges would each put a card at, plus the mean of their offsets, and
+> dragging it writes one offset back to every member — so a host reconciling the document should
+> expect all the edges of a decision to carry the same `labelOffset`.
+> `setDecisionLabelOffset(machine, transitionId, offset)` does it on a plain machine.
+>
+> A mean rather than the first member's answer, because the position must not depend on the order
+> of the members: the rows are dragged to reorder them, and anchoring on whichever edge sorts
+> first sends the card leaping across the canvas the moment that changes. A group of one reduces
+> to exactly that member, so a lone edge card is unaffected.
 
 ### Host-owned data
 

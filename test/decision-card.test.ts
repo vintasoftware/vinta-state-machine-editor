@@ -357,3 +357,77 @@ describe('dragging the outcomes', () => {
     expect(editor.value.transitions.map((t) => t.id)).toEqual(['a', 'b', 'c']);
   });
 });
+
+describe('where the card sits', () => {
+  function cardPosition(root: ParentNode): { left: string; top: string } {
+    const card = queryOne(root, '.edge-card--decision');
+    return { left: card.style.left, top: card.style.top };
+  }
+
+  it('stays put when the outcomes are reordered from the keyboard', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    const before = cardPosition(root);
+    fireKey(
+      queryButton(root, '.decision__row[data-transition-id="b"] .decision__handle'),
+      'ArrowUp',
+      { altKey: true },
+    );
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['b', 'a', 'c']);
+    expect(cardPosition(root)).toEqual(before);
+  });
+
+  it('stays put when a row is dragged, including out of the first slot', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    const before = cardPosition(root);
+    // The first row is the one that used to anchor the card, so moving it was
+    // what sent the card leaping across the canvas.
+    const handle = queryButton(root, '.decision__row[data-transition-id="a"] .decision__handle');
+    firePointer(handle, 'pointerdown', { clientY: 0 });
+    firePointer(document, 'pointermove', { clientY: 10 });
+    expect(cardPosition(root)).toEqual(before);
+    firePointer(document, 'pointerup', { clientY: 10 });
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['b', 'c', 'a']);
+    expect(cardPosition(root)).toEqual(before);
+  });
+
+  it('does not jump when the card itself is grabbed', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    const before = cardPosition(root);
+    const header = queryOne(root, '.edge-card--decision .edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: 0, clientY: 0 });
+    // A press with no movement: the card must not have moved a pixel.
+    firePointer(document, 'pointermove', { clientX: 0, clientY: 0 });
+    expect(cardPosition(root)).toEqual(before);
+    firePointer(document, 'pointerup', { clientX: 0, clientY: 0 });
+  });
+
+  it('lands where it is dropped, and every outcome keeps that one position', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    const before = cardPosition(root);
+    const header = queryOne(root, '.edge-card--decision .edge-card__header');
+    firePointer(header, 'pointerdown', { clientX: 0, clientY: 0 });
+    firePointer(document, 'pointermove', { clientX: 60, clientY: 40 });
+    firePointer(document, 'pointerup', { clientX: 60, clientY: 40 });
+    const after = cardPosition(root);
+    expect(Number.parseInt(after.left, 10) - Number.parseInt(before.left, 10)).toBe(60);
+    expect(Number.parseInt(after.top, 10) - Number.parseInt(before.top, 10)).toBe(40);
+    const offsets = editor.value.transitions.map((t) => t.labelOffset);
+    expect(offsets[0]).toEqual(offsets[1]);
+    expect(offsets[1]).toEqual(offsets[2]);
+    // And reordering afterwards still leaves it exactly there.
+    fireKey(
+      queryButton(root, '.decision__row[data-transition-id="c"] .decision__handle'),
+      'ArrowUp',
+      { altKey: true },
+    );
+    expect(cardPosition(root)).toEqual(after);
+  });
+});

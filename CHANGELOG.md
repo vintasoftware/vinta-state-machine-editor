@@ -57,11 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `labelOffset` is stored per edge, and a decision has one card. The group reads the **first
-  member's** offset, and dragging the card writes that one answer back to every member. A member
-  that later leaves the group — its trigger changed, say — therefore starts out where the card it
-  belonged to was standing. A host reconciling the document back into rows should expect every
-  edge of a decision to carry the same `labelOffset`.
+- `labelOffset` is stored per edge, and a decision has one card. The card sits at the **mean** of
+  the points its members' edges would each put a card at, plus the mean of their offsets, and
+  dragging it writes one offset back to every member. A host reconciling the document back into
+  rows should expect every edge of a decision to carry the same `labelOffset`; a member that later
+  leaves the group therefore starts out where the card it belonged to was standing.
+
+  It is a mean rather than the first member's answer because **the position must not depend on the
+  order of the members**. The rows are dragged to reorder them, and anchoring on whichever edge
+  happened to be first sent the card leaping across the canvas the moment that changed. A mean is
+  symmetric, so no reordering can move it, and it lands in the middle of the fan instead of on one
+  arm of it. A group of one reduces to exactly that member, so a lone edge card is unaffected.
 
 - Every edge of a decision is bent through the single card they share, so the curves meet at it
   and fan out from there to the states they land on.

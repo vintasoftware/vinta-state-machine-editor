@@ -2675,12 +2675,13 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   #updateTransitionView(view: TransitionView, transition: Transition): void {
-    const geometry = this.#geometryFor(transition);
     const selected = this.#isSelectedTransition(transition.id);
     view.card.classList.toggle('is-selected', selected);
-    // The curve is bent to pass through the card, so the label point is the card.
-    view.card.style.left = `${geometry.label.x}px`;
-    view.card.style.top = `${geometry.label.y}px`;
+    // Both breeds of card are placed the same way, so the point a drag measures
+    // its grip against is the point the card is actually drawn at.
+    const point = this.#cardOriginFor(transition);
+    view.card.style.left = `${point.x}px`;
+    view.card.style.top = `${point.y}px`;
     view.name.textContent = transition.name;
     view.card.classList.toggle('is-creation', transition.from === null);
     const editing = this.#renameEditors.has(transition.id);
@@ -3222,15 +3223,70 @@ export class StateMachineEditorElement extends HTMLElement {
   }
 
   /**
-   * Where the card standing for `group` sits.
+   * Where the card standing for `group` would sit if nobody had moved it: the
+   * mean of the points its members' edges would each put a card at.
    *
-   * `labelOffset` is per edge and a decision has one card, so the group takes
-   * the first member's — and dragging writes that answer back to all of them,
-   * through {@link setDecisionLabelOffset}.
+   * The mean, rather than the first member's, because **the answer must not
+   * depend on the order of the members**. The rows of a decision are dragged to
+   * reorder them, and anchoring on whichever edge happened to be first sent the
+   * card leaping across the canvas the moment that changed — the reorder looked
+   * like it had thrown the card somewhere. A mean is symmetric, so no reordering
+   * can move it, and it lands in the middle of the fan rather than on one arm of
+   * it. A group of one reduces to exactly that member, which is what a lone edge
+   * card has always done.
    */
+  #autoCardPoint(group: TransitionGroup): Point {
+    let x = 0;
+    let y = 0;
+    let counted = 0;
+    for (const transition of group.transitions) {
+      const auto = this.#autoGeometry(transition);
+      if (auto !== undefined) {
+        x += auto.label.x;
+        y += auto.label.y;
+        counted += 1;
+      }
+    }
+    return counted === 0 ? { x: 0, y: 0 } : { x: x / counted, y: y / counted };
+  }
+
+  /**
+   * How far the user has dragged the group's card off that point.
+   *
+   * Also a mean, and for the same reason. A drag writes one offset onto every
+   * member — see {@link setDecisionLabelOffset} — so in the ordinary case every
+   * term is the same value and the mean *is* that value, to the pixel. They only
+   * differ while a member that was placed elsewhere is joining the group, and
+   * then the card leans towards the crowd rather than snapping to whichever edge
+   * sorts first.
+   */
+  #groupOffset(group: TransitionGroup): Point {
+    let x = 0;
+    let y = 0;
+    for (const transition of group.transitions) {
+      x += transition.labelOffset.x;
+      y += transition.labelOffset.y;
+    }
+    const count = group.transitions.length;
+    return count === 0 ? { x: 0, y: 0 } : { x: x / count, y: y / count };
+  }
+
+  /**
+   * Where the card carrying `transition` sits — the group's card, since a
+   * decision has one for all its members. Grabbing a card and drawing it both
+   * go through this, so a drag never starts by teleporting the card to a point
+   * only one of them believed in.
+   */
+  #cardOriginFor(transition: Transition): Point {
+    const group = this.#groupOf.get(transition.id);
+    return group === undefined ? this.#geometryFor(transition).label : this.#cardPointFor(group);
+  }
+
+  /** Where the card standing for `group` actually sits. */
   #cardPointFor(group: TransitionGroup): Point {
-    const leader = group.transitions[0];
-    return leader === undefined ? { x: 0, y: 0 } : this.#geometryFor(leader).label;
+    const auto = this.#autoCardPoint(group);
+    const offset = this.#groupOffset(group);
+    return { x: Math.round(auto.x + offset.x), y: Math.round(auto.y + offset.y) };
   }
 
   /**
@@ -3269,9 +3325,16 @@ export class StateMachineEditorElement extends HTMLElement {
     return Math.max((height + 16) * 2, FALLBACK_LABEL_SPACING);
   }
 
-  /** The point a transition card would sit at if the user had not moved it. */
+  /**
+   * The point the card carrying `transition` would sit at if the user had not
+   * moved it — the group's, so dragging a decision measures against the same
+   * anchor the render draws from.
+   */
   #autoLabelPoint(transition: Transition): Point {
-    return this.#autoGeometry(transition)?.label ?? { x: 0, y: 0 };
+    const group = this.#groupOf.get(transition.id);
+    return group === undefined
+      ? (this.#autoGeometry(transition)?.label ?? { x: 0, y: 0 })
+      : this.#autoCardPoint(group);
   }
 
   // -- multi touch ----------------------------------------------------------
@@ -3429,7 +3492,7 @@ export class StateMachineEditorElement extends HTMLElement {
     event.preventDefault();
     this.#setSelection({ kind: 'transition', id: transitionId });
     const pointer = this.#worldPoint(event);
-    const card = this.#geometryFor(transition).label;
+    const card = this.#cardOriginFor(transition);
     this.#beginDrag({
       kind: 'label',
       transitionId,
