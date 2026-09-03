@@ -49,11 +49,17 @@ export class ReorderController {
 
   constructor(options: ReorderOptions) {
     this.#options = options;
-    this.#options.list.addEventListener('pointerdown', this.#onPointerDown);
+    /*
+     * Capture phase: a row is free to stop the press from bubbling — one that
+     * selects what it holds has every reason to — and the grip inside it must
+     * still start a drag. Nothing downstream is disturbed by seeing it first;
+     * the press is only claimed once it lands on a handle.
+     */
+    this.#options.list.addEventListener('pointerdown', this.#onPointerDown, { capture: true });
   }
 
   destroy(): void {
-    this.#options.list.removeEventListener('pointerdown', this.#onPointerDown);
+    this.#options.list.removeEventListener('pointerdown', this.#onPointerDown, { capture: true });
     this.#stop();
   }
 

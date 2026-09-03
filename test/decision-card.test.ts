@@ -89,7 +89,7 @@ describe('the decision card', () => {
     expect(queryOne(root, '.edge-card__name').textContent).toBe('time out');
   });
 
-  it('numbers the guarded rows and pins the unguarded one to the bottom', () => {
+  it('numbers the rows and rules off the unguarded one', () => {
     const editor = mountEditor();
     editor.value = decisionMachine();
     const rows = queryAll(shadowOf(editor), '.decision__row');
@@ -284,5 +284,76 @@ describe('the decision card', () => {
     );
     // No inline label editor: the name is a field of the panel now.
     expect(root.querySelector('.name-input')).toBeNull();
+  });
+});
+
+describe('dragging the outcomes', () => {
+  /** Presses a row's grip, drags to `clientY` and lets go. */
+  function drag(root: ParentNode, transitionId: string, clientY: number): void {
+    const handle = queryButton(
+      root,
+      `.decision__row[data-transition-id="${transitionId}"] .decision__handle`,
+    );
+    firePointer(handle, 'pointerdown', { clientY: 0 });
+    firePointer(document, 'pointermove', { clientY });
+    firePointer(document, 'pointerup', { clientY });
+  }
+
+  it('reorders by the grip, even though the row swallows the press', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    // The row stops the press bubbling so it can select itself; the grip has to
+    // start a drag anyway.
+    drag(root, 'b', -10);
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('folds the whole drag into one undoable step', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    drag(root, 'c', -10);
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['c', 'a', 'b']);
+    editor.undo();
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['a', 'b', 'c']);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('lands the row where it was let go of', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    drag(root, 'a', 10);
+    // Dropped last, drawn last: the row a person released is the row they see.
+    const rows = queryAll(root, '.decision__row').map((row) =>
+      row.getAttribute('data-transition-id'),
+    );
+    expect(rows).toEqual(['b', 'c', 'a']);
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('draws the rows in the order the engine tries them, fallback included', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    // Drag the unguarded row to the top: everything behind it is now dead, and
+    // saying so is the point — sorting it back to the bottom would hide it.
+    drag(root, 'c', -10);
+    const rows = queryAll(root, '.decision__row');
+    expect(rows.map((row) => row.getAttribute('data-transition-id'))).toEqual(['c', 'a', 'b']);
+    expect(rows[0]?.classList.contains('is-fallback')).toBe(true);
+    expect(rows.filter((row) => row.classList.contains('is-dead'))).toHaveLength(2);
+    expect(queryOne(rows[0] ?? root, '.decision__order').getAttribute('data-icon')).toBe(
+      'fallback',
+    );
+  });
+
+  it('will not drag while the editor is read-only', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    editor.readOnly = true;
+    drag(shadowOf(editor), 'b', -10);
+    expect(editor.value.transitions.map((t) => t.id)).toEqual(['a', 'b', 'c']);
   });
 });

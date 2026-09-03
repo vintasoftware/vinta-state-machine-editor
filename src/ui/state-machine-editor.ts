@@ -2808,6 +2808,9 @@ export class StateMachineEditorElement extends HTMLElement {
    * Walks the list once and moves only what is out of place, so a row holding
    * focus — a guard being typed into, a handle being driven from the keyboard —
    * is left exactly where it stands whenever the order has not changed.
+   *
+   * Display order is evaluation order, so a dropped row lands where it was let
+   * go of and the badge beside it agrees with the position it now holds.
    */
   #orderDecisionRows(view: DecisionView, rows: readonly DecisionRow[]): void {
     let cursor = view.list.firstElementChild;
@@ -2989,7 +2992,10 @@ export class StateMachineEditorElement extends HTMLElement {
     const text = this.#strings;
     const transition = row.transition;
     const expanded = this.#expandedRow === transition.id;
-    const outcome = row.isFallback ? text.decision.fallback : transition.guard;
+    // Every unguarded row reads as `else`; only the first one is reachable, and
+    // that is what the rule-off and the strike-through are for.
+    const outcome =
+      transition.guard.trim().length === 0 ? text.decision.fallback : transition.guard;
     const targetName = findState(this.#machine, transition.to)?.name ?? transition.to;
 
     view.root.setAttribute('data-index', String(index));
@@ -3002,7 +3008,7 @@ export class StateMachineEditorElement extends HTMLElement {
       if (!hasIcon(view.order, 'fallback')) {
         setIcon(view.order, this.#icons, 'fallback');
       }
-      view.order.title = text.decision.fallbackTitle;
+      view.order.title = text.decision.orderTitle({ index: row.order, total });
     } else {
       clearIcon(view.order);
       view.order.textContent = String(row.order);

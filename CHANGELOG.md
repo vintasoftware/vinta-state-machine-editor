@@ -16,9 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Two or more transitions sharing a `from` **and** a `trigger.id` now share one card: the action
   in the header, one numbered row per outcome, each naming its guard and the state it lands on.
-  An edge with an empty guard is the fallback: it is drawn as an `else` row, ruled off and pinned
-  to the bottom. Anything that would be evaluated after it can never be reached, and is struck
-  through and marked *unreachable*.
+  An edge with an empty guard is the fallback, drawn as an `else` row and ruled off from the
+  guards above it. In a graph that would publish it is already last — an unguarded edge always
+  matches, so nothing can usefully follow it — and where it is not, everything behind it is
+  struck through and marked *unreachable*.
+
+  Rows are drawn in the order the engine tries them, the `else` row included. Sorting it to the
+  bottom regardless was tried and taken out again: it made a dragged row land somewhere other than
+  where it was let go of, and it hid the very thing that made the rows behind it dead.
 
   ```text
   ┌──────────────────────────────────────────────┐

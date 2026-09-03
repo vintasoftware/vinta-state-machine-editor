@@ -136,13 +136,14 @@ describe('grouping edges by action', () => {
 });
 
 describe('the rows of a decision', () => {
-  it('pins the unguarded row to the bottom while keeping its real number', () => {
+  it('draws them in the order the engine tries them', () => {
     const [group] = groupTransitions(decisionMachine());
     const rows = decisionRows(
       group ?? { key: '', from: null, triggerId: null, triggerName: null, transitions: [] },
     );
     expect(rows.map((row) => row.transition.id)).toEqual(['a', 'b', 'c', 'd']);
     expect(rows.map((row) => row.order)).toEqual([1, 2, 3, 4]);
+    // In a graph that would publish, the unguarded row is already last.
     expect(rows.at(-1)?.isFallback).toBe(true);
     expect(rows.every((row) => !row.isDead)).toBe(true);
   });
@@ -155,13 +156,16 @@ describe('the rows of a decision', () => {
     const rows = decisionRows(
       group ?? { key: '', from: null, triggerId: null, triggerName: null, transitions: [] },
     );
+    // The fallback stays where it was moved to. Sorting it to the bottom would
+    // hide the very thing that makes the three rows behind it dead.
     expect(rows.map((row) => [row.transition.id, row.isDead])).toEqual([
+      ['d', false],
       ['a', true],
       ['b', true],
       ['c', true],
-      ['d', false],
     ]);
-    expect(rows.at(-1)?.order).toBe(1);
+    expect(rows[0]?.isFallback).toBe(true);
+    expect(rows[0]?.order).toBe(1);
   });
 
   it('treats a whitespace-only guard as no guard at all', () => {

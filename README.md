@@ -349,11 +349,15 @@ first whose guard holds. The editor draws them as a single card.
   `groupTransitions(machine)` reads them all, `findGroupOf(machine, id)` reads one.
 - **A group of one is the card this component has always drawn.** A graph that does not use the
   feature looks exactly as it did.
-- **The row number is the evaluation order** — position among the group's members, which is
-  position in `transitions`.
-- **An edge with an empty guard is the fallback**, drawn as `else`, ruled off and pinned to the
-  bottom. Only the first one is reachable: anything evaluated after it is struck through and
-  marked *unreachable*, because an unguarded edge always matches.
+- **The rows are drawn in the order the engine tries them**, and the badge on each is that
+  position — which is position in `transitions`. Display order and evaluation order are the same
+  thing, so a row a person drops lands where they let go of it and the badges never disagree with
+  the rows.
+- **An edge with an empty guard is the fallback**, drawn as `else` and ruled off from the guards
+  above it. In a graph that would publish it is already last: an unguarded edge always matches, so
+  nothing can usefully follow it. Where it is not last, everything behind it is struck through and
+  marked *unreachable* — which is exactly what sorting the `else` row to the bottom would have
+  hidden.
 - **Rows reorder** by dragging the grip, or with `Alt` + `Arrow Up` / `Arrow Down` on it. One drag
   is one undo step. `moveDecisionRow(machine, transitionId, index)` does the same on a plain
   machine, and edges leaving the same state under a *different* action keep their slots.

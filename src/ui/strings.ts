@@ -131,6 +131,8 @@ export interface EditorStrings {
     /** The unguarded row, which matches whatever the guards above did not. */
     readonly fallback: string;
     readonly fallbackTitle: string;
+    /** The badge's tooltip, since the fallback row shows a glyph in its place. */
+    readonly orderTitle: (params: { readonly index: number; readonly total: number }) => string;
     /** Marks a row the engine can never reach, because a fallback precedes it. */
     readonly dead: string;
     readonly deadTitle: string;
@@ -442,6 +444,7 @@ export const DEFAULT_STRINGS: EditorStrings = {
       `${action}: ${count} outcome${count === 1 ? '' : 's'}, tried in order.`,
     fallback: 'else',
     fallbackTitle: 'No guard — runs when none of the rows above matched',
+    orderTitle: ({ index, total }) => `Tried ${index} of ${total}`,
     dead: 'unreachable',
     deadTitle: 'Never reached: a row above has no guard, so it always matches first',
     target: ({ name }) => `→ ${name}`,
