@@ -427,6 +427,12 @@ export const editorStyles: string = `
   .stripe__icon { flex: none; font-size: 10px; }
   .stripe__text { min-width: 0; }
 
+  /*
+   * Clear of the footer below it. A stripe is a note about the card, not another
+   * control, and hard against the toggles it reads like one more thing to press.
+   */
+  .node > .stripes { margin-bottom: 8px; }
+
   .edge-card > .stripes { padding: 5px 8px; }
   .decision__row > .stripes { padding: 2px 8px 5px 22px; border-top: 0; background: none; }
 

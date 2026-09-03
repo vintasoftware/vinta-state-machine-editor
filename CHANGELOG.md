@@ -175,6 +175,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New pure helpers `stateIssues(machine, state)` and `decisionIssues(group)`, a new `issue`
   string group, and a `warning` icon (`⚠`).
 
+  A stripe on a state card keeps clear of the toggles under it: hard against them it read like one
+  more thing to press rather than a note about the card.
+
 ### Changed
 
 - **The creation button moved out of the toggles row onto a line of its own**, and says what it
