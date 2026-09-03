@@ -107,6 +107,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The creation button moved out of the toggles row onto a line of its own**, and says what it
+  does: `+ New record starts here` rather than `+ Creation`. Three toggles fill that line, and a
+  fourth control squeezed in beside them elided every label to a couple of letters. Adding an edge
+  is not one more thing the state *is*, either — on its own row it has the room for a sentence.
+  `state.creationAdd` carries the new wording; the class name `node__create` is unchanged.
+
+- **The role toggles wrap instead of clipping.** A pill is never squeezed below the width of the
+  word inside it, so a translated set with a long word for *Waiting* pushes it onto a second line
+  rather than showing `Wait…`.
+
+### Changed
+
 - **`state.data` is no longer entirely opaque.** The component now owns four keys inside it —
   and nothing else. Edits to them arrive as a new `state-data` change, and `updateState` takes a
   `data` patch.

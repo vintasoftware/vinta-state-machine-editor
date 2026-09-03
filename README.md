@@ -85,7 +85,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Move a state | Drag its header |
 | Move a transition | Drag the transition card's header — the edge bends to keep passing through it. Drop it back on the edge to return to automatic placement |
 | Create a transition | Drag the round **→** handle onto another state (drop it on the same state for a self transition) |
-| Create a *creation* transition | Press **+ Creation** on an initial state's card — it appears next to **▶ Initial** only while the state is marked initial |
+| Create a *creation* transition | Press **+ New record starts here** under an initial state card's toggles — the row appears only while the state is marked initial |
 | Add another creation transition | Drag the start bar's **→** handle onto a state |
 | Reach a card's tools | Hover the card or select it — the **✎ ⚙ ✕** rail (plus the colour swatch on a state) appears just above it, and stays put long enough to be clicked |
 | Rename | Tap the **✎** button in the card's rail (or double-click the name, or press `F2` with it selected), then **✓** to save / **✕** to discard — `Enter` and `Escape` work too |
@@ -566,8 +566,11 @@ new has to be stored on the machine and no `creationOrigin` field was added.
 
 Creating them:
 
-- **+ Creation** on a state card, beside **▶ Initial** and visible only while the state is marked
-  initial. There is nothing to drag from until the first edge exists, so the button is the way in.
+- **+ New record starts here**, a full-width row under the **▶ Initial** / **◉ Final** /
+  **⑂ Waiting** toggles, visible only while the state is marked initial. It sits on a line of its
+  own rather than as a fourth pill among the toggles: adding an edge is not one more thing the
+  state *is*, and the room lets the label say what the edge does instead of naming the kind of
+  edge. There is nothing to drag from until the first edge exists, so the button is the way in.
   It creates the edge, brings the bar into existence, selects the new edge and starts inline
   rename — selecting it is the point, since the trigger and guard are filled in from there.
 - Dragging the start bar's **→** handle onto a state, for every one after that. The handle sits

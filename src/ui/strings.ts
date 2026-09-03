@@ -91,6 +91,11 @@ export interface EditorStrings {
     readonly unmarkInitial: (params: { readonly name: string }) => string;
     readonly markFinal: (params: { readonly name: string }) => string;
     readonly unmarkFinal: (params: { readonly name: string }) => string;
+    /**
+     * Label of the row under the toggles. It says what the edge *does* — a
+     * record comes into being already in this state — rather than naming the
+     * kind of edge, which is a word only this codebase uses.
+     */
     readonly creationAdd: string;
     readonly creationTitle: string;
     readonly creationLabel: (params: { readonly name: string }) => string;
@@ -448,8 +453,9 @@ export const DEFAULT_STRINGS: EditorStrings = {
     unmarkInitial: ({ name }) => `Unmark “${name}” as an initial state`,
     markFinal: ({ name }) => `Mark “${name}” as a final state`,
     unmarkFinal: ({ name }) => `Unmark “${name}” as a final state`,
-    creationAdd: 'Creation',
-    creationTitle: 'Add a transition that creates a record in this state',
+    creationAdd: 'New record starts here',
+    creationTitle:
+      'Add a transition that creates a record already in this state, straight from the start',
     creationLabel: ({ name }) => `Add a creation transition into “${name}”`,
   },
 

@@ -281,6 +281,8 @@ interface StateView {
   readonly propertiesButton: HTMLButtonElement;
   readonly removeButton: HTMLButtonElement;
   readonly linkHandle: HTMLButtonElement;
+  /** Row holding {@link StateView.creationButton}; hidden with it. */
+  readonly creation: HTMLElement;
   /** Creates a creation transition into this state; only shown while it is initial. */
   readonly creationButton: HTMLButtonElement;
   readonly chips: ReadonlyMap<HookKey, ChipView>;
@@ -2322,11 +2324,18 @@ export class StateMachineEditorElement extends HTMLElement {
       this.toggleWaitingState(stateId);
     });
 
-    // Only reachable while the state is initial: the start pseudo-node does not
-    // exist until a creation edge does, so there is nothing to drag from yet.
+    /*
+     * A row of its own under the toggles, rather than a fourth pill among them.
+     * Three toggles already fill that line, and this is not a fourth thing the
+     * state *is* — it adds an edge — so it gets the room to say so in words.
+     *
+     * Only reachable while the state is initial: the start pseudo-node does not
+     * exist until a creation edge does, so there is nothing to drag from yet.
+     */
+    const creation = createElement('div', { className: 'node__creation', parent: root });
     const creationButton = createIconButton(this.#icons, 'add', {
       className: 'node__create',
-      parent: roles,
+      parent: creation,
       label: this.#strings.state.creationAdd,
       attrs: { title: this.#strings.state.creationTitle },
     });
@@ -2391,6 +2400,7 @@ export class StateMachineEditorElement extends HTMLElement {
       propertiesButton,
       removeButton,
       linkHandle,
+      creation,
       creationButton,
       chips,
       startMarker,
@@ -2554,7 +2564,9 @@ export class StateMachineEditorElement extends HTMLElement {
     }
 
     // The flag and the creation edges are independent: marking a state initial
-    // never creates an edge, and unmarking it never deletes one.
+    // never creates an edge, and unmarking it never deletes one. The row goes
+    // with the button, so a card that cannot offer it keeps its height.
+    view.creation.hidden = !initial;
     view.creationButton.hidden = !initial;
     view.creationButton.disabled = this.#readOnly;
     view.creationButton.setAttribute(

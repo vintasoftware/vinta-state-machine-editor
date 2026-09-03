@@ -222,13 +222,13 @@ describe('the editor’s icons', () => {
     const shadow = shadowOf(editor);
     expect(queryButton(shadow, '.node__role--initial').textContent).toBe('▶ Initial');
     expect(queryButton(shadow, '.node__role--final').textContent).toBe('◉ Final');
-    expect(queryButton(shadow, '.node__create').textContent).toBe('+ Creation');
+    expect(queryButton(shadow, '.node__create').textContent).toBe('+ New record starts here');
 
     editor.icons = { initial: '→', final: '■', add: '✚' };
 
     expect(queryButton(shadow, '.node__role--initial').textContent).toBe('→ Initial');
     expect(queryButton(shadow, '.node__role--final').textContent).toBe('■ Final');
-    expect(queryButton(shadow, '.node__create').textContent).toBe('✚ Creation');
+    expect(queryButton(shadow, '.node__create').textContent).toBe('✚ New record starts here');
   });
 
   it('leads an empty side effect chip with the add icon, and a filled one with a name', () => {
