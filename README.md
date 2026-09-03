@@ -1202,6 +1202,9 @@ editor.strings = {
 The same applies to the quotation marks a name is wrapped in (`source.state`) and to the words the
 model's own enums read as in prose — `phase.before`, `trigger.enter`, `kind.transition` and
 `color.success` are groups keyed by the model value, so nothing is looked up by a string name.
+Two of those tables sit *inside* a group rather than being one: `waiting.outcome` (`success` /
+`failure`) and `waiting.half` (`enter` / `leave`). Naming either replaces the whole table, and the
+type asks for every key of it, so a half-translated one cannot slip through.
 
 ### Loading a translation as data
 
