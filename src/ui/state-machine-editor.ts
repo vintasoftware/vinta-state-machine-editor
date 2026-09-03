@@ -113,6 +113,7 @@ import {
 import type {
   ActionProvider,
   ElementRef,
+  FanOutHandler,
   GuardValidation,
   GuardValidator,
   MachineChange,
@@ -565,6 +566,7 @@ export class StateMachineEditorElement extends HTMLElement {
   #provider: SideEffectProvider | undefined;
   #actionProvider: ActionProvider | undefined;
   #guardValidator: GuardValidator | undefined;
+  #fanOutHandler: FanOutHandler | undefined;
   /** What the host's validator said about each guard, keyed by the expression. */
   readonly #guardChecks = new Map<string, GuardValidation | 'pending'>();
   /** The start bar, present only while the machine has a creation edge. */
@@ -853,6 +855,36 @@ export class StateMachineEditorElement extends HTMLElement {
     this.#render();
   }
 
+  /**
+   * Takes the user to the machine a waiting state fans out to.
+   *
+   * Injected like {@link StateMachineEditorElement.actionProvider}: the canvas
+   * draws one version of one machine, a fan-out crosses into another, and where
+   * that lives — routing, permissions, what "that machine's editor" even means —
+   * belongs to the page around it.
+   *
+   * ```js
+   * editor.fanOutHandler = ({ childMachine }) => {
+   *   location.href = `/admin/machines/${childMachine}/`;
+   * };
+   * ```
+   *
+   * Setting one is what makes the band's **Fans out to** line a link. Without
+   * it the line still names the machine and still opens the state's properties,
+   * but it does not offer to go anywhere: a link that leads nowhere cannot be
+   * told apart from one whose navigation failed.
+   *
+   * `state-machine-fan-out` fires alongside it, for hosts already listening.
+   */
+  get fanOutHandler(): FanOutHandler | undefined {
+    return this.#fanOutHandler;
+  }
+
+  set fanOutHandler(handler: FanOutHandler | undefined) {
+    this.#fanOutHandler = handler;
+    this.#render();
+  }
+
   get readOnly(): boolean {
     return this.#readOnly;
   }
@@ -1123,6 +1155,7 @@ export class StateMachineEditorElement extends HTMLElement {
     if (childMachine.length === 0) {
       return false;
     }
+    this.#fanOutHandler?.({ stateId, childMachine });
     const event: FanOutEvent = new CustomEvent(FAN_OUT_EVENT, {
       detail: { stateId, childMachine },
       bubbles: true,
@@ -2326,16 +2359,17 @@ export class StateMachineEditorElement extends HTMLElement {
           this.#icons,
           'fanOut',
         );
-        row.addEventListener('click', (event) => {
-          event.stopPropagation();
-          this.followFanOut(stateId);
-        });
-      } else {
-        row.addEventListener('click', (event) => {
-          event.stopPropagation();
-          void this.openProperties({ kind: 'state', id: stateId });
-        });
       }
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        // Only a host that can take them somewhere turns this into a link; with
+        // nobody to route it, the line behaves like the rest of the band.
+        if (field === 'child' && this.#fanOutHandler !== undefined) {
+          this.followFanOut(stateId);
+          return;
+        }
+        void this.openProperties({ kind: 'state', id: stateId });
+      });
       bandRows.set(field, { root: row, label, value });
     }
     // Sits under the band's own lines: a half configured report is an invalid
@@ -2688,21 +2722,23 @@ export class StateMachineEditorElement extends HTMLElement {
       row.root.classList.toggle('is-unset', missing);
       row.root.classList.toggle('is-broken', field === 'counts' && status.kind === 'broken');
       // The fan-out line goes somewhere rather than editing something, so it
-      // names where instead of what it holds.
-      const named =
-        field === 'child'
-          ? {
-              label: text.fansOutLink({ machine: config.childMachine, name: state.name }),
-              title: text.fansOutTitle({ machine: config.childMachine }),
-            }
-          : {
-              label: text.rowLabel({
-                field: line.label,
-                value: row.value.textContent ?? '',
-                name: state.name,
-              }),
-              title: field === 'counts' ? counts.title : '',
-            };
+      // names where instead of what it holds — but only when a host has said it
+      // can take them there.
+      const linked = field === 'child' && this.#fanOutHandler !== undefined;
+      row.root.classList.toggle('band__row--link', linked);
+      const named = linked
+        ? {
+            label: text.fansOutLink({ machine: config.childMachine, name: state.name }),
+            title: text.fansOutTitle({ machine: config.childMachine }),
+          }
+        : {
+            label: text.rowLabel({
+              field: line.label,
+              value: row.value.textContent ?? '',
+              name: state.name,
+            }),
+            title: field === 'counts' ? counts.title : '',
+          };
       row.root.setAttribute('aria-label', named.label);
       row.root.title = named.title;
     }

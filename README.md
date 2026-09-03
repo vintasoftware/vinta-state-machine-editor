@@ -100,7 +100,7 @@ verbatim out of a static directory, use the single-file build instead — see
 | Colour a state | Press the round swatch in the card's rail and pick one of the six |
 | Mark initial / final | Toggle **▶ Initial** / **◉ Final** at the bottom of a state card |
 | Mark a state as waiting on a batch | Toggle **⑂ Waiting** beside them — the card grows a band naming the fan-out |
-| Follow a fan-out | Click **FANS OUT TO** in the band — the editor emits `state-machine-fan-out` and the host navigates |
+| Follow a fan-out | Click **FANS OUT TO** in the band — the editor calls the host's `fanOutHandler`, which is also what puts the link there |
 | Remove | Click **✕** in the card's rail, or select it and press `Delete` |
 | Undo / redo | Toolbar **↶** / **↷**, or `Ctrl`/`⌘` + `Z` and `Ctrl`/`⌘` + `Shift` + `Z` (`Ctrl` + `Y` redoes too) |
 | Copy / paste | Select a state or transition, then toolbar **Copy** / **Paste**, or `Ctrl`/`⌘` + `C` and `Ctrl`/`⌘` + `V` |
@@ -427,22 +427,28 @@ It rides in four keys of `state.data`:
   anything the editor cannot read is shown exactly as it was written. Days down to seconds only —
   months and years depend on when you start counting.
 
-**The fan-out leaves the card.** `FANS OUT TO` is a link rather than a way into the dialog: it
-emits `state-machine-fan-out` and stops there, and a short dashed stub is drawn leaving the card
-into empty space so the fan-out reads as a direction and not only as text. The canvas draws one
-version of one machine, and nesting spans machines — routing is the page's business.
+**The fan-out leaves the card**, through a `fanOutHandler` you inject like `actionProvider` and
+`guardValidator`. The canvas draws one version of one machine, and nesting spans machines —
+routing, permissions and what "that machine's editor" even means belong to the page around it.
 
 ```js
-editor.addEventListener('state-machine-fan-out', (event) => {
-  const { stateId, childMachine } = event.detail;
+editor.fanOutHandler = ({ stateId, childMachine }) => {
   location.href = '/admin/machines/' + childMachine + '/';
-});
+};
 ```
 
-`editor.followFanOut(stateId)` does the same from code and returns `false` when the state names
-no machine. The child machine itself stays editable from the card's **⚙** properties button.
-There is deliberately no inline subgraph expansion and no drill-in breadcrumb: the canvas draws
-one version, and solving nesting properly is separate work.
+**Setting one is what makes `FANS OUT TO` a link.** Without it the band still names the machine
+and the line still opens the state's properties, like every other line — but it does not offer to
+go anywhere, because a link that leads nowhere cannot be told apart from one whose navigation
+failed. `addEventListener` is not introspectable, which is why the capability is a property.
+
+A short dashed stub is drawn leaving the card into empty space either way, so the fan-out reads
+as a direction and not only as text. `editor.followFanOut(stateId)` calls the handler from code
+and returns `false` when the state names no machine, and `state-machine-fan-out` still fires
+alongside it for hosts already listening. The child machine itself stays editable from the
+card's **⚙** properties button. There is deliberately no inline subgraph expansion and no
+drill-in breadcrumb: the canvas draws one version, and solving nesting properly is separate
+work.
 
 A waiting state is marked so it is findable while scanning a graph: a weave over its colour bar
 and a dashed left edge. `color` is deliberately left alone — it is the author's choice and it
@@ -778,6 +784,7 @@ isUnpositioned(machine); // what the automatic pass tests for
 | `sideEffectProvider` | `() => MaybePromise<SideEffectDefinition[]>` | Catalog used by the dialog. Called every time a dialog opens. |
 | `actionProvider` | `() => MaybePromise<ActionDefinition[]>` | Catalog the transition trigger is picked from. Without it the trigger is a free text field. |
 | `guardValidator` | `(expression) => MaybePromise<{ ok: true } \| { ok: false, errors }>` | Called on every guard edit; errors render inline. Absent means no validation. |
+| `fanOutHandler` | `({ stateId, childMachine }) => void` | Takes the user to the machine a waiting state fans out to. Setting one is what makes **Fans out to** a link; absent, the line names the machine but offers no way there. |
 | `readOnly` | `boolean` | Reflected to the `readonly` attribute. Chips still open the dialog, read-only. |
 | `icons` | `Partial<EditorIcons> \| undefined` | Glyphs for the buttons and handles. A partial set replaces only what it names; reading it back gives the whole set, defaults filled in — see [Icons](#icons). |
 | `strings` | `StringOverrides \| undefined` | Every word the editor says, grouped (`toolbar`, `state`, `dialog`, …). A partial set replaces only what it names and leaves the rest in English; reading it back gives the whole set — see [Translation](#translation). |

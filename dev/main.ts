@@ -464,6 +464,15 @@ const iconPicker = requireElement('#icons', isSelect);
 editor.sideEffectProvider = fetchSideEffectCatalog;
 editor.actionProvider = fetchActionCatalog;
 editor.guardValidator = validateGuard;
+/*
+ * Nesting spans machines and this page holds one, so there is nowhere to go —
+ * but setting the handler is what puts the link on the card, and the log shows
+ * what a host would receive. Without it the band still names the machine and
+ * simply does not offer to follow it.
+ */
+editor.fanOutHandler = ({ stateId, childMachine }) => {
+  addLogEntry('fan-out', `${stateId} → ${childMachine}`);
+};
 editor.value = exampleMachine();
 
 let events = 0;

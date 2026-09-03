@@ -214,6 +214,24 @@ export type GuardValidation =
  */
 export type GuardValidator = (expression: string) => MaybePromise<GuardValidation>;
 
+/** Where a waiting state's fan-out leads, and which state it leaves from. */
+export interface FanOut {
+  readonly stateId: string;
+  /** Key of the machine the children are governed by, from `state.data`. */
+  readonly childMachine: string;
+}
+
+/**
+ * Takes the user to the machine a state fans out to.
+ *
+ * Injected like {@link ActionProvider} and {@link GuardValidator}: the canvas
+ * draws one version of one machine, a fan-out crosses into another, and where
+ * that lives is the host's business. Without one the band still names the
+ * machine — it just does not offer to go there, because a link that leads
+ * nowhere is worse than no link.
+ */
+export type FanOutHandler = (fanOut: FanOut) => void;
+
 /** Describes what changed in a machine, carried by the `state-machine-change` event. */
 export type MachineChange =
   | { readonly kind: 'state-add'; readonly stateId: string }

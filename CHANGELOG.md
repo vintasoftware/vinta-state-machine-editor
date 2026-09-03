@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`fanOutHandler`**, injected like `actionProvider` and `guardValidator`, and **setting one is
+  what makes `FANS OUT TO` a link**. Announcing `state-machine-fan-out` and stopping there is the
+  right division of labour, but in a host that had not wired the listener yet the link looked live
+  and did nothing — and there is no visible difference between *nobody is listening* and *the
+  navigation failed*. `addEventListener` is not introspectable, so the capability is a property,
+  which also makes the wiring discoverable from the type definitions rather than from prose.
+
+  ```js
+  editor.fanOutHandler = ({ stateId, childMachine }) => {
+    location.href = `/admin/machines/${childMachine}/`;
+  };
+  ```
+
+  Without one the band still names the machine and the line still opens the state's properties,
+  like every other line of the band; it simply does not offer to go anywhere. The dashed stub is
+  drawn either way. `state-machine-fan-out` still fires alongside the handler, so a host already
+  listening for it keeps working — but it now needs a handler set for the link to be there to
+  press. New exported types `FanOut` and `FanOutHandler`.
+
 ### Fixed
 
 - **Switching `⑂ Waiting` off is now something a host can read.** It deleted `is_waiting`

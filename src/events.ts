@@ -44,6 +44,10 @@ export interface FanOutDetail {
 /**
  * Announces that someone asked to go to the machine a state fans out to.
  *
+ * Prefer the `fanOutHandler` property: setting one is what puts the link on the
+ * card in the first place, and it is discoverable from the type definitions
+ * rather than from prose. This fires alongside it, for hosts already listening.
+ *
  * The canvas draws one version of one machine, and a fan-out crosses into
  * another — so the component says where the user wants to go and stops there.
  * A Django admin listens for this and navigates to that machine's editor.

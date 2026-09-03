@@ -117,6 +117,11 @@ const iconStyles = `
   }
 `;
 
+/*
+ * One long template literal, so no backtick may appear between here and its
+ * close — not even inside a CSS comment, where it reads as ordinary prose.
+ * One closes the string and turns the rest of the sheet into JavaScript.
+ */
 export const editorStyles: string = `
   ${tokens}
   ${iconStyles}
@@ -394,9 +399,16 @@ export const editorStyles: string = `
 
   .band__row--child { grid-template-columns: 84px 1fr auto; }
 
-  .band__go { font-size: 10px; color: var(--sme-text-muted); }
-  .band__row--child:hover .band__go { color: var(--sme-accent); }
-  .band__row--child:hover .band__value { text-decoration: underline; }
+  /*
+   * The going-somewhere affordance belongs to a line that can actually go
+   * somewhere, which is one a host has given a fanOutHandler. Without one the
+   * line still names the machine and still opens the state's properties, like
+   * every other line of the band.
+   */
+  .band__go { display: none; font-size: 10px; color: var(--sme-text-muted); }
+  .band__row--link .band__go { display: inline; }
+  .band__row--link:hover .band__go { color: var(--sme-accent); }
+  .band__row--link:hover .band__value { text-decoration: underline; }
 
   .band__row--join .band__value { color: var(--sme-accent); }
   .band__row--counts.is-broken .band__value { color: var(--sme-danger); }

@@ -249,6 +249,9 @@ describe('translating the fan-out surfaces', () => {
     const editor = mountEditor();
     editor.strings = OVERRIDES;
     editor.guardValidator = (): GuardValidation => ({ ok: false, errors: ['bad guard'] });
+    // The fan-out line is only a link, and only names where it goes, once a
+    // host has said it can route it.
+    editor.fanOutHandler = () => undefined;
     editor.value = everything();
     await flush();
 
