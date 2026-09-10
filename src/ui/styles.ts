@@ -1073,30 +1073,30 @@ export const editorStyles: string = `
   @media (pointer: coarse) {
     /* The header is the name alone now, but the roles row still lines up three
        grown-up pills, so the card keeps the width they need. */
-    :host --sme-node-width: 288px; 
-    .node__creation padding: 0 10px 12px; 
-    .icon-button width: 32px; height: 32px; font-size: 15px; 
-    .node__role padding: 7px 8px; font-size: 12px; 
-    .node__create padding: 7px 10px; font-size: 12px; 
-    .node__color width: 32px; height: 32px; 
-    .node__color::before width: 16px; height: 16px; 
-    .card-actions gap: 4px; padding: 4px; border-radius: 11px; 
+    :host { --sme-node-width: 288px; }
+    .node__creation { padding: 0 10px 12px; }
+    .icon-button { width: 32px; height: 32px; font-size: 15px; }
+    .node__role { padding: 7px 8px; font-size: 12px; }
+    .node__create { padding: 7px 10px; font-size: 12px; }
+    .node__color { width: 32px; height: 32px; }
+    .node__color::before { width: 16px; height: 16px; }
+    .card-actions { gap: 4px; padding: 4px; border-radius: 11px; }
     /* Clears the taller rail. */
-    .node__palette grid-template-columns: repeat(3, 32px); gap: 10px; bottom: calc(100% + 54px); 
-    .palette__option width: 32px; height: 32px; 
-    .node__header padding: 10px; gap: 6px; 
-    .node__link width: 32px; height: 32px; right: -16px; font-size: 15px; 
-    .start-node .start-node__link top: auto; right: auto; bottom: -46px; left: 4px; 
-    .start-node width: 40px; 
-    .start-node__label font-size: 13px; 
-    .chip padding: 8px 10px; font-size: 13px; 
-    .hook grid-template-columns: 84px 1fr; gap: 10px; 
-    .toolbar button min-width: 40px; height: 40px; 
-    .edge-card width: 210px; 
-    .edge-card--decision width: 300px; 
-    .decision__handle width: 26px; height: 30px; font-size: 13px; 
-    .decision__summary padding: 6px 4px; font-size: 12px; 
-    .decision__input padding: 6px 8px; font-size: 12px; 
+    .node__palette { grid-template-columns: repeat(3, 32px); gap: 10px; bottom: calc(100% + 54px); }
+    .palette__option { width: 32px; height: 32px; }
+    .node__header { padding: 10px; gap: 6px; }
+    .node__link { width: 32px; height: 32px; right: -16px; font-size: 15px; }
+    .start-node .start-node__link { top: auto; right: auto; bottom: -46px; left: 4px; }
+    .start-node { width: 40px; }
+    .start-node__label { font-size: 13px; }
+    .chip { padding: 8px 10px; font-size: 13px; }
+    .hook { grid-template-columns: 84px 1fr; gap: 10px; }
+    .toolbar button { min-width: 40px; height: 40px; }
+    .edge-card { width: 210px; }
+    .edge-card--decision { width: 300px; }
+    .decision__handle { width: 26px; height: 30px; font-size: 13px; }
+    .decision__summary { padding: 6px 4px; font-size: 12px; }
+    .decision__input { padding: 6px 8px; font-size: 12px; }
   }
 
   .empty-state {
@@ -1188,18 +1188,18 @@ export const dialogStyles: string = `
   .row-item.is-disabled .row__params { opacity: 0.5; }
 
   @media (pointer: coarse) {
-    .row padding: 11px 12px; gap: 12px; 
-    .row__params padding: 7px 10px; font-size: 12px; 
+    .row { padding: 11px 12px; gap: 12px; }
+    .row__params { padding: 7px 10px; font-size: 12px; }
     .jf-key,
     .jf-value,
-    .jf-type padding: 7px; font-size: 13px; 
-    .params__editor .cm-scroller font-size: 13px; 
+    .jf-type { padding: 7px; font-size: 13px; }
+    .params__editor .cm-scroller { font-size: 13px; }
     .row__handle,
-    .row__remove width: 32px; height: 32px; font-size: 16px; 
-    .row__enabled width: 20px; height: 20px; 
-    .row__description padding: 7px; font-size: 13px; 
-    .button padding: 11px 18px; 
-    .add select padding: 10px; 
+    .row__remove { width: 32px; height: 32px; font-size: 16px; }
+    .row__enabled { width: 20px; height: 20px; }
+    .row__description { padding: 7px; font-size: 13px; }
+    .button { padding: 11px 18px; }
+    .add select { padding: 10px; }
   }
   .row__order {
     flex: none;
@@ -1425,8 +1425,8 @@ export const dialogStyles: string = `
   .order__move:disabled { opacity: 0.4; cursor: not-allowed; }
 
   @media (pointer: coarse) {
-    .field__input padding: 10px; 
-    .order__move width: 34px; height: 34px; 
+    .field__input { padding: 10px; }
+    .order__move { width: 34px; height: 34px; }
   }
 
   .footer { display: flex; justify-content: flex-end; gap: 8px; }
