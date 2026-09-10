@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A decision card is wired up as a junction, not a knot.** Every edge of a decision used to be
+  its own curve from the state to its target, bent through the one card they share — so three or
+  four lines ran into the card from slightly different angles and out the other side on top of
+  each other, and nothing on the canvas said which line belonged to which row. Now the action
+  arrives **once**, as a single trunk from the state to the card's header, and each outcome leaves
+  as its own branch from a **port beside its row**, drawn as a dot on the card's border on
+  whichever side faces the state it lands on. The row is the label of its line: reading down the
+  card reads along the branches. Two rows landing on the same state run side by side out of the
+  card and only meet where they have to.
+
+  Pointing at a row lights up its branch, and selecting an outcome lights the trunk with it. The
+  trunk is a `path.edge.edge--trunk` carrying `data-group-key`; each row carries `data-port`
+  (`left` or `right`). Every per-edge `path.edge[data-transition-id]` is still there, one per
+  transition, so nothing a host addressed has moved. Lone edge cards are drawn exactly as before.
+
+  Ports are read from the card's layout, so the editor now renders the cards before the lines.
+  New pure helpers `branchSideFor`, `branchPort`, `decisionBranchGeometry` and
+  `decisionTrunkGeometry` do the geometry.
+
+- **Transition cards no longer pass for state cards at a glance.** Both were a white box with a
+  header and a rule under it. A transition card now wears the accent a state never does: a tinted
+  header band, a border leaning the same way and tighter corners, and a lone edge's header opens
+  with a glyph where a state's opens with its colour bar. The card's structure, class names and
+  parts are unchanged.
+
+### Added
+
+- New icon `transition` (`⇢`), leading the name on a lone transition card.
+
 ### Fixed
 
 - **Touch and pen get their bigger hit targets back.** Every one-line rule inside the three

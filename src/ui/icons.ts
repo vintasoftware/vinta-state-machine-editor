@@ -51,6 +51,8 @@ export interface EditorIcons {
   readonly cancel: Icon;
   /** The handle dragged from one card to another to draw a transition. */
   readonly link: Icon;
+  /** Leads the name on a lone transition card, so it never passes for a state. */
+  readonly transition: Icon;
   /** Marks the initial role on a state card. */
   readonly initial: Icon;
   /** Marks the final role on a state card. */
@@ -97,6 +99,7 @@ export const DEFAULT_ICONS: EditorIcons = {
   confirm: '✓',
   cancel: '✕',
   link: '→',
+  transition: '⇢',
   initial: '▶',
   final: '◉',
   waiting: '⑂',

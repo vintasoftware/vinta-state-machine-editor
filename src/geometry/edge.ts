@@ -200,3 +200,88 @@ export function creationAnchorPoint(bar: Rect, index: number, total: number): Po
     y: bar.y + (bar.height * (index + 0.5)) / Math.max(total, 1),
   };
 }
+
+/** Which side of a decision card a branch leaves from. */
+export type PortSide = 'left' | 'right';
+
+/**
+ * The side of the card a branch heading for `target` should leave from: the
+ * one facing the state it lands on, so the line never has to cross the card
+ * to get going.
+ */
+export function branchSideFor(card: Rect, target: Rect): PortSide {
+  return center(target).x >= center(card).x ? 'right' : 'left';
+}
+
+/** Where on the card's border the port for the row occupying `rowY` sits. */
+export function branchPort(card: Rect, side: PortSide, rowY: number): Point {
+  return { x: side === 'right' ? card.x + card.width : card.x, y: rowY };
+}
+
+/** How far a curve reaches before it turns: enough to read, never past halfway. */
+function reachBetween(from: Point, to: Point, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, Math.hypot(to.x - from.x, to.y - from.y) / 2));
+}
+
+/**
+ * One outcome of a decision, drawn from the port beside its row to the state it
+ * lands on.
+ *
+ * The curve leaves the card horizontally — a port has a side, and a line that
+ * left it at an angle would read as belonging to whichever row it crossed —
+ * and arrives at the target square on to its border. Two rows landing on the
+ * same state therefore run side by side out of the card and only merge where
+ * they have to, at the state.
+ */
+export function decisionBranchGeometry(port: Point, side: PortSide, target: Rect): EdgeGeometry {
+  const direction = side === 'right' ? 1 : -1;
+  const targetCenter = center(target);
+  const rough = borderPoint(target, port);
+  const reach = reachBetween(port, rough, 32, 140);
+  const control1: Point = { x: port.x + direction * reach, y: port.y };
+  const end = borderPoint(target, control1);
+  const outward = { x: end.x - targetCenter.x, y: end.y - targetCenter.y };
+  const length = Math.hypot(outward.x, outward.y) || 1;
+  const arrival = reachBetween(control1, end, 24, 120);
+  const control2: Point = {
+    x: end.x + (outward.x / length) * arrival,
+    y: end.y + (outward.y / length) * arrival,
+  };
+  return cubicGeometry({ start: port, control1, control2, end });
+}
+
+/**
+ * The single line carrying an action from the state it leaves to the decision
+ * card that resolves it. It lands on the card's header — the part naming the
+ * action — when the state is beside the card, and on the nearer of the top and
+ * bottom edges otherwise, always square on so the arrow head sits flat against
+ * the card.
+ */
+export function decisionTrunkGeometry(
+  source: Rect,
+  card: Rect,
+  headerHeight: number,
+): EdgeGeometry {
+  const from = center(source);
+  const to = center(card);
+  const dx = from.x - to.x;
+  const dy = from.y - to.y;
+  const horizontal = Math.abs(dx) / Math.max(card.width / 2, 1);
+  const vertical = Math.abs(dy) / Math.max(card.height / 2, 1);
+  const headerY = card.y + Math.min(headerHeight, card.height) / 2;
+  let entry: Point;
+  let outward: Point;
+  if (horizontal >= vertical) {
+    const right = dx > 0;
+    entry = { x: right ? card.x + card.width : card.x, y: headerY };
+    outward = { x: right ? 1 : -1, y: 0 };
+  } else {
+    const below = dy > 0;
+    entry = { x: to.x, y: below ? card.y + card.height : card.y };
+    outward = { x: 0, y: below ? 1 : -1 };
+  }
+  const start = borderPoint(source, entry);
+  const reach = reachBetween(start, entry, 24, 120);
+  const control: Point = { x: entry.x + outward.x * reach, y: entry.y + outward.y * reach };
+  return quadraticGeometry(start, control, entry);
+}
