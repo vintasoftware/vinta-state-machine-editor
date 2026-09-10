@@ -187,6 +187,8 @@ export const editorStyles: string = `
   }
 
   .edge.is-selected { stroke: var(--sme-accent); stroke-width: 2.5; }
+  /* Pointing at a decision row lights the branch it stands for. */
+  .edge.is-hovered { stroke: var(--sme-accent); stroke-width: 2.5; }
   .edge--preview { stroke-dasharray: 6 5; stroke: var(--sme-accent); }
   .arrow { fill: var(--sme-edge); }
 
@@ -799,13 +801,21 @@ export const editorStyles: string = `
     cursor: crosshair;
   }
 
+  /*
+   * A transition card must not pass for a state card at a glance, and both are
+   * a box with a header. So the edge card is drawn in the accent a state never
+   * wears — a tinted header band, a border leaning the same way, tighter
+   * corners — and its header opens with a glyph where a state's opens with its
+   * colour bar. The lines arriving at and leaving it do the rest.
+   */
   .edge-card {
+    --sme-edge-card-border: color-mix(in srgb, var(--sme-accent) 40%, var(--sme-border));
     position: absolute;
     width: 186px;
     transform: translate(-50%, -50%);
     background: var(--sme-surface);
-    border: 1px solid var(--sme-border);
-    border-radius: var(--sme-radius);
+    border: 1px solid var(--sme-edge-card-border);
+    border-radius: 7px;
     box-shadow: var(--sme-shadow);
     user-select: none;
   }
@@ -817,11 +827,22 @@ export const editorStyles: string = `
     align-items: center;
     gap: 6px;
     padding: 5px 8px;
-    border-bottom: 1px solid var(--sme-border);
+    border-bottom: 1px solid var(--sme-edge-card-border);
+    border-radius: 6px 6px 0 0;
+    background: var(--sme-accent-soft);
     cursor: grab;
   }
 
   .edge-card__header.is-dragging { cursor: grabbing; }
+
+  .edge-card__glyph {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--sme-accent);
+  }
 
   .edge-card__name {
     flex: 1;
@@ -889,12 +910,38 @@ export const editorStyles: string = `
   .decision__row { position: relative; }
 
   .decision__line {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 4px;
     padding: 2px 8px 2px 4px;
     min-width: 0;
   }
+
+  /*
+   * The port a row's branch leaves from: a dot on the card's border, level
+   * with the row, on the side the editor sends the line out of. It is what
+   * ties the row to its line — the line starts at the dot and the dot sits
+   * beside the row, so following one to the other needs no guessing.
+   */
+  .decision__row[data-port] > .decision__line::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--sme-edge);
+    box-shadow: 0 0 0 2px var(--sme-surface);
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  .decision__row[data-port='right'] > .decision__line::after { right: -5px; }
+  .decision__row[data-port='left'] > .decision__line::after { left: -5px; }
+
+  .decision__row.is-selected > .decision__line::after,
+  .decision__line:hover::after { background: var(--sme-accent); }
 
   .decision__row.is-selected > .decision__line { background: var(--sme-accent-soft); }
 

@@ -68,6 +68,85 @@ describe('the decision card', () => {
     expect(root.querySelectorAll('path.edge[data-transition-id]')).toHaveLength(3);
   });
 
+  it('brings the action in once and sends every outcome out from its own row', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    const trunks = root.querySelectorAll('path.edge--trunk');
+    expect(trunks).toHaveLength(1);
+    expect(trunks[0]?.getAttribute('d')?.startsWith('M ')).toBe(true);
+    // Keyed like the card it feeds, so a host can pair the two.
+    expect(trunks[0]?.getAttribute('data-group-key')).toBe(
+      queryOne(root, '.edge-card--decision').getAttribute('data-group-key'),
+    );
+    // Every branch leaves a port on the side facing the state it lands on.
+    const rows = queryAll(root, '.decision__row');
+    expect(rows.map((row) => row.getAttribute('data-port'))).toEqual(['right', 'right', 'right']);
+    for (const path of root.querySelectorAll('path.edge[data-transition-id]')) {
+      expect(path.getAttribute('d')?.startsWith('M ')).toBe(true);
+    }
+  });
+
+  it('draws no trunk for a lone edge', () => {
+    const editor = mountEditor();
+    const machine = decisionMachine();
+    editor.value = {
+      ...machine,
+      transitions: [machine.transitions[0] ?? createTransition({ name: 'x', from: null, to: 'a' })],
+    };
+    expect(shadowOf(editor).querySelectorAll('path.edge--trunk')).toHaveLength(0);
+  });
+
+  it('sweeps the trunk away with the decision', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const machine = editor.value;
+    editor.value = { ...machine, transitions: machine.transitions.slice(0, 1) };
+    const root = shadowOf(editor);
+    expect(root.querySelectorAll('path.edge--trunk')).toHaveLength(0);
+    expect(root.querySelectorAll('path.edge[data-transition-id]')).toHaveLength(1);
+  });
+
+  it('lights the trunk and the branch of the outcome that is selected', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    editor.selection = { kind: 'transition', id: 'b' };
+    expect(queryOne(root, '.edge-card--decision').classList.contains('is-selected')).toBe(true);
+    expect(root.querySelector('path.edge--trunk')?.classList.contains('is-selected')).toBe(true);
+    expect(
+      root.querySelector('path.edge[data-transition-id="b"]')?.classList.contains('is-selected'),
+    ).toBe(true);
+    expect(
+      root.querySelector('path.edge[data-transition-id="a"]')?.classList.contains('is-selected'),
+    ).toBe(false);
+  });
+
+  it('lights a branch while its row is pointed at', () => {
+    const editor = mountEditor();
+    editor.value = decisionMachine();
+    const root = shadowOf(editor);
+    const line = queryOne(root, '.decision__row[data-transition-id="b"] .decision__line');
+    const path = root.querySelector('path.edge[data-transition-id="b"]');
+    line.dispatchEvent(new PointerEvent('pointerenter'));
+    expect(path?.classList.contains('is-hovered')).toBe(true);
+    line.dispatchEvent(new PointerEvent('pointerleave'));
+    expect(path?.classList.contains('is-hovered')).toBe(false);
+  });
+
+  it('sends a branch out of the left side when its state is to the left', () => {
+    const editor = mountEditor();
+    const machine = decisionMachine();
+    editor.value = {
+      ...machine,
+      states: machine.states.map((state) =>
+        state.id === 'failed' ? { ...state, position: { x: -800, y: 320 } } : state,
+      ),
+    };
+    const rows = queryAll(shadowOf(editor), '.decision__row');
+    expect(rows.map((row) => row.getAttribute('data-port'))).toEqual(['right', 'right', 'left']);
+  });
+
   it('heads the card with the action and how many outcomes it has', () => {
     const editor = mountEditor();
     editor.value = decisionMachine();

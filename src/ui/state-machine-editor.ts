@@ -14,10 +14,14 @@ import {
 import {
   bendEdgeThrough,
   bendSelfEdgeThrough,
+  branchPort,
+  branchSideFor,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
   creationAnchorPoint,
   curvatureFor,
+  decisionBranchGeometry,
+  decisionTrunkGeometry,
   type EdgeGeometry,
   orderCreationAnchors,
 } from '../geometry/edge.js';
@@ -324,6 +328,8 @@ interface TransitionView {
 /** One outcome of a decision card, with the panel it opens underneath it. */
 interface DecisionRowView {
   readonly root: HTMLElement;
+  /** The row's one visible line — what the port beside it is aligned with. */
+  readonly line: HTMLElement;
   readonly handle: HTMLButtonElement;
   /** The order badge, or the fallback glyph on the unguarded row. */
   readonly order: HTMLElement;
@@ -538,6 +544,8 @@ export class StateMachineEditorElement extends HTMLElement {
   readonly #stateViews = new Map<string, StateView>();
   /** The curve of every edge, keyed by transition id. Cards are keyed by group. */
   readonly #edgePaths = new Map<string, SVGPathElement>();
+  /** The one line carrying an action into each decision card, keyed by group. */
+  readonly #trunkPaths = new Map<string, SVGPathElement>();
   /** One card per {@link TransitionGroup}, keyed by the group's own key. */
   readonly #cardViews = new Map<string, CardView>();
   /** The groups of the machine as it stands, rebuilt at the top of every render. */
@@ -1022,6 +1030,10 @@ export class StateMachineEditorElement extends HTMLElement {
       path.remove();
     }
     this.#edgePaths.clear();
+    for (const trunk of this.#trunkPaths.values()) {
+      trunk.remove();
+    }
+    this.#trunkPaths.clear();
     for (const entry of this.#cardViews.values()) {
       this.#destroyCard(entry);
     }
@@ -2977,15 +2989,23 @@ export class StateMachineEditorElement extends HTMLElement {
     button.toggleAttribute('data-many', effects.length > 1);
   }
 
+  /**
+   * Cards first, then the lines: a decision's branches leave from ports beside
+   * its rows, so they are drawn from where the card actually laid out.
+   */
   #renderTransitions(): void {
-    this.#renderEdgePaths();
     this.#renderCards();
+    this.#renderEdgePaths();
   }
 
   /**
    * The curves, one per transition. They outlive the cards: a decision draws
    * one card for several edges, and every one of those edges still needs a line
    * of its own to reach the state it lands on.
+   *
+   * A lone edge is one curve from state to state, bent through its card. A
+   * decision's edges are drawn in two parts instead — see
+   * {@link #drawDecision} — so this only shapes the lone ones here.
    */
   #renderEdgePaths(): void {
     const alive = new Set<string>();
@@ -2993,7 +3013,10 @@ export class StateMachineEditorElement extends HTMLElement {
       alive.add(transition.id);
       const path = this.#edgePaths.get(transition.id) ?? this.#createEdgePath(transition.id);
       this.#edgePaths.set(transition.id, path);
-      path.setAttribute('d', this.#pathGeometryFor(transition).path);
+      const group = this.#groupOf.get(transition.id);
+      if (group === undefined || !isDecision(group)) {
+        path.setAttribute('d', this.#geometryFor(transition).path);
+      }
       path.classList.toggle('is-selected', this.#isSelectedTransition(transition.id));
     }
     for (const [id, path] of this.#edgePaths) {
@@ -3006,6 +3029,7 @@ export class StateMachineEditorElement extends HTMLElement {
         }
       }
     }
+    this.#renderDecisionPaths();
   }
 
   #createEdgePath(transitionId: string): SVGPathElement {
@@ -3014,6 +3038,110 @@ export class StateMachineEditorElement extends HTMLElement {
       parent: this.#edgeLayer,
       attrs: { 'marker-end': 'url(#sme-arrow)', part: 'edge', 'data-transition-id': transitionId },
     });
+  }
+
+  /**
+   * The lines of every decision: one trunk into the card, one branch out of it
+   * per row. Trunks belong to groups rather than to transitions, so they are
+   * kept — and swept — by group key.
+   */
+  #renderDecisionPaths(): void {
+    const alive = new Set<string>();
+    for (const group of this.#groups) {
+      const entry = this.#cardViews.get(group.key);
+      if (entry === undefined || entry.kind !== 'decision') {
+        continue;
+      }
+      alive.add(group.key);
+      const trunk = this.#trunkPaths.get(group.key) ?? this.#createTrunkPath(group.key);
+      this.#trunkPaths.set(group.key, trunk);
+      this.#drawDecision(group, entry.view, trunk);
+    }
+    for (const [key, trunk] of this.#trunkPaths) {
+      if (!alive.has(key)) {
+        trunk.remove();
+        this.#trunkPaths.delete(key);
+      }
+    }
+  }
+
+  #createTrunkPath(key: string): SVGPathElement {
+    return createSvgElement('path', {
+      className: 'edge edge--trunk',
+      parent: this.#edgeLayer,
+      attrs: { 'marker-end': 'url(#sme-arrow)', part: 'edge', 'data-group-key': key },
+    });
+  }
+
+  /**
+   * How a decision is wired up on the canvas.
+   *
+   * Bending every member's curve through the shared card put several lines into
+   * one point from slightly different angles and let them out the other side on
+   * top of each other — a knot, with nothing saying which line was which row.
+   * So the action arrives once, as a single **trunk** from the state to the
+   * card's header, and each outcome leaves as its own **branch** from a port
+   * beside its row, on whichever side faces the state it lands on. The row is
+   * the label of its line: reading down the card reads along the branches.
+   *
+   * Ports are read from the card's layout, which is why the cards render before
+   * the lines. Before a card has laid out — in a document with no layout, or
+   * before the first frame — every port collapses onto the card's centre, and
+   * the lines still meet where the card will be.
+   */
+  #drawDecision(group: TransitionGroup, view: DecisionView, trunk: SVGPathElement): void {
+    const card = this.#decisionRect(group, view);
+    const leader = group.transitions[0];
+    const source = leader === undefined ? undefined : this.#sourceRect(leader);
+    trunk.setAttribute(
+      'd',
+      source === undefined
+        ? EMPTY_GEOMETRY.path
+        : decisionTrunkGeometry(source, card, view.header.offsetHeight).path,
+    );
+    trunk.classList.toggle(
+      'is-selected',
+      group.transitions.some((transition) => this.#isSelectedTransition(transition.id)),
+    );
+    for (const transition of group.transitions) {
+      const path = this.#edgePaths.get(transition.id);
+      const row = view.rows.get(transition.id);
+      if (path === undefined || row === undefined) {
+        continue;
+      }
+      const target = findState(this.#machine, transition.to);
+      if (target === undefined) {
+        path.setAttribute('d', EMPTY_GEOMETRY.path);
+        continue;
+      }
+      const targetRect = this.#rectFor(target);
+      const side = branchSideFor(card, targetRect);
+      row.root.setAttribute('data-port', side);
+      const port = branchPort(card, side, this.#portY(card, view.card, row));
+      path.setAttribute('d', decisionBranchGeometry(port, side, targetRect).path);
+    }
+  }
+
+  /** The box a decision card is drawn in, from where it sits and how big it laid out. */
+  #decisionRect(group: TransitionGroup, view: DecisionView): Rect {
+    const point = this.#cardPointFor(group);
+    const width = view.card.offsetWidth;
+    const height = view.card.offsetHeight;
+    return { x: point.x - width / 2, y: point.y - height / 2, width, height };
+  }
+
+  /**
+   * Height of a row's port: the middle of its line, in world coordinates. The
+   * row's offset is measured inside the card's border, hence the `clientTop`.
+   */
+  #portY(card: Rect, cardElement: HTMLElement, row: DecisionRowView): number {
+    return (
+      card.y +
+      cardElement.clientTop +
+      row.root.offsetTop +
+      row.line.offsetTop +
+      row.line.offsetHeight / 2
+    );
   }
 
   /**
@@ -3081,6 +3209,14 @@ export class StateMachineEditorElement extends HTMLElement {
       attrs: { part: 'transition', 'data-transition-id': transitionId },
     });
     const header = createElement('div', { className: 'edge-card__header', parent: card });
+    // Says "transition" before the name does: a state card and an edge card are
+    // both a box with a header, and the glyph is what tells them apart at a glance.
+    const glyph = createElement('span', {
+      className: 'edge-card__glyph',
+      parent: header,
+      attrs: { 'aria-hidden': 'true' },
+    });
+    setIcon(glyph, this.#icons, 'transition');
     const name = createElement('span', { className: 'edge-card__name', parent: header });
     // Above the card, like a state's: these cards are narrower still, so the
     // name needs every pixel of the header it can keep.
@@ -3352,6 +3488,14 @@ export class StateMachineEditorElement extends HTMLElement {
       attrs: { 'data-transition-id': transitionId },
     });
     const line = createElement('div', { className: 'decision__line', parent: root });
+    // Pointing at a row lights up its branch, so a line in a crowd can be told
+    // apart without reading where it ends.
+    line.addEventListener('pointerenter', () => {
+      this.#edgePaths.get(transitionId)?.classList.add('is-hovered');
+    });
+    line.addEventListener('pointerleave', () => {
+      this.#edgePaths.get(transitionId)?.classList.remove('is-hovered');
+    });
     const handle = createIconButton(this.#icons, 'dragHandle', {
       className: 'decision__handle',
       parent: line,
@@ -3475,6 +3619,7 @@ export class StateMachineEditorElement extends HTMLElement {
 
     return {
       root,
+      line,
       stripes,
       handle,
       order,
@@ -3807,19 +3952,6 @@ export class StateMachineEditorElement extends HTMLElement {
     const auto = this.#autoCardPoint(group);
     const offset = this.#groupOffset(group);
     return { x: Math.round(auto.x + offset.x), y: Math.round(auto.y + offset.y) };
-  }
-
-  /**
-   * The curve one edge is drawn as. Every member of a decision is bent through
-   * the single card they share, so the lines meet at it and fan out from there
-   * to the states they land on.
-   */
-  #pathGeometryFor(transition: Transition): EdgeGeometry {
-    const group = this.#groupOf.get(transition.id);
-    if (group === undefined || !isDecision(group)) {
-      return this.#geometryFor(transition);
-    }
-    return this.#bendThrough(transition, this.#cardPointFor(group));
   }
 
   /** Rebuilds the group index. Called wherever the machine in force changes. */
