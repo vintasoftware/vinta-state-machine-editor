@@ -3,10 +3,14 @@ import {
   bendEdgeThrough,
   bendSelfEdgeThrough,
   borderPoint,
+  branchPort,
+  branchSideFor,
   computeEdgeGeometry,
   computeSelfEdgeGeometry,
   creationAnchorPoint,
   curvatureFor,
+  decisionBranchGeometry,
+  decisionTrunkGeometry,
   orderCreationAnchors,
 } from '../src/geometry/edge.js';
 import {
@@ -252,5 +256,82 @@ describe('start bar anchors', () => {
     });
     // A zero total would divide by zero rather than simply centring.
     expect(creationAnchorPoint({ x: 0, y: 0, width: 10, height: 40 }, 0, 0).y).toBe(20);
+  });
+});
+
+describe('wiring a decision card', () => {
+  const card = { x: 400, y: 300, width: 268, height: 144 };
+
+  it('sends a branch out of the side facing the state it lands on', () => {
+    expect(branchSideFor(card, { x: 900, y: 300, width: 248, height: 152 })).toBe('right');
+    expect(branchSideFor(card, { x: -200, y: 300, width: 248, height: 152 })).toBe('left');
+    // A target straight below leaves from the right, so every such row agrees.
+    expect(branchSideFor(card, { x: 410, y: 700, width: 248, height: 152 })).toBe('right');
+  });
+
+  it('puts the port on the card border, level with the row', () => {
+    expect(branchPort(card, 'right', 350)).toEqual({ x: 668, y: 350 });
+    expect(branchPort(card, 'left', 350)).toEqual({ x: 400, y: 350 });
+  });
+
+  it('leaves the port flat and lands square on the target border', () => {
+    const target = { x: 900, y: 500, width: 248, height: 152 };
+    const port = branchPort(card, 'right', 350);
+    const geometry = decisionBranchGeometry(port, 'right', target);
+    expect(geometry.source).toEqual(port);
+    // A cubic whose first control point lies level with the port, out to the right.
+    const control = /^M \S+ \S+ C (\S+) (\S+) /.exec(geometry.path);
+    expect(Number(control?.[1])).toBeGreaterThan(port.x);
+    expect(Number(control?.[2])).toBe(port.y);
+    // Somewhere on the target's border, not inside it and not floating.
+    const onBorder =
+      geometry.target.x === target.x ||
+      geometry.target.y === target.y ||
+      geometry.target.x === target.x + target.width ||
+      geometry.target.y === target.y + target.height;
+    expect(onBorder).toBe(true);
+    // Arriving from the port's side of the target, so the head points into it.
+    expect(Math.abs(geometry.arrowAngle)).toBeLessThan(90);
+  });
+
+  it('keeps two rows landing on the same state apart until they get there', () => {
+    const target = { x: 900, y: 500, width: 248, height: 152 };
+    const first = decisionBranchGeometry(branchPort(card, 'right', 340), 'right', target);
+    const second = decisionBranchGeometry(branchPort(card, 'right', 364), 'right', target);
+    expect(first.path).not.toBe(second.path);
+    expect(first.source.y).toBe(340);
+    expect(second.source.y).toBe(364);
+  });
+
+  it('brings the trunk into the header when the state is beside the card', () => {
+    const source = { x: -200, y: 300, width: 248, height: 152 };
+    const geometry = decisionTrunkGeometry(source, card, 26);
+    // The right border of the source, the left border of the card, mid-header.
+    expect(geometry.source.x).toBeCloseTo(48);
+    expect(geometry.target).toEqual({ x: 400, y: 313 });
+    expect(geometry.path.startsWith('M ')).toBe(true);
+    expect(geometry.arrowAngle).toBe(0);
+  });
+
+  it('brings the trunk into the top or bottom edge when the state is above or below', () => {
+    const above = decisionTrunkGeometry({ x: 410, y: -200, width: 248, height: 152 }, card, 26);
+    expect(above.target).toEqual({ x: 534, y: 300 });
+    expect(above.arrowAngle).toBe(90);
+    const below = decisionTrunkGeometry({ x: 410, y: 800, width: 248, height: 152 }, card, 26);
+    expect(below.target).toEqual({ x: 534, y: 444 });
+    expect(below.arrowAngle).toBe(-90);
+  });
+
+  it('collapses onto the card point before the card has laid out', () => {
+    const unsized = { x: 500, y: 350, width: 0, height: 0 };
+    const trunk = decisionTrunkGeometry({ x: 0, y: 300, width: 248, height: 152 }, unsized, 0);
+    expect(trunk.target).toEqual({ x: 500, y: 350 });
+    const branch = decisionBranchGeometry(branchPort(unsized, 'right', 350), 'right', {
+      x: 900,
+      y: 300,
+      width: 248,
+      height: 152,
+    });
+    expect(branch.source).toEqual({ x: 500, y: 350 });
   });
 });

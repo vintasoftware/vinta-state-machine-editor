@@ -365,6 +365,14 @@ first whose guard holds. The editor draws them as a single card.
   machine, and edges leaving the same state under a *different* action keep their slots.
 - **A row opens in place** onto that edge's name, guard, required permission, `before` / `after`
   side effects, properties dialog and remove button.
+- **The lines are wired as a junction.** The action arrives once, as a single trunk from the state
+  to the card's header, and each outcome leaves as its own branch from a **port beside its row** —
+  a dot on the card's border, on whichever side faces the state it lands on. The row is the label
+  of its line, so reading down the card reads along the branches; pointing at a row lights up its
+  branch, and selecting an outcome lights the trunk with it. Two rows landing on the same state run
+  side by side out of the card and only meet where they have to. Bending every edge through the one
+  shared card was the alternative, and it tied several lines into a knot at the card with nothing
+  saying which was which.
 
 Reorders arrive as `transition-reorder`, and everything a row edits arrives as the change it
 always did (`transition-rename`, `transition-guard`, `transition-permission`, …).
@@ -1120,6 +1128,7 @@ the JSON parameter fields.
 | `remove` | ✕ | Cards, side effect rows, JSON parameter fields |
 | `confirm` / `cancel` | ✓ ✕ | The inline rename editor |
 | `link` | → | The handle dragged from one card to another, and from the start bar |
+| `transition` | ⇢ | Leads the name on a lone transition card |
 | `initial` / `final` | ▶ ◉ | The role pills on a state card |
 | `waiting` | ⑂ | The role pill marking a state that waits for a batch |
 | `fanOut` | ↗ | The link following a fan-out into the child machine |
