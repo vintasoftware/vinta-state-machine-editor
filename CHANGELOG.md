@@ -38,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New icon `transition` (`⇢`), leading the name on a lone transition card.
 
+### Fixed
+
+- **Touch and pen get their bigger hit targets back.** Every one-line rule inside the three
+  `@media (pointer: coarse)` blocks had lost its braces, so what should have read
+  `.edge-card { width: 210px; }` read `.edge-card width: 210px;` instead. A browser cannot make
+  sense of that and drops the whole block, silently — the sheet is a template literal, so neither
+  the compiler nor the linter looks inside it — which left a fingertip aiming at the 22px controls
+  meant for a mouse.
+
+  The rules are restored exactly as they were: 32px icon buttons and colour swatches, 40px toolbar
+  buttons, a wider card, roomier dialog rows and properties fields. A test now parses both sheets
+  the way a browser does and counts the rules each coarse-pointer block kept, so a block that
+  fails to parse fails the build rather than shipping.
+
 ## [0.10.0] - 2026-09-03
 
 ### Added
